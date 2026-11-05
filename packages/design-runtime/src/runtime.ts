@@ -1,5 +1,5 @@
 import { validateDocument, type DesignDocument, type DesignNode, type NodeId } from "@ufira/design-schema";
-import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand } from "./commands";
+import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
 export class RevisionConflictError extends Error {
   constructor(expected: number, actual: number) {
@@ -19,6 +19,7 @@ export class DesignRuntime {
   private document: DesignDocument;
   private undoStack: ChangeSet[] = [];
   private redoStack: ChangeSet[] = [];
+  private transactions: TransactionEntry[] = [];
 
   constructor(document: DesignDocument) {
     this.document = structuredClone(validateDocument(document));
@@ -26,6 +27,10 @@ export class DesignRuntime {
 
   snapshot(): DesignDocument {
     return structuredClone(this.document);
+  }
+
+  transactionLog(): TransactionEntry[] {
+    return structuredClone(this.transactions);
   }
 
   execute(envelope: CommandEnvelope): CommandResult {
@@ -37,7 +42,8 @@ export class DesignRuntime {
     const draft = this.snapshot();
     for (const command of envelope.commands) applyCommand(draft, command);
     draft.revision += 1;
-    draft.meta.updatedAt = new Date().toISOString();
+    const committedAt = new Date().toISOString();
+    draft.meta.updatedAt = committedAt;
     validateDocument(draft);
 
     const changes = { before, after: structuredClone(draft) };
@@ -45,11 +51,22 @@ export class DesignRuntime {
     this.undoStack.push(changes);
     this.redoStack = [];
 
+    const warnings = collectWarnings(draft);
+    this.transactions.push({
+      commandId: envelope.commandId,
+      documentId: envelope.documentId,
+      revision: draft.revision,
+      committedAt,
+      actor: structuredClone(envelope.actor),
+      commands: structuredClone(envelope.commands),
+      warnings,
+    });
+
     return {
       revision: draft.revision,
       changes,
       inverse: { before: structuredClone(draft), after: before },
-      warnings: collectWarnings(draft),
+      warnings,
     };
   }
 

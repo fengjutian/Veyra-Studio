@@ -70,3 +70,11 @@ test("returns structural warnings without blocking a valid change", () => {
   const result = runtime.execute(envelope(0, [{ type: "node.create", payload: { node } }]));
   assert.match(result.warnings[0], /hardcoded fill/);
 });
+
+test("records committed transactions but not failed attempts", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: frame("node:1") } }]));
+  assert.throws(() => runtime.execute(envelope(0, [{ type: "node.delete", payload: { id: "node:1" } }])), RevisionConflictError);
+  assert.equal(runtime.transactionLog().length, 1);
+  assert.equal(runtime.transactionLog()[0].revision, 1);
+});

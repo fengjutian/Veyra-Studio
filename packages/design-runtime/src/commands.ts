@@ -54,3 +54,13 @@ export interface CommandResult {
   inverse: ChangeSet;
   warnings: string[];
 }
+
+export interface TransactionEntry {
+  commandId: string;
+  documentId: string;
+  revision: number;
+  committedAt: string;
+  actor: CommandEnvelope["actor"];
+  commands: DesignCommand[];
+  warnings: string[];
+}
