@@ -9,6 +9,7 @@ export interface AssetWrite {
 export interface ProjectSnapshot {
   document: DesignDocument;
   recoveredFromRevision: number;
+  replayedTransactions: number;
   latestKnownRevision: number;
   degraded: boolean;
 }

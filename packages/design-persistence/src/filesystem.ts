@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { validateDocument, type DesignDocument } from "@ufira/design-schema";
-import type { TransactionEntry } from "@ufira/design-runtime";
+import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
 import { ProjectNotFoundError, type AssetWrite, type ProjectRepository, type ProjectSnapshot } from "./types";
 
 interface Manifest {
@@ -87,16 +87,42 @@ export class FileSystemProjectRepository implements ProjectRepository {
     if (!files.length) throw new ProjectNotFoundError(projectId);
 
     const manifest = await readManifest(join(directory, "manifest.json"));
-    const latestKnownRevision = Math.max(manifest?.latestRevision ?? -1, ...files.map(parseRevision));
+    const transactionFiles = (await safeReadDirectory(join(directory, "transactions"))).filter(isRevisionFile);
+    const latestKnownRevision = Math.max(
+      manifest?.latestRevision ?? -1,
+      ...files.map(parseRevision),
+      ...transactionFiles.map(parseRevision),
+    );
     for (const file of files) {
       try {
         const document = validateDocument(JSON.parse(await readFile(join(snapshots, file), "utf8")));
         if (document.id !== projectId) continue;
+        const recoveredFromRevision = document.revision;
+        const runtime = new DesignRuntime(document);
+        const transactions = await this.listTransactions(projectId, recoveredFromRevision);
+        let replayedTransactions = 0;
+        for (const entry of transactions) {
+          if (entry.revision !== runtime.snapshot().revision + 1) break;
+          try {
+            runtime.execute({
+              commandId: entry.commandId,
+              documentId: entry.documentId,
+              baseRevision: runtime.snapshot().revision,
+              actor: entry.actor,
+              commands: entry.commands,
+            }, { committedAt: entry.committedAt });
+            replayedTransactions += 1;
+          } catch {
+            break;
+          }
+        }
+        const recovered = runtime.snapshot();
         return {
-          document,
-          recoveredFromRevision: document.revision,
+          document: recovered,
+          recoveredFromRevision,
+          replayedTransactions,
           latestKnownRevision,
-          degraded: document.revision !== latestKnownRevision,
+          degraded: recovered.revision !== latestKnownRevision,
         };
       } catch {
         // Fall through to the previous valid snapshot.

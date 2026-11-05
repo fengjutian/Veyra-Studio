@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createDocument } from "@ufira/design-schema";
-import type { TransactionEntry } from "@ufira/design-runtime";
+import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
 import { FileSystemProjectRepository, ProjectNotFoundError } from "../src/index";
 
 async function fixture(t: test.TestContext) {
@@ -20,7 +20,54 @@ test("atomically saves and opens a validated snapshot", async t => {
   await repository.saveSnapshot(document);
   const opened = await repository.open(document.id);
   assert.deepEqual(opened.document, document);
+  assert.equal(opened.replayedTransactions, 0);
   assert.equal(opened.degraded, false);
+});
+
+test("replays committed transactions after the latest valid snapshot", async t => {
+  const { repository } = await fixture(t);
+  const document = createDocument("project:1", "Demo");
+  await repository.saveSnapshot(document);
+
+  const runtime = new DesignRuntime(document);
+  runtime.execute({
+    commandId: "cmd:1",
+    documentId: document.id,
+    baseRevision: 0,
+    actor: { type: "human", id: "user:1" },
+    commands: [{ type: "token.upsert", payload: { name: "color.brand", token: { type: "color", value: "#3366ff" } } }],
+  }, { committedAt: "2026-11-05T08:00:00.000Z" });
+  await repository.appendTransactions(runtime.transactionLog());
+
+  const recovered = await repository.recover(document.id);
+  assert.equal(recovered.document.revision, 1);
+  assert.equal(recovered.document.meta.updatedAt, "2026-11-05T08:00:00.000Z");
+  assert.deepEqual(recovered.document.tokens["color.brand"], { type: "color", value: "#3366ff" });
+  assert.equal(recovered.recoveredFromRevision, 0);
+  assert.equal(recovered.replayedTransactions, 1);
+  assert.equal(recovered.latestKnownRevision, 1);
+  assert.equal(recovered.degraded, false);
+});
+
+test("reports degraded recovery when the transaction journal has a revision gap", async t => {
+  const { repository } = await fixture(t);
+  const document = createDocument("project:1", "Demo");
+  await repository.saveSnapshot(document);
+  await repository.appendTransactions([{
+    commandId: "cmd:2",
+    documentId: document.id,
+    revision: 2,
+    committedAt: "2026-11-05T08:00:00.000Z",
+    actor: { type: "human", id: "user:1" },
+    commands: [{ type: "token.upsert", payload: { name: "color.brand", token: { type: "color", value: "#3366ff" } } }],
+    warnings: [],
+  }]);
+
+  const recovered = await repository.recover(document.id);
+  assert.equal(recovered.document.revision, 0);
+  assert.equal(recovered.replayedTransactions, 0);
+  assert.equal(recovered.latestKnownRevision, 2);
+  assert.equal(recovered.degraded, true);
 });
 
 test("falls back to the previous snapshot when the latest is corrupt", async t => {

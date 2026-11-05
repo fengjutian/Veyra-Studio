@@ -15,7 +15,8 @@
 
 - `packages/design-schema`：早期设计文档类型、Schema 与校验；
 - `packages/design-runtime`：早期命令和运行时原型；
-- `packages/design-persistence`：早期文件系统持久化原型；
+- `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
+  连续重放已提交事务的崩溃恢复原型；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 

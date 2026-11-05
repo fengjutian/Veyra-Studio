@@ -15,6 +15,10 @@ export class CommandError extends Error {
   }
 }
 
+export interface ExecuteOptions {
+  committedAt?: string;
+}
+
 export class DesignRuntime {
   private document: DesignDocument;
   private undoStack: ChangeSet[] = [];
@@ -33,7 +37,7 @@ export class DesignRuntime {
     return structuredClone(this.transactions);
   }
 
-  execute(envelope: CommandEnvelope): CommandResult {
+  execute(envelope: CommandEnvelope, options: ExecuteOptions = {}): CommandResult {
     if (envelope.documentId !== this.document.id) throw new CommandError(`Command targets document ${envelope.documentId}, expected ${this.document.id}`);
     if (envelope.baseRevision !== this.document.revision) throw new RevisionConflictError(envelope.baseRevision, this.document.revision);
     if (envelope.commands.length === 0) throw new CommandError("A transaction requires at least one command");
@@ -42,7 +46,8 @@ export class DesignRuntime {
     const draft = this.snapshot();
     for (const command of envelope.commands) applyCommand(draft, command);
     draft.revision += 1;
-    const committedAt = new Date().toISOString();
+    const committedAt = options.committedAt ?? new Date().toISOString();
+    if (Number.isNaN(Date.parse(committedAt))) throw new CommandError(`Invalid commit timestamp ${committedAt}`);
     draft.meta.updatedAt = committedAt;
     validateDocument(draft);
 
