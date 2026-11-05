@@ -55,6 +55,9 @@ export class StudioProject {
     return this.runtime.snapshot();
   }
 
+  canUndo(): boolean { return this.runtime.canUndo(); }
+  canRedo(): boolean { return this.runtime.canRedo(); }
+
   preview(envelope: CommandEnvelope): StudioPreviewResult {
     const before = this.runtime.snapshot();
     const previewRuntime = new DesignRuntime(before);
@@ -83,6 +86,9 @@ export class StudioProject {
     });
   }
 
+  undo(actorId = "local-user"): Promise<StudioExecuteResult> { return this.applyHistory("undo", actorId); }
+  redo(actorId = "local-user"): Promise<StudioExecuteResult> { return this.applyHistory("redo", actorId); }
+
   computeLayout(pageId: string, options: LayoutOptions): LayoutResult {
     return computePageLayout(this.runtime.snapshot(), pageId, options);
   }
@@ -96,6 +102,18 @@ export class StudioProject {
     const entry = log.at(-1);
     if (!entry) throw new Error("Runtime committed without producing a transaction entry");
     return entry;
+  }
+
+  private applyHistory(direction: "undo" | "redo", actorId: string): Promise<StudioExecuteResult> {
+    return this.exclusive(async () => {
+      const before = this.runtime.snapshot();
+      const result = this.runtime[direction]({ commandId: `${direction}:${globalThis.crypto.randomUUID()}`, actor: { type: "human", id: actorId } });
+      const entry = this.lastTransaction();
+      try { await this.repository.appendTransactions([entry]); }
+      catch (error) { this.runtime = new DesignRuntime(before); throw error; }
+      try { await this.repository.saveSnapshot(this.runtime.snapshot()); return { result, checkpointed: true }; }
+      catch (error) { return { result, checkpointed: false, checkpointError: errorMessage(error) }; }
+    });
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {

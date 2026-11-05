@@ -48,8 +48,13 @@ test("rolls back the whole transaction when one command fails", () => {
 test("undoes and redoes a transaction", () => {
   const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   runtime.execute(envelope(0, [{ type: "node.create", payload: { node: frame("node:1") } }]));
-  assert.equal(runtime.undo().nodes["node:1"], undefined);
-  assert.ok(runtime.redo().nodes["node:1"]);
+  const undone = runtime.undo({ commandId: "undo:1", actor: { type: "human", id: "user:1" }, committedAt: "2026-01-01T00:00:01.000Z" });
+  assert.equal(runtime.snapshot().nodes["node:1"], undefined);
+  assert.equal(undone.revision, 2);
+  const redone = runtime.redo({ commandId: "redo:1", actor: { type: "human", id: "user:1" }, committedAt: "2026-01-01T00:00:02.000Z" });
+  assert.ok(runtime.snapshot().nodes["node:1"]);
+  assert.equal(redone.revision, 3);
+  assert.deepEqual(runtime.transactionLog().map(entry => entry.commands[0]?.type), ["node.create", "history.restore", "history.restore"]);
 });
 
 test("prevents reparenting into a descendant", () => {

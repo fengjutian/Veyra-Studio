@@ -35,6 +35,8 @@
   revision 缺口降级报告、资产哈希校验和旧 localStorage 快照迁移；尚未接入真实 AI Provider；
   工作台顶部支持项目列表、新建、切换、通过领域命令重命名，以及原子清理项目快照、
   事务和资产的删除操作；
+- 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
+  以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 

@@ -24,7 +24,26 @@ function App() {
   const operationInFlight = useRef(false);
   const editor = useMemo(() => project ? new SafeAiEditor(project, demoPlanner) : undefined, [project]);
 
+  const applyHistory = async (direction: "undo" | "redo") => {
+    if (!project) return;
+    const committed = await project[direction]();
+    const snapshot = project.snapshot();
+    setDocument(snapshot); setProjects(await repository.listProjects()); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setMessage(`${direction === "undo" ? "撤销" : "重做"}完成 · revision ${committed.result.revision}`);
+  };
+
   useEffect(() => { void initialize(repository).then(async ({ project: value }) => { setProject(value); setDocument(value.snapshot()); setProjects(await repository.listProjects()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  useEffect(() => {
+    if (!project) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z" || target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      event.preventDefault();
+      if (operationInFlight.current) return;
+      operationInFlight.current = true; setBusy(true);
+      void applyHistory(event.shiftKey ? "redo" : "undo").catch(error => setMessage(errorMessage(error))).finally(() => { operationInFlight.current = false; setBusy(false); });
+    };
+    window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
+  }, [project]);
 
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[document.pageOrder[0]!];
@@ -75,7 +94,7 @@ function App() {
   const previewStale = preview?.baseRevision !== document.revision;
 
   return <div className="studio">
-    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
+    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
     <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
     <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selected ? <>

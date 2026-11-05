@@ -27,6 +27,17 @@ test("reports a revision gap as degraded recovery", async t => {
   assert.equal(recovered.document.revision, 0); assert.equal(recovered.latestKnownRevision, 2); assert.equal(recovered.degraded, true);
 });
 
+test("replays a persisted undo without resurrecting the change", async t => {
+  const repository = createRepository(); t.after(() => repository.deleteDatabase());
+  const document = createDocument("project:1", "Demo", "page:1"); await repository.saveSnapshot(document);
+  await repository.appendTransactions([
+    { ...entry(document.id, 1), commands: [{ type: "node.create", payload: { node: frame("frame:1") } }] },
+    { ...entry(document.id, 2), commandId: "undo:1", commands: [{ type: "history.restore", payload: { document } }] },
+  ]);
+  const recovered = await repository.open(document.id);
+  assert.equal(recovered.document.revision, 2); assert.equal(recovered.document.nodes["frame:1"], undefined); assert.equal(recovered.replayedTransactions, 2);
+});
+
 test("stores verified binary assets", async t => {
   const repository = createRepository(); t.after(() => repository.deleteDatabase());
   const bytes = new TextEncoder().encode("asset"), hash = "d59386e0ae435e292fbe0ebcdb954b75ed5fb3922091277cb19f798fc5d50718";

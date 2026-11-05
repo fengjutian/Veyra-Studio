@@ -19,6 +19,11 @@ export interface RenameDocumentCommand {
   payload: { name: string };
 }
 
+export interface RestoreHistoryCommand {
+  type: "history.restore";
+  payload: { document: DesignDocument };
+}
+
 export interface PatchNodeCommand {
   type: "node.patch";
   payload: {
@@ -78,6 +83,7 @@ export interface InstantiateComponentCommand {
 }
 
 export type DesignCommand =
+  | RestoreHistoryCommand
   | RenameDocumentCommand
   | CreateNodeCommand
   | PatchNodeCommand

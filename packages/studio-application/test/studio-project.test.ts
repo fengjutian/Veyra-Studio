@@ -76,6 +76,22 @@ test("serializes concurrent commands before checking revisions", async () => {
   assert.equal(project.snapshot().nodes.stale, undefined);
 });
 
+test("persists undo and redo as monotonic history transactions", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  await project.execute(envelope(0, frame("root")));
+  assert.equal(project.canUndo(), true);
+  const undone = await project.undo();
+  assert.equal(undone.result.revision, 2);
+  assert.equal(project.snapshot().nodes.root, undefined);
+  assert.equal(project.canRedo(), true);
+  const redone = await project.redo();
+  assert.equal(redone.result.revision, 3);
+  assert.ok(project.snapshot().nodes.root);
+  assert.deepEqual(repository.transactions.map(entry => entry.revision), [1, 2, 3]);
+  assert.deepEqual(repository.transactions.slice(1).map(entry => entry.commands[0]?.type), ["history.restore", "history.restore"]);
+});
+
 class MemoryRepository implements ProjectRepository {
   document?: DesignDocument;
   transactions: TransactionEntry[] = [];

@@ -19,6 +19,11 @@ export interface ExecuteOptions {
   committedAt?: string;
 }
 
+export interface HistoryRequest extends ExecuteOptions {
+  commandId: string;
+  actor: CommandEnvelope["actor"];
+}
+
 export class DesignRuntime {
   private document: DesignDocument;
   private undoStack: ChangeSet[] = [];
@@ -36,6 +41,9 @@ export class DesignRuntime {
   transactionLog(): TransactionEntry[] {
     return structuredClone(this.transactions);
   }
+
+  canUndo(): boolean { return this.undoStack.length > 0; }
+  canRedo(): boolean { return this.redoStack.length > 0; }
 
   execute(envelope: CommandEnvelope, options: ExecuteOptions = {}): CommandResult {
     if (envelope.documentId !== this.document.id) throw new CommandError(`Command targets document ${envelope.documentId}, expected ${this.document.id}`);
@@ -75,25 +83,46 @@ export class DesignRuntime {
     };
   }
 
-  undo(): DesignDocument {
+  undo(request: HistoryRequest): CommandResult {
+    validateHistoryTimestamp(request.committedAt);
     const change = this.undoStack.pop();
     if (!change) throw new CommandError("Nothing to undo");
     this.redoStack.push(change);
-    this.document = structuredClone(change.before);
-    return this.snapshot();
+    return this.commitHistoryRestore(change.before, request);
   }
 
-  redo(): DesignDocument {
+  redo(request: HistoryRequest): CommandResult {
+    validateHistoryTimestamp(request.committedAt);
     const change = this.redoStack.pop();
     if (!change) throw new CommandError("Nothing to redo");
     this.undoStack.push(change);
-    this.document = structuredClone(change.after);
-    return this.snapshot();
+    return this.commitHistoryRestore(change.after, request);
+  }
+
+  private commitHistoryRestore(target: DesignDocument, request: HistoryRequest): CommandResult {
+    const before = this.snapshot();
+    const after = structuredClone(target);
+    after.revision = before.revision + 1;
+    const committedAt = request.committedAt ?? new Date().toISOString();
+    if (Number.isNaN(Date.parse(committedAt))) throw new CommandError(`Invalid commit timestamp ${committedAt}`);
+    after.meta.updatedAt = committedAt;
+    validateDocument(after);
+    this.document = after;
+    const warnings = collectWarnings(after);
+    const changes = { before, after: structuredClone(after) };
+    this.transactions.push({ commandId: request.commandId, documentId: after.id, revision: after.revision, committedAt, actor: structuredClone(request.actor), commands: [{ type: "history.restore", payload: { document: structuredClone(target) } }], warnings });
+    return { revision: after.revision, changes, inverse: { before: structuredClone(after), after: before }, warnings };
   }
 }
 
 function applyCommand(document: DesignDocument, command: DesignCommand): void {
   switch (command.type) {
+    case "history.restore": {
+      if (command.payload.document.id !== document.id) throw new CommandError(`History restore targets document ${command.payload.document.id}, expected ${document.id}`);
+      const revision = document.revision;
+      Object.assign(document, structuredClone(command.payload.document), { revision });
+      return;
+    }
     case "document.rename": {
       const name = command.payload.name.trim();
       if (!name) throw new CommandError("Document name cannot be empty");
@@ -236,4 +265,8 @@ function collectWarnings(document: DesignDocument): string[] {
     if (node.appearance.fill?.startsWith("#") && !node.bindings?.fill) warnings.push(`Node ${node.id} uses a hardcoded fill without a token binding`);
   }
   return warnings;
+}
+
+function validateHistoryTimestamp(committedAt?: string): void {
+  if (committedAt !== undefined && Number.isNaN(Date.parse(committedAt))) throw new CommandError(`Invalid commit timestamp ${committedAt}`);
 }
