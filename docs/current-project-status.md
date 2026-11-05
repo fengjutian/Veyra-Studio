@@ -21,6 +21,8 @@
   padding、gap、对齐、文本测量接口和结构化布局警告；
 - `packages/design-export`：独立 HTML/CSS 导出原型，保留布局与 CSS Token 语义，并对
   不支持或降级的特性输出诊断；
+- `packages/studio-application`：串联项目创建、命令事务、日志与快照、恢复、布局和
+  HTML 导出的应用服务原型，作为未来工作台与 AI Orchestrator 的共同入口；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 

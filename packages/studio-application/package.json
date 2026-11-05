@@ -1,0 +1,31 @@
+{
+  "name": "@ufira/studio-application",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "pretest": "npm run build -w @ufira/design-schema && npm run build -w @ufira/design-runtime && npm run build -w @ufira/design-layout && npm run build -w @ufira/design-export && npm run build -w @ufira/design-persistence",
+    "test": "tsx --test test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@ufira/design-export": "*",
+    "@ufira/design-layout": "*",
+    "@ufira/design-persistence": "*",
+    "@ufira/design-runtime": "*",
+    "@ufira/design-schema": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}
