@@ -4,12 +4,25 @@
 
 <img src="https://raw.githubusercontent.com/ufira-ai/vibma/main/logo.svg" alt="Vibma" width="120" />
 
-# Vibma
+# AI Design Studio
 
-**Vibe Design meets Figma.**
+**A local-first, host-independent AI interface design environment.**
 
 https://github.com/user-attachments/assets/bf38e37d-57bb-40b3-a2d1-f89216117c11
 </div>
+
+> **Current direction:** Vibma and its Figma bridge are legacy code and must not be
+> used as the product runtime or the default development path. Active development is
+> focused exclusively on the standalone AI Design Studio. The Studio is currently a
+> Phase 0 foundation and does **not** yet provide a complete editor, renderer, or AI
+> design workflow. See [Current Project Status](./docs/current-project-status.md). The
+> [AI Design Studio architecture](./docs/ai-design-studio-architecture-analysis.md)
+> is a draft target architecture, not the current implementation.
+
+## Legacy Vibma documentation — do not use for new development
+
+The content below is retained only as historical and migration reference. Do not
+follow its Figma plugin, relay, or MCP setup instructions for the AI Design Studio.
 
 > **Project Status:** Vibma is no longer under active development. Figma has
 > launched native MCP capabilities through

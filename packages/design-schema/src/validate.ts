@@ -51,6 +51,11 @@ export function validateDocument(input: unknown): DesignDocument {
     }
     if (node.type === "image" && !document.assets[node.assetId]) issues.push(`image ${nodeId} references missing asset ${node.assetId}`);
     if (node.type === "instance" && !document.components[node.componentId]) issues.push(`instance ${nodeId} references missing component ${node.componentId}`);
+    for (const [property, tokenName] of Object.entries(node.bindings ?? {})) {
+      const token = document.tokens[tokenName];
+      if (!token) issues.push(`node ${nodeId} ${property} binding references missing token ${tokenName}`);
+      else if (!bindingAccepts(property, token.type)) issues.push(`node ${nodeId} ${property} binding cannot use ${token.type} token ${tokenName}`);
+    }
   }
 
   for (const nodeId of Object.keys(document.nodes)) {
@@ -66,8 +71,17 @@ export function validateDocument(input: unknown): DesignDocument {
     else if (root.type !== "component") issues.push(`component ${componentId} root ${root.id} is not a component node`);
   }
 
+  detectComponentCycles(document, issues);
+
   if (issues.length) throw new DocumentValidationError(issues);
   return document;
+}
+
+function bindingAccepts(property: string, tokenType: string): boolean {
+  if (property === "fill" || property === "stroke") return tokenType === "color";
+  if (property === "spacing" || property === "radius") return tokenType === "number";
+  if (property === "typography") return tokenType === "string";
+  return true;
 }
 
 function findRecordKey<T extends { id: string }>(records: Record<string, T>, value: T): string | undefined {
@@ -91,6 +105,39 @@ function detectCycles(document: DesignDocument, issues: string[]): void {
   };
 
   for (const page of Object.values(document.pages)) for (const childId of page.childIds) visit(childId);
+}
+
+function detectComponentCycles(document: DesignDocument, issues: string[]): void {
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+
+  const dependencies = (componentId: string): string[] => {
+    const rootId = document.components[componentId]?.rootNodeId;
+    if (!rootId) return [];
+    const found = new Set<string>();
+    const walk = (nodeId: NodeId) => {
+      const node = document.nodes[nodeId];
+      if (!node) return;
+      if (node.type === "instance") found.add(node.componentId);
+      for (const childId of node.childIds) walk(childId);
+    };
+    walk(rootId);
+    return [...found];
+  };
+
+  const visit = (componentId: string) => {
+    if (visiting.has(componentId)) {
+      issues.push(`component graph contains a cycle at ${componentId}`);
+      return;
+    }
+    if (visited.has(componentId)) return;
+    visiting.add(componentId);
+    for (const dependency of dependencies(componentId)) visit(dependency);
+    visiting.delete(componentId);
+    visited.add(componentId);
+  };
+
+  for (const componentId of Object.keys(document.components)) visit(componentId);
 }
 
 export function createDocument(id: string, name: string, pageId = "page:1"): DesignDocument {

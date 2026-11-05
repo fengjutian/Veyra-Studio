@@ -102,7 +102,60 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       document.tokens[command.payload.name] = structuredClone(command.payload.token);
       return;
     }
+    case "token.delete": return deleteToken(document, command.payload.name);
+    case "page.create": return createPage(document, command.payload.page, command.payload.index);
+    case "page.rename": {
+      const page = document.pages[command.payload.id];
+      if (!page) throw new CommandError(`Page ${command.payload.id} does not exist`);
+      if (!command.payload.name.trim()) throw new CommandError("Page name cannot be empty");
+      page.name = command.payload.name;
+      return;
+    }
+    case "page.delete": return deletePage(document, command.payload.id);
+    case "component.define": return defineComponent(document, command.payload.component);
+    case "component.remove": return removeComponent(document, command.payload.id);
+    case "component.instantiate": return createNode(document, command.payload.node, command.payload.index);
   }
+}
+
+function createPage(document: DesignDocument, page: DesignDocument["pages"][string], index?: number): void {
+  if (document.pages[page.id]) throw new CommandError(`Page ${page.id} already exists`);
+  if (!page.name.trim()) throw new CommandError("Page name cannot be empty");
+  if (page.childIds.length) throw new CommandError("New pages must be empty");
+  document.pages[page.id] = structuredClone(page);
+  insertAt(document.pageOrder, page.id, index);
+}
+
+function deletePage(document: DesignDocument, id: string): void {
+  const page = document.pages[id];
+  if (!page) throw new CommandError(`Page ${id} does not exist`);
+  if (document.pageOrder.length === 1) throw new CommandError("A document must contain at least one page");
+  if (page.childIds.length) throw new CommandError(`Page ${id} must be empty before deletion`);
+  delete document.pages[id];
+  document.pageOrder = document.pageOrder.filter(pageId => pageId !== id);
+}
+
+function deleteToken(document: DesignDocument, name: string): void {
+  if (!document.tokens[name]) throw new CommandError(`Token ${name} does not exist`);
+  const bound = Object.values(document.nodes).find(node => Object.values(node.bindings ?? {}).includes(name));
+  if (bound) throw new CommandError(`Token ${name} is still bound by node ${bound.id}`);
+  delete document.tokens[name];
+}
+
+function defineComponent(document: DesignDocument, component: DesignDocument["components"][string]): void {
+  if (document.components[component.id]) throw new CommandError(`Component ${component.id} already exists`);
+  const root = requireNode(document, component.rootNodeId);
+  if (root.type !== "component") throw new CommandError(`Component root ${root.id} must have type component`);
+  const duplicate = Object.values(document.components).find(existing => existing.rootNodeId === root.id);
+  if (duplicate) throw new CommandError(`Node ${root.id} already defines component ${duplicate.id}`);
+  document.components[component.id] = structuredClone(component);
+}
+
+function removeComponent(document: DesignDocument, id: string): void {
+  if (!document.components[id]) throw new CommandError(`Component ${id} does not exist`);
+  const instance = Object.values(document.nodes).find(node => node.type === "instance" && node.componentId === id);
+  if (instance) throw new CommandError(`Component ${id} is still used by instance ${instance.id}`);
+  delete document.components[id];
 }
 
 function createNode(document: DesignDocument, node: DesignNode, index?: number): void {

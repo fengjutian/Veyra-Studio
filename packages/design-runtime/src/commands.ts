@@ -1,4 +1,13 @@
-import type { DesignDocument, DesignNode, NodeId, PageId, TokenValue } from "@ufira/design-schema";
+import type {
+  ComponentDefinition,
+  DesignDocument,
+  DesignNode,
+  DesignPage,
+  InstanceNode,
+  NodeId,
+  PageId,
+  TokenValue,
+} from "@ufira/design-schema";
 
 export interface CreateNodeCommand {
   type: "node.create";
@@ -28,12 +37,54 @@ export interface UpsertTokenCommand {
   payload: { name: string; token: TokenValue };
 }
 
+export interface DeleteTokenCommand {
+  type: "token.delete";
+  payload: { name: string };
+}
+
+export interface CreatePageCommand {
+  type: "page.create";
+  payload: { page: DesignPage; index?: number };
+}
+
+export interface RenamePageCommand {
+  type: "page.rename";
+  payload: { id: PageId; name: string };
+}
+
+export interface DeletePageCommand {
+  type: "page.delete";
+  payload: { id: PageId };
+}
+
+export interface DefineComponentCommand {
+  type: "component.define";
+  payload: { component: ComponentDefinition };
+}
+
+export interface RemoveComponentCommand {
+  type: "component.remove";
+  payload: { id: string };
+}
+
+export interface InstantiateComponentCommand {
+  type: "component.instantiate";
+  payload: { node: InstanceNode; index?: number };
+}
+
 export type DesignCommand =
   | CreateNodeCommand
   | PatchNodeCommand
   | DeleteNodeCommand
   | ReparentNodeCommand
-  | UpsertTokenCommand;
+  | UpsertTokenCommand
+  | DeleteTokenCommand
+  | CreatePageCommand
+  | RenamePageCommand
+  | DeletePageCommand
+  | DefineComponentCommand
+  | RemoveComponentCommand
+  | InstantiateComponentCommand;
 
 export interface CommandEnvelope {
   commandId: string;

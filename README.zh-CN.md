@@ -4,12 +4,24 @@
 
 <img src="https://raw.githubusercontent.com/ufira-ai/vibma/main/logo.svg" alt="Vibma" width="120" />
 
-# Vibma
+# AI Design Studio
 
-**Vibe Design 遇上 Figma。**
+**本地优先、宿主无关的 AI 界面设计环境。**
 
 https://github.com/user-attachments/assets/bf38e37d-57bb-40b3-a2d1-f89216117c11
 </div>
+
+> **当前方向：** Vibma 及其 Figma bridge 已转为遗留参考代码，不再作为产品运行时，
+> 也不是默认开发路径。当前开发只面向独立 AI Design Studio。Studio 目前仍处于 Phase 0，
+> 尚未形成可独立使用的编辑器、渲染器或完整 AI 设计闭环。请先阅读
+> [当前项目状态](./docs/current-project-status.md)。
+> [AI Design Studio 架构方案](./docs/ai-design-studio-architecture-analysis.md) 描述的是目标架构，
+> 不是当前已经完成的功能。
+
+## 遗留 Vibma 文档——新开发禁止使用
+
+以下内容仅作为历史和迁移参考保留。开发 AI Design Studio 时，不要执行其中的 Figma
+插件、relay 或 MCP 配置步骤。
 
 > **项目状态：** Vibma 已停止积极开发。Figma 已通过
 > **[Figma for Agents](https://www.figma.com/blog/the-figma-canvas-is-now-open-to-agents/)**

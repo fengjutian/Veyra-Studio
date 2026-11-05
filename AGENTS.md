@@ -1,6 +1,47 @@
 # Vibma Development Workflow
 
-Non-obvious development details for working on the Vibma MCP-to-Figma bridge.
+Development instructions for the independent AI Design Studio. The former Vibma
+MCP-to-Figma bridge remains in the repository as legacy reference code only.
+
+## Current Project State — Read This First
+
+This repository contains **one active product direction and one legacy codebase**:
+
+1. **AI Design Studio (active development target).** `packages/design-schema`,
+   `packages/design-runtime`, and `packages/design-persistence` are early,
+   host-independent foundations. The product is still in Phase 0 and is not yet a
+   complete standalone application.
+2. **Vibma MCP-to-Figma bridge (legacy; do not use).** `packages/core`,
+   `packages/tunnel`, `packages/adapter-figma`, `schema`, `plugin`, and the related
+   setup guides are retained only for source reference and controlled migration.
+
+### Legacy Vibma Policy
+
+- Do not start the relay, import the Figma plugin, configure the Vibma MCP server, or
+  use Figma as the execution backend for new work.
+- Do not add features to or extend the legacy bridge unless the user explicitly asks
+  for legacy maintenance or migration work.
+- Do not make new Studio packages depend on Vibma core, tunnel, Figma adapter, Figma
+  APIs, or generated Figma tool contracts.
+- Existing Vibma behavior may be read as a requirements sample, but its implementation
+  is not the target architecture.
+- Default build, test, and documentation guidance for new work must point to the
+  independent Studio packages, not to Vibma commands.
+
+The target architecture in `docs/ai-design-studio-architecture-analysis.md` is a
+**draft roadmap, not a description of implemented functionality**. In particular,
+there is currently no standalone Studio UI, production renderer, layout/text engine,
+AI orchestration loop, or HTML/PNG export pipeline.
+
+Before planning or changing the project, read
+`docs/current-project-status.md`. Do not infer that a package or feature exists merely
+because it appears in the target directory tree or a future phase in the architecture
+document. Verify the filesystem, tests, and exported APIs first.
+
+## Legacy Vibma Reference
+
+The remaining sections document the old bridge for migration and historical
+maintenance. They are not the default development workflow.
 
 ## Design Philosophy
 

@@ -5,9 +5,17 @@
 > 更新日期：2026-11-05<br>
 > 适用范围：产品 V1、Phase 0 技术验证与后续迁移评审
 
+> [!IMPORTANT]
+> **本文是目标架构与实施决策稿，不是当前功能说明。** 截至 2026-11-05，Vibma bridge
+> 已停止使用，仅作为迁移参考保留。仓库仅实现了 `design-schema`、
+> `design-runtime` 和 `design-persistence` 的早期 Phase 0 基础；独立 Studio UI、渲染器、
+> 布局与文本引擎、AI 编排及完整导出链路尚未完成。判断实际能力时，以
+> [`current-project-status.md`](./current-project-status.md)、源码和测试为准；本文中的目录树、
+> V1 清单与 Phase 1—5 内容均不得视为已经实现。
+
 ## 1. 决策摘要
 
-Vibma 可以演进为独立 AI 设计应用，但不能通过“给现有 Figma bridge 增加一个界面”实现。正确路径是保留 Vibma 产品与兼容链路，在当前 monorepo 内建立隔离的新应用边界，以新的设计文档和命令运行时替代 Figma 提供的隐式能力。
+项目将建设为独立 AI 设计应用，但不能通过“给现有 Figma bridge 增加一个界面”实现。正确路径是在当前 monorepo 内建立隔离的新应用边界，以新的设计文档和命令运行时替代 Figma 提供的隐式能力。Vibma 产品链路停止使用，仅作为迁移期间的行为与设计规则参考。
 
 本方案冻结以下方向：
 

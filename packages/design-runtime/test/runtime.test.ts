@@ -78,3 +78,42 @@ test("records committed transactions but not failed attempts", () => {
   assert.equal(runtime.transactionLog().length, 1);
   assert.equal(runtime.transactionLog()[0].revision, 1);
 });
+
+test("manages pages without allowing the last or a non-empty page to be deleted", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{ type: "page.create", payload: { page: { id: "page:2", name: "Second", childIds: [] } } }]));
+  runtime.execute(envelope(1, [{ type: "page.rename", payload: { id: "page:2", name: "Renamed" } }]));
+  assert.equal(runtime.snapshot().pages["page:2"].name, "Renamed");
+  runtime.execute(envelope(2, [{ type: "page.delete", payload: { id: "page:2" } }]));
+  assert.throws(() => runtime.execute(envelope(3, [{ type: "page.delete", payload: { id: "page:1" } }])), /at least one page/);
+});
+
+test("protects tokens that are still bound", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  const node = frame("node:1");
+  node.bindings = { fill: "color.primary" };
+  runtime.execute(envelope(0, [
+    { type: "token.upsert", payload: { name: "color.primary", token: { type: "color", value: "#3366ff" } } },
+    { type: "node.create", payload: { node } },
+  ]));
+  assert.throws(() => runtime.execute(envelope(1, [{ type: "token.delete", payload: { name: "color.primary" } }])), /still bound/);
+});
+
+test("defines a component and creates an instance through domain commands", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  const root = frame("component:root");
+  root.type = "component";
+  const instance: DesignNode = {
+    ...frame("instance:1"),
+    type: "instance",
+    componentId: "component:button",
+    overrides: {},
+  };
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: root } },
+    { type: "component.define", payload: { component: { id: "component:button", name: "Button", rootNodeId: root.id } } },
+    { type: "component.instantiate", payload: { node: instance } },
+  ]));
+  assert.equal(runtime.snapshot().nodes[instance.id].type, "instance");
+  assert.throws(() => runtime.execute(envelope(1, [{ type: "component.remove", payload: { id: "component:button" } }])), /still used/);
+});
