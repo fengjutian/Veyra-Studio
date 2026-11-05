@@ -94,6 +94,12 @@ export class DesignRuntime {
 
 function applyCommand(document: DesignDocument, command: DesignCommand): void {
   switch (command.type) {
+    case "document.rename": {
+      const name = command.payload.name.trim();
+      if (!name) throw new CommandError("Document name cannot be empty");
+      document.meta.name = name;
+      return;
+    }
     case "node.create": return createNode(document, command.payload.node, command.payload.index);
     case "node.patch": {
       const node = requireNode(document, command.payload.id);

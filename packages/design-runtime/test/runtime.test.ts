@@ -117,3 +117,11 @@ test("defines a component and creates an instance through domain commands", () =
   assert.equal(runtime.snapshot().nodes[instance.id].type, "instance");
   assert.throws(() => runtime.execute(envelope(1, [{ type: "component.remove", payload: { id: "component:button" } }])), /still used/);
 });
+
+test("renames a document through a revisioned domain command", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Before", "page:1"));
+  runtime.execute({ commandId: "rename:1", documentId: "doc:1", baseRevision: 0, actor: { type: "human", id: "user:1" }, commands: [{ type: "document.rename", payload: { name: "After" } }] });
+  assert.equal(runtime.snapshot().meta.name, "After");
+  assert.equal(runtime.snapshot().revision, 1);
+  assert.throws(() => runtime.execute({ commandId: "rename:2", documentId: "doc:1", baseRevision: 1, actor: { type: "human", id: "user:1" }, commands: [{ type: "document.rename", payload: { name: "  " } }] }), /cannot be empty/);
+});

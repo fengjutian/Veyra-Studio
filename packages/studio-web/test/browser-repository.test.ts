@@ -40,6 +40,20 @@ test("rejects mixed projects and duplicate transaction revisions", async t => {
   await repository.appendTransactions([entry("project:1", 1)]); await assert.rejects(repository.appendTransactions([entry("project:1", 1)]));
 });
 
+test("lists and deletes complete projects", async t => {
+  const repository = createRepository(); t.after(() => repository.deleteDatabase());
+  const first = createDocument("project:1", "First", "page:1"), second = createDocument("project:2", "Second", "page:2");
+  first.meta.updatedAt = "2026-01-01T00:00:00.000Z";
+  second.meta.updatedAt = "2026-01-02T00:00:00.000Z";
+  await repository.saveSnapshot(first); await repository.saveSnapshot(second);
+  await repository.appendTransactions([entry(first.id, 1)]);
+  assert.deepEqual((await repository.listProjects()).map(project => project.name), ["Second", "First"]);
+  await repository.deleteProject(first.id);
+  assert.deepEqual((await repository.listProjects()).map(project => project.id), [second.id]);
+  assert.deepEqual(await repository.listTransactions(first.id), []);
+  await assert.rejects(repository.open(first.id), /does not exist/);
+});
+
 function createRepository(): DexieProjectRepository { return new DexieProjectRepository({ databaseName: `test-${crypto.randomUUID()}`, indexedDB, IDBKeyRange }); }
 function entry(documentId: string, revision: number) { return { commandId: `cmd:${revision}`, documentId, revision, committedAt: new Date(0).toISOString(), actor: { type: "human" as const, id: "test" }, commands: [], warnings: [] }; }
 function frame(id: string): DesignNode { return { id, type: "frame", name: id, parentId: "page:1", childIds: [], visible: true, locked: false, layout: defaultLayout(), appearance: defaultAppearance() }; }

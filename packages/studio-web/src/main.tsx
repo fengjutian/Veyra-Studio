@@ -4,14 +4,16 @@ import { SafeAiEditor, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orch
 import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
-import { DexieProjectRepository } from "./browser-repository";
+import { DexieProjectRepository, type StoredProjectSummary } from "./browser-repository";
 import "./styles.css";
 
 const PROJECT_ID = "studio:local";
 const CanvasInteractionLayer = lazy(() => import("./canvas-interaction-layer"));
+const repository = new DexieProjectRepository();
 
 function App() {
   const [project, setProject] = useState<StudioProject>();
+  const [projects, setProjects] = useState<StoredProjectSummary[]>([]);
   const [document, setDocument] = useState<DesignDocument>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("添加一个蓝色卡片");
@@ -22,7 +24,7 @@ function App() {
   const operationInFlight = useRef(false);
   const editor = useMemo(() => project ? new SafeAiEditor(project, demoPlanner) : undefined, [project]);
 
-  useEffect(() => { void initialize().then(({ project: value }) => { setProject(value); setDocument(value.snapshot()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { setProject(value); setDocument(value.snapshot()); setProjects(await repository.listProjects()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
 
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[document.pageOrder[0]!];
@@ -40,8 +42,32 @@ function App() {
     const current = project.snapshot();
     const envelope: CommandEnvelope = { commandId: crypto.randomUUID(), documentId: current.id, baseRevision: current.revision, actor: { type: "human", id: "local-user" }, commands };
     const committed = await project.execute(envelope);
-    setDocument(project.snapshot()); setMessage(`已提交 revision ${committed.result.revision}`); setPreview(undefined);
+    setDocument(project.snapshot()); setProjects(await repository.listProjects()); setMessage(`已提交 revision ${committed.result.revision}`); setPreview(undefined);
   };
+  const openProject = async (id: string) => {
+    const opened = await StudioProject.open(repository, id);
+    setProject(opened.project); setDocument(opened.project.snapshot()); setSelectedIds([]); setPreview(undefined); setMessage(opened.recovery.degraded ? "项目已降级恢复，请检查事务日志" : "项目已打开");
+  };
+  const createProject = () => void run(async () => {
+    const name = window.prompt("新项目名称", "未命名设计")?.trim(); if (!name) return;
+    const created = await StudioProject.create(repository, `project:${crypto.randomUUID()}`, name, `page:${crypto.randomUUID()}`);
+    setProject(created); setDocument(created.snapshot()); setProjects(await repository.listProjects()); setSelectedIds([]); setPreview(undefined); setMessage("项目已创建");
+  });
+  const renameProject = () => void run(async () => {
+    const name = window.prompt("项目名称", document.meta.name)?.trim(); if (!name || name === document.meta.name) return;
+    await execute([{ type: "document.rename", payload: { name } }]);
+  });
+  const deleteCurrentProject = () => void run(async () => {
+    if (!window.confirm(`删除项目“${document.meta.name}”？此操作不可撤销。`)) return;
+    await repository.deleteProject(document.id);
+    const remaining = await repository.listProjects();
+    if (remaining[0]) await openProject(remaining[0].id);
+    else {
+      const created = await StudioProject.create(repository, `project:${crypto.randomUUID()}`, "未命名设计", `page:${crypto.randomUUID()}`);
+      setProject(created); setDocument(created.snapshot()); setSelectedIds([]); setPreview(undefined);
+    }
+    setProjects(await repository.listProjects()); setMessage("项目已删除");
+  });
   const addNode = (type: "frame" | "text" | "rectangle") => void run(() => execute([{ type: "node.create", payload: { node: makeNode(type, page.id) } }]));
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
@@ -49,7 +75,7 @@ function App() {
   const previewStale = preview?.baseRevision !== document.revision;
 
   return <div className="studio">
-    <header><strong>AI Design Studio</strong><span>{document.meta.name} · r{document.revision}</span><span className="status">{message}</span></header>
+    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
     <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
     <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selected ? <>
@@ -76,11 +102,11 @@ function Field({ label, value, type = "text", onCommit }: { label: string; value
   return <label>{label}<input type={type} value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => String(value) !== draft && onCommit(draft)} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>;
 }
 
-async function initialize() {
-  const repository = new DexieProjectRepository();
+async function initialize(repository: DexieProjectRepository) {
   await migrateLegacySnapshot(repository, PROJECT_ID);
-  try { return await StudioProject.open(repository, PROJECT_ID); }
-  catch { return { project: await StudioProject.create(repository, PROJECT_ID, "本地设计", "page:1"), recovery: undefined }; }
+  const existing = await repository.listProjects();
+  if (existing[0]) return StudioProject.open(repository, existing[0].id);
+  return { project: await StudioProject.create(repository, PROJECT_ID, "本地设计", "page:1"), recovery: undefined };
 }
 
 async function migrateLegacySnapshot(repository: DexieProjectRepository, projectId: string): Promise<void> {

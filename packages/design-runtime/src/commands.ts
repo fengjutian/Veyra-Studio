@@ -14,6 +14,11 @@ export interface CreateNodeCommand {
   payload: { node: DesignNode; index?: number };
 }
 
+export interface RenameDocumentCommand {
+  type: "document.rename";
+  payload: { name: string };
+}
+
 export interface PatchNodeCommand {
   type: "node.patch";
   payload: {
@@ -73,6 +78,7 @@ export interface InstantiateComponentCommand {
 }
 
 export type DesignCommand =
+  | RenameDocumentCommand
   | CreateNodeCommand
   | PatchNodeCommand
   | DeleteNodeCommand

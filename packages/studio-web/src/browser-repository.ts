@@ -6,6 +6,7 @@ import type { DesignDocument } from "@ufira/design-schema";
 interface ProjectRecord { id: string; revision: number; updatedAt: string }
 interface SnapshotRecord { projectId: string; revision: number; document: DesignDocument }
 interface AssetRecord { projectId: string; hash: string; bytes: Uint8Array }
+export interface StoredProjectSummary { id: string; name: string; revision: number; updatedAt: string }
 interface StudioDatabase extends Dexie {
   projects: EntityTable<ProjectRecord, "id">;
   snapshots: EntityTable<SnapshotRecord, "projectId">;
@@ -73,6 +74,20 @@ export class DexieProjectRepository implements ProjectRepository {
     }
     const latestKnownRevision = Math.max(snapshot.revision, ...entries.map(entry => entry.revision));
     return { document: runtime.snapshot(), recoveredFromRevision: snapshot.revision, replayedTransactions, latestKnownRevision, degraded };
+  }
+
+  async listProjects(): Promise<StoredProjectSummary[]> {
+    const snapshots = await this.database.snapshots.toArray();
+    return snapshots.map(({ document }) => ({ id: document.id, name: document.meta.name, revision: document.revision, updatedAt: document.meta.updatedAt })).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  async deleteProject(projectId: string): Promise<void> {
+    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.transactions, this.database.assets, async () => {
+      await this.database.projects.delete(projectId);
+      await this.database.snapshots.delete(projectId);
+      await this.database.transactions.where("documentId").equals(projectId).delete();
+      await this.database.assets.where("projectId").equals(projectId).delete();
+    });
   }
 
   close(): void { this.database.close(); }
