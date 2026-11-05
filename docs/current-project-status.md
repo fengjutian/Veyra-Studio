@@ -27,6 +27,9 @@
 - `packages/ai-orchestrator`：AI 安全编辑闭环的第一阶段原型，包含可替换 Planner
   契约、临时运行时 dry-run、before/after 预览、影响节点、warnings、取消、显式确认
   提交，以及基于 `baseRevision` 的过期计划拒绝；尚未接入真实模型 Provider 和 UI；
+- `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
+  节点创建/选择/删除、基础属性编辑、localStorage 项目恢复，以及 AI 计划预览、取消和
+  确认提交界面；它用于验证闭环，尚未接入 Moveable/Selecto、Dexie 和真实 AI Provider；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 
@@ -44,8 +47,8 @@
 
 ## 尚未实现或尚未达到可用状态
 
-- 独立的 `studio-web` 或桌面工作台；
-- 可交互画布、图层面板和属性面板；
+- 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
+- 完整可交互画布、树形图层面板和属性面板；当前只支持顶层节点和基础属性；
 - 生产可用的布局、文本测量和渲染系统；
 - 生产可用的 HTML/CSS，以及 PNG、SVG 的完整独立导出链路；
 - AI Provider、真实 Planner、可视化审批、Reviewer 的完整编辑闭环；当前仅有安全计划、
@@ -81,6 +84,13 @@
 ```bash
 npm run build:studio-core
 npm run test:studio-core
+npm run build:studio-web
+```
+
+本地启动 Web 垂直切片：
+
+```bash
+npm run dev:studio-web
 ```
 
 这些命令成功仅表示底层包能够构建并通过已有测试，不表示独立 Studio 已经可运行。

@@ -68,8 +68,9 @@ async function initialize() {
 
 function makeNode(type: "frame" | "text" | "rectangle", parentId: string): DesignNode {
   const id = `${type}:${crypto.randomUUID().slice(0, 8)}`;
-  const base = { id, type, name: type === "text" ? "文本" : type === "frame" ? "Frame" : "矩形", parentId, childIds: [], visible: true, locked: false, layout: { ...defaultLayout(), x: 48, y: 48, width: type === "text" ? 160 : 240, height: type === "text" ? 48 : 140 }, appearance: { ...defaultAppearance(), fill: type === "text" ? "#ffffff" : "#8b5cf6", cornerRadius: 12 } };
-  return type === "text" ? { ...base, type, text: "双击编辑文本", fontFamily: "Inter", fontSize: 20, lineHeight: 28 } : base;
+  const common = { id, name: type === "text" ? "文本" : type === "frame" ? "Frame" : "矩形", parentId, childIds: [], visible: true, locked: false, layout: { ...defaultLayout(), x: 48, y: 48, width: type === "text" ? 160 : 240, height: type === "text" ? 48 : 140 }, appearance: { ...defaultAppearance(), fill: type === "text" ? "#ffffff" : "#8b5cf6", cornerRadius: 12 } };
+  if (type === "text") return { ...common, type: "text", text: "双击编辑文本", fontFamily: "Inter", fontSize: 20, lineHeight: 28 };
+  return { ...common, type };
 }
 
 const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "创建一个经过安全预演的蓝色卡片", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fill: "#2563eb", cornerRadius: 20 } } } }] }; } };
