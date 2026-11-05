@@ -130,3 +130,15 @@ test("renames a document through a revisioned domain command", () => {
   assert.equal(runtime.snapshot().revision, 1);
   assert.throws(() => runtime.execute({ commandId: "rename:2", documentId: "doc:1", baseRevision: 1, actor: { type: "human", id: "user:1" }, commands: [{ type: "document.rename", payload: { name: "  " } }] }), /cannot be empty/);
 });
+
+test("patches text content and typography only on text nodes", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  const runtime = new DesignRuntime(document);
+  const text: DesignNode = { ...frame("text:1"), type: "text", text: "Before", fontFamily: "Inter", fontSize: 16, lineHeight: 24 };
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: text } }]));
+  runtime.execute(envelope(1, [{ type: "text.patch", payload: { id: text.id, patch: { text: "After", fontSize: 20, lineHeight: 28 } } }]));
+  const updated = runtime.snapshot().nodes[text.id];
+  assert.equal(updated?.type === "text" && updated.text, "After");
+  assert.equal(updated?.type === "text" && updated.fontSize, 20);
+  assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { fontSize: 0 } } }])), /must be positive/);
+});

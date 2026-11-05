@@ -88,19 +88,29 @@ function App() {
     setProjects(await repository.listProjects()); setMessage("项目已删除");
   });
   const addNode = (type: "frame" | "text" | "rectangle") => void run(() => execute([{ type: "node.create", payload: { node: makeNode(type, page.id) } }]));
-  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
+  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => selected && patchNode(selected.id, patchValue);
+  const patchText = (patchValue: { text?: string; fontFamily?: string; fontSize?: number; lineHeight?: number }) => selected?.type === "text" && void run(() => execute([{ type: "text.patch", payload: { id: selected.id, patch: patchValue } }]));
+  const exportHtml = () => {
+    const result = project.exportHtml({ pageId: page.id, viewport: { width: 960, height: 680 }, title: document.meta.name });
+    downloadFile(`${safeFilename(document.meta.name)}.html`, result.document, "text/html");
+    setMessage(`HTML 已导出 · ${result.diagnostics.length} 条诊断`);
+  };
+  const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
   const previewStale = preview?.baseRevision !== document.revision;
 
   return <div className="studio">
-    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
+    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} onClick={exportHtml}>HTML</button><button disabled={busy} onClick={exportJson}>JSON</button><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
     <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
-    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
+    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy || selectedIds.some(id => document.nodes[id]?.locked)} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selected ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
       {(["x", "y", "width", "height"] as const).map(key => <Field key={key} label={key} type="number" value={selected.layout[key]} onCommit={value => patch({ layout: { ...selected.layout, [key]: Number(value) } })} />)}
       <Field label="填充" value={selected.appearance.fill ?? "#ffffff"} onCommit={value => patch({ appearance: { ...selected.appearance, fill: value } })} />
+      <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
+      <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
+      {selected.type === "text" && <><Field label="文本" value={selected.text} onCommit={text => patchText({ text })} /><Field label="字体" value={selected.fontFamily} onCommit={fontFamily => patchText({ fontFamily })} /><Field label="字号" type="number" value={selected.fontSize} onCommit={value => patchText({ fontSize: Number(value) })} /><Field label="行高" type="number" value={selected.lineHeight} onCommit={value => patchText({ lineHeight: Number(value) })} /></>}
       <button disabled={busy} className="danger" onClick={() => void run(async () => { await execute(selectedIds.map(id => ({ type: "node.delete", payload: { id } }))); setSelectedIds([]); })}>删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
     </> : <p>选择画布中的节点</p>}
     <hr/><h2>AI 安全编辑</h2><textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
@@ -111,8 +121,8 @@ function App() {
 }
 
 function CanvasNode({ node, selected, onSelect }: { node: DesignNode; selected: boolean; onSelect(event: React.MouseEvent): void }) {
-  const style: React.CSSProperties = { left: node.layout.x, top: node.layout.y, width: node.layout.width, height: node.layout.height, background: node.appearance.fill ?? "transparent", borderRadius: node.appearance.cornerRadius, opacity: node.appearance.opacity };
-  return <button data-node-id={node.id} className={selected ? "node selected" : "node"} style={style} onClick={event => { event.stopPropagation(); onSelect(event); }}>{node.type === "text" ? node.text : node.name}</button>;
+  const style: React.CSSProperties = { display: node.visible ? "flex" : "none", left: node.layout.x, top: node.layout.y, width: node.layout.width, height: node.layout.height, background: node.appearance.fill ?? "transparent", borderRadius: node.appearance.cornerRadius, opacity: node.appearance.opacity };
+  return <button data-node-id={node.id} className={`${selected ? "node selected" : "node"}${node.locked ? " locked" : ""}`} style={style} onClick={event => { event.stopPropagation(); onSelect(event); }}>{node.type === "text" ? node.text : node.name}</button>;
 }
 
 function Field({ label, value, type = "text", onCommit }: { label: string; value: string | number; type?: string; onCommit(value: string): void }) {
@@ -120,6 +130,8 @@ function Field({ label, value, type = "text", onCommit }: { label: string; value
   useEffect(() => setDraft(String(value)), [value]);
   return <label>{label}<input type={type} value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => String(value) !== draft && onCommit(draft)} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label>;
 }
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange(value: boolean): void }) { return <label>{label}<input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} /></label>; }
 
 async function initialize(repository: DexieProjectRepository) {
   await migrateLegacySnapshot(repository, PROJECT_ID);
@@ -147,5 +159,8 @@ const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "�
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function toggleId(ids: string[], id: string): string[] { return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]; }
+
+function safeFilename(name: string): string { return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() || "design"; }
+function downloadFile(name: string, content: string, type: string): void { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
 
 createRoot(document.getElementById("root")!).render(<App />);

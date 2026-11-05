@@ -135,6 +135,16 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       Object.assign(node, structuredClone(command.payload.patch));
       return;
     }
+    case "text.patch": {
+      const node = requireNode(document, command.payload.id);
+      if (node.type !== "text") throw new CommandError(`Node ${node.id} is not a text node`);
+      const { patch } = command.payload;
+      if (patch.fontFamily !== undefined && !patch.fontFamily.trim()) throw new CommandError("Font family cannot be empty");
+      if (patch.fontSize !== undefined && (!Number.isFinite(patch.fontSize) || patch.fontSize <= 0)) throw new CommandError("Font size must be positive");
+      if (patch.lineHeight !== undefined && (!Number.isFinite(patch.lineHeight) || patch.lineHeight <= 0)) throw new CommandError("Line height must be positive");
+      Object.assign(node, structuredClone(patch));
+      return;
+    }
     case "node.delete": return deleteNode(document, command.payload.id);
     case "node.reparent": return reparentNode(document, command.payload.id, command.payload.parentId, command.payload.index);
     case "token.upsert": {

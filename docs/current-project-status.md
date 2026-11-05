@@ -37,6 +37,9 @@
   事务和资产的删除操作；
 - 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
   以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
+- 属性面板支持文本内容、字体、字号、行高、节点显隐和锁定；文本修改通过独立
+  `text.patch` 命令校验类型和数值，不扩张通用节点 patch；
+- 工作台可下载当前页面的独立 HTML 交付物和当前项目 JSON 备份，并报告 HTML 导出诊断数量；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 

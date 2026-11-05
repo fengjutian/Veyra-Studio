@@ -32,6 +32,14 @@ export interface PatchNodeCommand {
   };
 }
 
+export interface PatchTextCommand {
+  type: "text.patch";
+  payload: {
+    id: NodeId;
+    patch: Partial<Pick<Extract<DesignNode, { type: "text" }>, "text" | "fontFamily" | "fontSize" | "lineHeight">>;
+  };
+}
+
 export interface DeleteNodeCommand {
   type: "node.delete";
   payload: { id: NodeId };
@@ -87,6 +95,7 @@ export type DesignCommand =
   | RenameDocumentCommand
   | CreateNodeCommand
   | PatchNodeCommand
+  | PatchTextCommand
   | DeleteNodeCommand
   | ReparentNodeCommand
   | UpsertTokenCommand
