@@ -1,6 +1,10 @@
 > **[简体中文](./CARRYME.zh-CN.md)**
 
-# Vibma — NPM Setup
+# Vibma — NPM Setup (Legacy — Do Not Use)
+
+> **DEPRECATED:** Do not install or configure Vibma for new development. The active
+> direction is the standalone AI Design Studio. Read
+> [`docs/current-project-status.md`](./docs/current-project-status.md).
 
 > **No cloning, no building.** Install the tunnel and MCP server from npm, grab the plugin from GitHub, and connect.
 >

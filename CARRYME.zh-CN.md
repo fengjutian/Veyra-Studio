@@ -1,6 +1,9 @@
 > **[English](./CARRYME.md)**
 
-# Vibma — NPM 安装方式
+# Vibma — NPM 安装方式（遗留——禁止用于新开发）
+
+> **已废弃：** 新开发不要安装或配置 Vibma。当前方向是独立 AI Design Studio。
+> 请阅读 [`docs/current-project-status.md`](./docs/current-project-status.md)。
 
 > **无需克隆，无需构建。** 从 npm 安装 tunnel 和 MCP server，从 GitHub 获取插件，即可连接。
 >

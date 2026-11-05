@@ -1,6 +1,9 @@
 > **[English](./DRAGME.md)**
 
-# Vibma 安装指南
+# Vibma 安装指南（遗留——禁止用于新开发）
+
+> **已废弃：** 新开发不要执行本指南。Vibma 及 Figma bridge 仅作为遗留参考代码保留。
+> 请从 [`docs/current-project-status.md`](./docs/current-project-status.md) 开始。
 
 > **本指南假设你已克隆仓库，并在项目根目录下执行命令。** 如果尚未克隆：
 > ```bash

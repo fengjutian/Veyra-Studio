@@ -1,6 +1,10 @@
 > **[简体中文](./DRAGME.zh-CN.md)**
 
-# Vibma Setup Guide
+# Vibma Setup Guide (Legacy — Do Not Use)
+
+> **DEPRECATED:** Do not follow this guide for new development. Vibma and the Figma
+> bridge are legacy reference code. Start with
+> [`docs/current-project-status.md`](./docs/current-project-status.md).
 
 > **This guide assumes you've cloned the repo and are running commands from the project root.** If you haven't yet:
 > ```bash
