@@ -1,0 +1,21 @@
+# Text typography params — mirrors Figma's TextNode properties
+# Include via $mixin: text_params
+
+text_params:
+  fontSize: { type: number, optional: true, description: "Font size" }
+  fontFamily: { type: string, optional: true, description: "Font family" }
+  fontStyle: { type: string, optional: true, description: 'Font variant e.g. "Bold", "Italic" — overrides fontWeight' }
+  fontWeight: { type: number, optional: true, description: "100-900. Ignored when fontStyle is set." }
+  lineHeight: { type: line_height, optional: true }
+  letterSpacing: { type: letter_spacing, optional: true }
+  textCase: { type: enum, values: [ORIGINAL, UPPER, LOWER, TITLE, SMALL_CAPS, SMALL_CAPS_FORCED], optional: true }
+  textDecoration: { type: enum, values: [NONE, UNDERLINE, STRIKETHROUGH], optional: true }
+  # fills intentionally omitted — geometry_params provides it. Text-specific color: use fontColor/fontColorVariableName/fontColorStyleName.
+  fontColor: { type: color, optional: true, description: "Shorthand — sets text color (auto-binds to matching variable/style)" }
+  fontColorVariableName: { type: string, optional: true, description: "Bind color variable by name e.g. 'text/primary'" }
+  fontColorStyleName: { type: string, optional: true, description: "Apply paint style — overrides fontColor" }
+  textStyleId: { type: string, optional: true, description: "Apply text style by ID — overrides fontSize/fontWeight" }
+  textStyleName: { type: string, optional: true, description: "Text style by name (case-insensitive)" }
+  textAlignHorizontal: { type: enum, values: [LEFT, CENTER, RIGHT, JUSTIFIED], optional: true }
+  textAlignVertical: { type: enum, values: [TOP, CENTER, BOTTOM], optional: true }
+  textAutoResize: { type: enum, values: [NONE, WIDTH_AND_HEIGHT, HEIGHT, TRUNCATE], optional: true }

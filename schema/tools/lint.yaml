@@ -1,0 +1,148 @@
+endpoint: lint
+domain: quality
+description: "Run design quality and accessibility checks."
+description_zh: "运行设计质量和无障碍检查。"
+
+notes: |
+  // Lint runs automated design quality and accessibility checks on a node tree.
+  // ---
+  // Rules: "all" (default), or filter by category or specific rule names.
+  // Category meta-rules (expand to all rules in that category):
+  //   "component" — component property binding checks
+  //   "composition" — layout and positioning checks
+  //   "token" — design token / style usage checks
+  //   "naming" — layer naming checks
+  //   "wcag" / "accessibility" — all WCAG accessibility checks
+  // ---
+  // Severity levels (output is sorted by severity, highest first):
+  //   "error" — definite bug, must fix
+  //   "unsafe" — likely causes layout/accessibility problems
+  //   "heuristic" — probably worth fixing, context-dependent
+  //   "style" — opinionated, nice-to-have (leaf nodes, decorative elements often downgraded here)
+  // Context-aware: leaf nodes (text, shapes, small frames) are treated differently from containers.
+  //   Small labels with HUG sizing, leaf nodes on cross-axis — downgraded to "style" instead of "heuristic".
+  //   Per-finding severity overrides appear on individual nodes when context changes the default.
+  // ---
+  // Component rules [component]:
+  //   "no-text-property" — component text not exposed as editable property [heuristic]
+  //   "component-bindings" — unbound text, orphaned properties, unexposed nested text [heuristic; orphaned→unsafe, nested→style]
+  // Composition rules [composition]:
+  //   "no-autolayout" — frames with manually positioned children [heuristic; leaf-only containers→style]
+  //   "overlapping-children" — children stacked at same position [heuristic]
+  //   "shape-instead-of-frame" — shapes used as containers [style]
+  //   "fixed-in-autolayout" — FIXED-size children in auto-layout parents [heuristic]
+  //   "unbounded-hug" — HUG on both axes [unsafe; short leaf text→style]
+  //   "fill-in-hug" — collapsed FILL on the same axis inside a HUG parent (existing anchored states may be valid) [unsafe]
+  //   "hug-cross-axis" — HUG on cross-axis of constrained parent [heuristic; leaf nodes→style]
+  //   "empty-container" — empty frames, excludes SLOT nodes [style]
+  // Token rules [token]:
+  //   "hardcoded-color" — colors not using styles or variables [heuristic]
+  //   "hardcoded-token" — numeric values not bound to FLOAT variable [heuristic]
+  //   "no-text-style" — text without a text style [heuristic]
+  // Naming rules [naming]:
+  //   "default-name" — default names like "Frame 1" [style]
+  //   "stale-text-name" — text node name doesn't match content [style]
+  // Accessibility rules [wcag]:
+  //   "wcag-contrast" — AA contrast ratio [unsafe]
+  //   "wcag-contrast-enhanced" — AAA contrast ratio [style]
+  //   "wcag-non-text-contrast" — non-text 3:1 contrast [heuristic]
+  //   "wcag-target-size" — targets below 24x24px [unsafe]
+  //   "wcag-text-size" — text below 12px [unsafe]
+  //   "wcag-line-height" — line height below 1.5x [style]
+  // ---
+  // maxDepth limits how deep the tree traversal goes (default: 10). maxFindings caps total findings (default: 50).
+  // fix: auto-converts frames to auto-layout. Use after lint.check identifies "no-autolayout" issues.
+
+methods:
+  check:
+    tier: read
+    description: Run design linter on a node tree
+    example: 'lint(method:"check", nodeId:"0:1", rules:["wcag","hardcoded-color"])'
+    params:
+      nodeId:
+        type: string
+        optional: true
+        description: "Node ID to lint. If omitted: 1 selected node → lints that node, 2+ selected → lints entire page (not the selection), 0 selected → error. Always pass nodeId explicitly for reliable targeting."
+      rules:
+        type: string[]
+        coerce: json
+        optional: true
+        description: 'Rules to run. Default: ["all"]. Categories: "component", "composition", "token", "naming", "wcag"/"accessibility". Or specific rule names.'
+      maxDepth:
+        type: number
+        coerce: true
+        optional: true
+        description: "Max tree depth (default: 10)"
+      maxFindings:
+        type: number
+        coerce: true
+        optional: true
+        description: "Max findings (default: 50)"
+      minSeverity:
+        type: enum
+        values: [error, unsafe, heuristic, style, verbose]
+        optional: true
+        description: "Minimum severity to report (default: style). Set to 'verbose' to include AAA contrast and line-height checks."
+      skipInstances:
+        type: boolean
+        coerce: true
+        optional: true
+        description: "Skip instance internals — findings inside instances are owned by the component (default: true)"
+    response:
+      type: object
+      tsType: LintResult
+      properties:
+        nodeId: { type: string, required: true }
+        nodeName: { type: string, required: true }
+        categories:
+          type: array
+          required: true
+          description: "Sorted by severity (error > unsafe > heuristic > style)"
+          items:
+            type: object
+            properties:
+              rule: { type: string, required: true }
+              severity: { type: string, required: true, description: "error | unsafe | heuristic | style" }
+              category: { type: string, required: true, description: "component | composition | token | accessibility | naming" }
+              count: { type: number, required: true }
+              fix: { type: string, required: true }
+              nodes:
+                type: array
+                required: true
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, required: true }
+                    name: { type: string, required: true }
+                    severity: { type: string, optional: true, description: "Per-finding override when context changes the default" }
+        warning: { type: string }
+      required: [nodeId, nodeName, categories]
+
+  fix:
+    tier: edit
+    description: Auto-fix frames to auto-layout
+    params:
+      items:
+        type: array
+        coerce: json
+        required: true
+        description: "Array of {nodeId, layoutMode?, itemSpacing?}"
+        items:
+          type: object
+          properties:
+            nodeId: { type: string, required: true, description: Frame node ID, aliases: [id] }
+            layoutMode:
+              type: enum
+              values: [VERTICAL, HORIZONTAL]
+              optional: true
+              description: "Direction (default: auto-detected)"
+            itemSpacing:
+              type: number
+              coerce: true
+              optional: true
+              description: "Spacing between children"
+      depth:
+        $ref: depth
+        description: "Response detail for fixed nodes: omit for stubs, 0=properties, -1=full tree"
+    response:
+      type: batch_mixed

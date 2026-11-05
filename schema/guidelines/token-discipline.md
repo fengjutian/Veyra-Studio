@@ -1,0 +1,53 @@
+# Token Discipline
+
+Every color, spacing value, and text style should come from a design token — not hardcoded values.
+
+## Colors
+
+Bind fills and strokes to color variables instead of hex values.
+
+- Fill: `fillVariableName:"bg/surface"` or `fillStyleName:"Surface/Primary"`
+- Stroke: `strokeVariableName:"border/subtle"`
+- Text color: `fontColorVariableName:"text/primary"`
+
+If no matching variable exists, create one first:
+```
+variables(method:"create", collectionId:"Tokens", items:[{name:"bg/warning", type:"COLOR", value:"#F59E0B", scopes:["ALL_FILLS"]}])
+```
+
+## Spacing and Radius
+
+Pass a variable name string instead of a number for cornerRadius, padding, itemSpacing, strokeWeight, opacity.
+
+- `cornerRadius:"radius/8"` not `cornerRadius:8`
+- `paddingTop:"space/16"` not `paddingTop:16`
+- `itemSpacing:"space/8"` not `itemSpacing:8`
+
+Create FLOAT variables with appropriate scopes:
+```
+variables(method:"create", collectionId:"Tokens", items:[{name:"space/32", type:"FLOAT", value:32, scopes:["GAP"]}])
+```
+
+## Text Styles
+
+Apply text styles by name — don't set fontSize/fontFamily/fontWeight manually.
+
+- `textStyleName:"Body/M"` on text.create or frames.update
+- Create styles with `styles(method:"create", type:"text", items:[{name:"Body/M", fontFamily:"Inter", fontSize:14, lineHeight:{value:20, unit:"PIXELS"}}])`
+
+## Common Scopes
+
+COLOR variables:
+- `ALL_FILLS` — background fills
+- `TEXT_FILL` — text color
+- `STROKE_COLOR` — borders and outlines
+
+FLOAT variables:
+- `GAP`, `WIDTH_HEIGHT` — spacing and padding
+- `CORNER_RADIUS` — border radius
+- `STROKE_FLOAT` — stroke weight
+- `OPACITY` — transparency
+
+## Checking
+
+Lint rules `hardcoded-color`, `hardcoded-token`, `no-text-style` catch unbound values. Run `audit` on any node to check.

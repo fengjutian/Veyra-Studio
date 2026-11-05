@@ -1,0 +1,258 @@
+/**
+ * Generate help data module from resolved endpoints.
+ *
+ * Produces a TypeScript file with:
+ * - helpDirectory: top-level listing of all endpoints
+ * - helpEndpoints: per-endpoint summary + per-method detail
+ * - resolveHelp(): runtime lookup function
+ */
+import type { ResolvedEndpoint, ResolvedMethod, RawParam, RawResponse } from "./types";
+import type { RawPrompt } from "./gen-prompts";
+import { appendSharedTypes } from "./gen-descriptions";
+
+// ─── Formatters ──────────────────────────────────────────────────
+
+function paramType(param: RawParam): string {
+  let type = param.tsType ?? param.type ?? "string";
+  if (param.values) type = param.values.join(" | ");
+  if (param.coerce === "hex_or_rgba" || type === "color") type = "Color";
+  if (type === "paints") type = "Paint[]";
+  if (type === "token") type = "string";
+  if (type === "line_height") type = 'number | {value, unit: "PIXELS"|"PERCENT"|"AUTO"}';
+  if (type === "letter_spacing") type = 'number | {value, unit: "PIXELS"|"PERCENT"}';
+  return type;
+}
+
+function paramLines(name: string, param: RawParam, indent = 4): string[] {
+  const type = paramType(param);
+  const req = param.required === true ? "required" : "optional";
+  const desc = param.description ? ` — ${param.description}` : "";
+  const lines: string[] = [];
+  lines.push(`${" ".repeat(indent)}${name} (${type}, ${req})${desc}`);
+  // Recurse into items.properties for array-of-object params
+  if (param.items && typeof param.items === "object" && "properties" in param.items && param.items.properties) {
+    for (const [subName, subParam] of Object.entries(param.items.properties)) {
+      lines.push(...paramLines(subName, subParam as RawParam, indent + 2));
+    }
+  }
+  return lines;
+}
+
+function responseLines(response: RawResponse): string[] {
+  const lines: string[] = [];
+  lines.push("Response:");
+
+  if (response.description) {
+    lines.push(`    ${response.description}`);
+  }
+
+  if (response.type === "object" && response.properties) {
+    const required = new Set(response.required ?? []);
+    for (const [name, param] of Object.entries(response.properties)) {
+      lines.push(...paramLines(name, { ...param, required: required.has(name) || param.required === true }, 4));
+    }
+    return lines;
+  }
+
+  if (response.type === "paginated") {
+    lines.push("    totalCount (number, required)");
+    lines.push("    returned (number, optional)");
+    lines.push("    offset (number, optional)");
+    lines.push("    limit (number, optional)");
+    lines.push("    items (array, required)");
+    const item = response.item as RawParam | undefined;
+    if (item && typeof item === "object" && "properties" in item && item.properties) {
+      for (const [name, param] of Object.entries(item.properties)) {
+        lines.push(...paramLines(name, param as RawParam, 6));
+      }
+    }
+    return lines;
+  }
+
+  if (response.type === "batch") {
+    lines.push('    { results: ({id} | {error})[] }');
+    return lines;
+  }
+  if (response.type === "batch_ok") {
+    lines.push('    { results: ("ok" | {error})[] }');
+    return lines;
+  }
+  if (response.type === "batch_mixed") {
+    lines.push('    { results: ("ok" | {error} | object)[] }');
+    return lines;
+  }
+  if (response.type === "string") {
+    lines.push("    string");
+    return lines;
+  }
+
+  lines.push(`    ${response.type}`);
+  return lines;
+}
+
+function formatExample(ep: ResolvedEndpoint, example: string): string {
+  return example.split("{endpoint}").join(ep.name);
+}
+
+function methodDetail(ep: ResolvedEndpoint, method: ResolvedMethod): string {
+  const lines: string[] = [];
+  lines.push(`# ${ep.name}.${method.name}`);
+  lines.push(method.description);
+  lines.push("");
+
+  if (method.example) {
+    lines.push(`Example: ${formatExample(ep, method.example)}`);
+    lines.push("");
+  }
+
+  if (method.discriminant && method.types) {
+    lines.push(`Call shape: ${ep.name}(method:"${method.name}", ${method.discriminant}:"<${method.discriminant}>", items:[{...type-specific fields...}])`);
+    lines.push("Do not pass type-specific item fields at the top level; put them inside items[].");
+    lines.push("");
+    lines.push(`Discriminant: ${method.discriminant} (${Object.keys(method.types).join(" | ")})`);
+    lines.push("Top-level params:");
+    lines.push(`    ${method.discriminant} (${Object.keys(method.types).join(" | ")}, required) — Selects which item shape to use`);
+    lines.push("    items (array, required) — One or more type-specific item objects");
+    for (const [typeName, variant] of Object.entries(method.types)) {
+      lines.push("");
+      lines.push(`  ## ${typeName}${variant.description ? " — " + variant.description : ""}`);
+      if (variant.example) {
+        lines.push(`    Example: ${formatExample(ep, variant.example)}`);
+      }
+      lines.push(`    Item fields for items[] when ${method.discriminant}:"${typeName}":`);
+      for (const [pName, param] of Object.entries(variant.params)) {
+        lines.push(...paramLines(pName, param, 6));
+      }
+    }
+  } else if (method.params && Object.keys(method.params).length > 0) {
+    lines.push("Params:");
+    for (const [pName, param] of Object.entries(method.params)) {
+      lines.push(...paramLines(pName, param));
+    }
+  } else {
+    lines.push("No params.");
+  }
+
+  lines.push("");
+  lines.push(...responseLines(method.response));
+
+  return appendSharedTypes(lines.join("\n"));
+}
+
+function endpointSummary(ep: ResolvedEndpoint): string {
+  const lines: string[] = [];
+  lines.push(`# ${ep.name}`);
+  lines.push(ep.description);
+  lines.push("");
+  lines.push("Methods:");
+  for (const method of ep.methods) {
+    lines.push(`  ${method.name.padEnd(20)} ${method.description} [${method.tier}]`);
+  }
+  if (ep.notes) {
+    lines.push("");
+    lines.push(ep.notes.trim());
+  }
+  lines.push("");
+  lines.push(`Use ${ep.name}(method: "help", topic: "<method>") for method details.`);
+  return appendSharedTypes(lines.join("\n"));
+}
+
+// ─── Code generation ─────────────────────────────────────────────
+
+export function generateHelpTs(endpoints: ResolvedEndpoint[], helpTopics: RawPrompt[] = []): string {
+  const helpMap: Record<string, { summary: string; methods: Record<string, string> }> = {};
+
+  for (const ep of endpoints) {
+    const methods: Record<string, string> = {};
+    for (const method of ep.methods) {
+      methods[method.name] = methodDetail(ep, method);
+    }
+    helpMap[ep.name] = {
+      summary: endpointSummary(ep),
+      methods,
+    };
+  }
+
+  // Build topics map from prompts marked help: true
+  const topicsMap: Record<string, string> = {};
+  for (const t of helpTopics) {
+    topicsMap[t.name] = t.text.trim();
+  }
+
+  // Top-level directory
+  const dirLines: string[] = [];
+  dirLines.push("# Available Endpoints");
+  dirLines.push("");
+  // Group by domain
+  const byDomain = new Map<string, ResolvedEndpoint[]>();
+  for (const ep of endpoints) {
+    const list = byDomain.get(ep.domain) ?? [];
+    list.push(ep);
+    byDomain.set(ep.domain, list);
+  }
+  for (const [domain, eps] of byDomain) {
+    dirLines.push(`[${domain}]`);
+    for (const ep of eps) {
+      dirLines.push(`  ${ep.name.padEnd(24)} ${ep.description}`);
+    }
+    dirLines.push("");
+  }
+  if (helpTopics.length > 0) {
+    dirLines.push("Topics:");
+    for (const t of helpTopics) {
+      dirLines.push(`  ${t.name.padEnd(24)} ${t.description}`);
+    }
+    dirLines.push("");
+  }
+  dirLines.push('Use help(topic: "<endpoint>") for endpoint details.');
+  dirLines.push('Use help(topic: "<endpoint>.<method>") for method details.');
+
+  const lines: string[] = [];
+  lines.push(`// AUTO-GENERATED by schema compiler — do not edit`);
+  lines.push(``);
+  lines.push(`const helpDirectory: string = ${JSON.stringify(dirLines.join("\n"))};`);
+  lines.push(``);
+  lines.push(`const helpEndpoints: Record<string, { summary: string; methods: Record<string, string> }> = ${JSON.stringify(helpMap, null, 2)};`);
+  lines.push(``);
+  lines.push(`const helpTopics: Record<string, string> = ${JSON.stringify(topicsMap, null, 2)};`);
+  lines.push(``);
+  lines.push(`const allEndpointNames = Object.keys(helpEndpoints);`);
+  lines.push(`const allTopicNames = Object.keys(helpTopics);`);
+  lines.push(``);
+  lines.push(`/** Resolve a help query. Returns help text. Always includes available options on error. */`);
+  lines.push(`export function resolveHelp(topic?: string): string {`);
+  lines.push(`  if (!topic) return helpDirectory;`);
+  lines.push(`  const dot = topic.indexOf(".");`);
+  lines.push(`  if (dot === -1) {`);
+  lines.push(`    const ep = helpEndpoints[topic];`);
+  lines.push(`    if (ep) return ep.summary;`);
+  lines.push(`    const t = helpTopics[topic];`);
+  lines.push(`    if (t) return t;`);
+  lines.push(`    const all = [...allEndpointNames, ...allTopicNames];`);
+  lines.push(`    return "Unknown topic: " + topic + ". Available: " + all.join(", ");`);
+  lines.push(`  }`);
+  lines.push(`  const epName = topic.slice(0, dot);`);
+  lines.push(`  const methodName = topic.slice(dot + 1);`);
+  lines.push(`  const ep = helpEndpoints[epName];`);
+  lines.push(`  if (!ep) {`);
+  lines.push(`    const all = [...allEndpointNames, ...allTopicNames];`);
+  lines.push(`    return "Unknown topic: " + epName + ". Available: " + all.join(", ");`);
+  lines.push(`  }`);
+  lines.push(`  const method = ep.methods[methodName];`);
+  lines.push(`  if (method) return method;`);
+  lines.push(`  return "Unknown method: " + methodName + " on " + epName + ". Available methods: " + Object.keys(ep.methods).join(", ");`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`/** Resolve a per-endpoint help query (for method="help" on an endpoint). */`);
+  lines.push(`export function resolveEndpointHelp(endpoint: string, topic?: string): string | null {`);
+  lines.push(`  const ep = helpEndpoints[endpoint];`);
+  lines.push(`  if (!ep) return null;`);
+  lines.push(`  if (!topic) return ep.summary;`);
+  lines.push(`  const method = ep.methods[topic];`);
+  lines.push(`  if (method) return method;`);
+  lines.push(`  return "Unknown method: " + topic + ". Available methods on " + endpoint + ": " + Object.keys(ep.methods).join(", ");`);
+  lines.push(`}`);
+  lines.push(``);
+
+  return lines.join("\n");
+}

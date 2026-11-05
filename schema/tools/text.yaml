@@ -1,0 +1,145 @@
+endpoint: text
+extends: node
+domain: creation
+description: "Create and manage text nodes."
+description_zh: "创建和管理文本节点。"
+
+notes: |
+  // Text nodes display text content with typography styling. They inherit node methods (get, list, update, delete, clone, reparent).
+  // textAutoResize: NONE (fixed box), WIDTH_AND_HEIGHT (grow both), HEIGHT (fixed width, auto height), TRUNCATE (fixed + ellipsis).
+  // Prefer textStyleName for typography, fontColorVariableName/fontColorStyleName for color.
+  // Aliases: fillColor → fontColor, fillVariableName → fontColorVariableName, fillStyleName → fontColorStyleName (consistent with frames API).
+  // ---
+  // Smart defaults inside auto-layout parent: layoutSizingHorizontal defaults to FILL, layoutSizingVertical to HUG, textAutoResize to HEIGHT.
+  //   Text fills parent width and wraps automatically. Override with explicit values if needed.
+  // fontStyle vs fontWeight: fontStyle is a named variant like "Bold", "Italic", "SemiBold". When set, fontWeight is ignored.
+  //   Use fonts.list to find available fontFamily + fontStyle combinations.
+  // scan: finds all text nodes in a subtree. path (when includePath:true) shows the layer hierarchy e.g. "Frame > Card > Label".
+  // ScanResult (per-item): { nodeId, count, truncated, textNodes: [{ id, name, characters, fontSize, fontFamily, fontStyle, path?, depth?, absoluteX?, absoluteY?, width?, height? }] }
+
+methods:
+  create:
+    tier: create
+    description: Create text nodes
+    example: 'text(method:"create", items:[{text:"Hello", textStyleName:"Body/Regular", fontColorVariableName:"text/primary"}])'
+    params:
+      items:
+        type: array
+        coerce: json
+        required: true
+        tsType: "TextItem[]"
+        description: "Array of text items to create"
+        items:
+          type: object
+          properties:
+            text:
+              type: string
+              description: "Text content"
+              aliases: [characters]
+            name:
+              type: string
+              description: "Layer name"
+            x: { type: number }
+            y: { type: number }
+            width: { type: number, optional: true, description: "Fixed width in px — implies layoutSizingHorizontal: FIXED and textAutoResize: HEIGHT" }
+            parentId:
+              type: string
+              description: "Parent node ID. Omit to place at current page root."
+            fontFamily:
+              type: string
+              description: "Font family (default: Inter). Use fonts.list to find installed fonts."
+            fontStyle:
+              type: string
+              description: 'Font variant e.g. "Bold", "Italic" — overrides fontWeight'
+            fontSize:
+              type: number
+              description: "Font size (default: 14)"
+            fontWeight:
+              type: number
+              description: "100-900 (default: 400). Ignored when fontStyle is set."
+            lineHeight: { type: line_height, optional: true }
+            letterSpacing: { type: letter_spacing, optional: true }
+            textCase: { type: enum, values: [ORIGINAL, UPPER, LOWER, TITLE, SMALL_CAPS, SMALL_CAPS_FORCED], optional: true }
+            textDecoration: { type: enum, values: [NONE, UNDERLINE, STRIKETHROUGH], optional: true }
+            fills:
+              $ref: paints
+              description: "Text Paint[] authoring — accepts only SOLID or GRADIENT_LINEAR/RADIAL/ANGULAR/DIAMOND with gradientTransform + gradientStops. Same as node fills. Do not use CSS gradients, REST gradientHandlePositions, IMAGE/VIDEO/PATTERN, or top-level gradient boundVariables. IMAGE/VIDEO/PATTERN may appear in readback metadata only."
+            fontColor:
+              type: color
+              description: "Shorthand — sets text color (auto-binds to matching variable/style)"
+            fontColorVariableName:
+              type: string
+              description: "Bind color variable by name e.g. 'text/primary'"
+            fontColorStyleName:
+              type: string
+              description: "Apply paint style — overrides fontColor"
+            textStyleId:
+              type: string
+              description: "Text style ID or name (case-insensitive) — overrides fontSize/fontWeight"
+            textStyleName:
+              type: string
+              description: "Alias for textStyleId — accepts name (case-insensitive)"
+            textAlignHorizontal:
+              type: enum
+              values: [LEFT, CENTER, RIGHT, JUSTIFIED]
+              optional: true
+            textAlignVertical:
+              type: enum
+              values: [TOP, CENTER, BOTTOM]
+              optional: true
+            layoutSizingHorizontal:
+              type: enum
+              values: [FIXED, HUG, FILL]
+              optional: true
+            layoutSizingVertical:
+              type: enum
+              values: [FIXED, HUG, FILL]
+              optional: true
+            textAutoResize:
+              type: enum
+              values: [NONE, WIDTH_AND_HEIGHT, HEIGHT, TRUNCATE]
+              optional: true
+              description: "NONE (fixed box), WIDTH_AND_HEIGHT (grow both), HEIGHT (fixed width, auto height), TRUNCATE (fixed + ellipsis)"
+            componentPropertyName:
+              type: string
+              description: "Bind to a component TEXT property by name. Walks up ancestors to find the nearest component, or targets the component specified by componentId. For deeply nested text, consider using components(method:'create', type:'from_node') with exposeText:true instead — it auto-discovers and binds all text nodes."
+            componentId:
+              type: string
+              description: "Target component ID for componentPropertyName binding. When omitted, walks up ancestors to find the nearest COMPONENT or COMPONENT_SET."
+            annotations: { type: array, coerce: json, optional: true, description: "Annotations — [{label?, labelMarkdown?, properties?, categoryId?}]", items: { type: object } }
+      depth: { $ref: depth }
+    response:
+      type: batch
+      item: { id: { type: string } }
+
+  set_content:
+    tier: edit
+    description: Replace text content on existing text nodes
+    params:
+      items:
+        type: array
+        coerce: json
+        required: true
+        description: "Array of {nodeId, text}"
+        items:
+          type: object
+          properties:
+            nodeId: { type: string, required: true, description: Text node ID, aliases: [id] }
+            text: { type: string, required: true, description: New text content, aliases: [characters] }
+      depth: { $ref: depth }
+    response:
+      type: batch_ok
+
+  scan:
+    tier: read
+    description: Scan all text nodes within a subtree
+    params:
+      items:
+        type: array
+        coerce: json
+        required: true
+        tsType: "{ nodeId: string; limit?: number; includePath?: boolean; includeGeometry?: boolean }[]"
+        description: "Array of subtrees to scan"
+        items: { type: object }
+    response:
+      type: batch_mixed

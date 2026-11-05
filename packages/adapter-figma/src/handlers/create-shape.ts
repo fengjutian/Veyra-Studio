@@ -1,0 +1,314 @@
+import { batchHandler, appendToParent, appendAndApplySizing, checkOverlappingSiblings, solidPaint, applyFillWithAutoBind, applyImageFill, applyStrokeWithAutoBind, applyCornerRadius, applyTokens, findVariableById, findColorVariableByName, normalizeAliases, FRAME_ALIAS_KEYS, type Hint } from "./helpers";
+import {
+  framesCreateSection, framesCreateSvg, framesCreateRectangle,
+  framesCreateEllipse, framesCreateLine, framesCreateGroup,
+  framesCreateBooleanOperation,
+} from "@ufira/vibma/guards";
+import { applyAnnotations } from "./annotations";
+
+// Handler-level extensions: params accepted by handler but not in YAML schema
+const SVG_KEYS = new Set([...framesCreateSvg, "fillVariableId", "strokeVariableId"]) as ReadonlySet<string>;
+const LINE_KEYS = new Set([...framesCreateLine, "strokeVariableId", "strokeStyleName"]) as ReadonlySet<string>;
+
+// ─── Figma Handlers ──────────────────────────────────────────────
+
+async function createSingleSection(p: any) {
+  const section = figma.createSection();
+  try {
+    section.x = p.x ?? 0;
+    section.y = p.y ?? 0;
+    section.resizeWithoutConstraints(p.width ?? 500, p.height ?? 500);
+    section.name = p.name || "Section";
+    section.fills = [];
+
+    const hints: Hint[] = [];
+    const hasImageFill = await applyImageFill(section, p, hints);
+    if (!hasImageFill) await applyFillWithAutoBind(section, p, hints);
+
+    await appendToParent(section, p.parentId);
+    applyAnnotations(section, p, hints);
+    const result: any = { id: section.id };
+    if (hints.length > 0) result.hints = hints;
+    return result;
+  } catch (e) {
+    section.remove();
+    throw e;
+  }
+}
+
+async function createSingleSvg(p: any) {
+  const node = figma.createNodeFromSvg(p.svg);
+  try {
+    node.x = p.x ?? 0;
+    node.y = p.y ?? 0;
+    if (p.name) node.name = p.name;
+    await appendToParent(node, p.parentId);
+
+    if (p.name && "children" in node) {
+      let pathIndex = 0;
+      const renameDefaultVectorChildren = (n: SceneNode) => {
+        if ((n.type === "VECTOR" || n.type === "BOOLEAN_OPERATION") && (n.name === "Vector" || /^Vector \d+$/.test(n.name))) {
+          pathIndex += 1;
+          n.name = pathIndex === 1 ? `${p.name} Path` : `${p.name} Path ${pathIndex}`;
+        }
+        if ("children" in n) (n as any).children.forEach(renameDefaultVectorChildren);
+      };
+      (node as any).children.forEach(renameDefaultVectorChildren);
+    }
+
+    // Bind fill style/variable to all vector children
+    if (p.fillStyleName || p.fillVariableId || p.fillVariableName) {
+      const vectors: SceneNode[] = [];
+      const collect = (n: SceneNode) => {
+        if (n.type === "VECTOR" || n.type === "BOOLEAN_OPERATION" || n.type === "STAR" || n.type === "LINE" || n.type === "ELLIPSE" || n.type === "POLYGON") vectors.push(n);
+        if ("children" in n) (n as any).children.forEach(collect);
+      };
+      collect(node);
+
+      // Resolve variable: by ID > by name
+      let variable: any = null;
+      if (p.fillVariableId) {
+        variable = await findVariableById(p.fillVariableId);
+      } else if (p.fillVariableName) {
+        variable = await findColorVariableByName(p.fillVariableName);
+      }
+
+      if (variable) {
+        for (const vec of vectors) {
+          if ("fills" in vec && (vec as any).fills.length > 0) {
+            const paints = (vec as any).fills.slice();
+            paints[0] = figma.variables.setBoundVariableForPaint(paints[0], "color", variable);
+            (vec as any).fills = paints;
+          }
+        }
+      } else if (p.fillStyleName) {
+        const styles = await figma.getLocalPaintStylesAsync();
+        const exact = styles.find(s => s.name === p.fillStyleName);
+        const match = exact || styles.find(s => s.name.toLowerCase().includes(p.fillStyleName.toLowerCase()));
+        if (match) {
+          for (const vec of vectors) {
+            try { await (vec as any).setFillStyleIdAsync(match.id); } catch {}
+          }
+        }
+      }
+    }
+
+    // Bind stroke style/variable to all vector children
+    if (p.strokeStyleName || p.strokeVariableId || p.strokeVariableName) {
+      const vectors: SceneNode[] = [];
+      const collect = (n: SceneNode) => {
+        if (n.type === "VECTOR" || n.type === "BOOLEAN_OPERATION" || n.type === "STAR" || n.type === "LINE" || n.type === "ELLIPSE" || n.type === "POLYGON") vectors.push(n);
+        if ("children" in n) (n as any).children.forEach(collect);
+      };
+      collect(node);
+
+      let variable: any = null;
+      if (p.strokeVariableId) {
+        variable = await findVariableById(p.strokeVariableId);
+      } else if (p.strokeVariableName) {
+        variable = await findColorVariableByName(p.strokeVariableName);
+      }
+
+      if (variable) {
+        for (const vec of vectors) {
+          if ("strokes" in vec && (vec as any).strokes.length > 0) {
+            const paints = (vec as any).strokes.slice();
+            paints[0] = figma.variables.setBoundVariableForPaint(paints[0], "color", variable);
+            (vec as any).strokes = paints;
+          }
+        }
+      } else if (p.strokeStyleName) {
+        const styles = await figma.getLocalPaintStylesAsync();
+        const exact = styles.find(s => s.name === p.strokeStyleName);
+        const match = exact || styles.find(s => s.name.toLowerCase().includes(p.strokeStyleName.toLowerCase()));
+        if (match) {
+          for (const vec of vectors) {
+            try { await (vec as any).setStrokeStyleIdAsync(match.id); } catch {}
+          }
+        }
+      }
+    }
+
+    return { id: node.id };
+  } catch (e) {
+    node.remove();
+    throw e;
+  }
+}
+
+// ─── Rectangle ──────────────────────────────────────────────────
+
+export async function createSingleRectangle(p: any) {
+  normalizeAliases(p, FRAME_ALIAS_KEYS);
+  const rect = figma.createRectangle();
+  try {
+    rect.x = p.x ?? 0;
+    rect.y = p.y ?? 0;
+    rect.resize(p.width ?? 100, p.height ?? 100);
+    rect.name = p.name || "Rectangle";
+
+    const hints: Hint[] = [];
+    await applyTokens(rect, { opacity: p.opacity }, hints);
+    await applyCornerRadius(rect, p, hints);
+    const hasImageFill = await applyImageFill(rect, p, hints);
+    if (!hasImageFill) await applyFillWithAutoBind(rect, p, hints);
+    await applyStrokeWithAutoBind(rect, p, hints);
+    const parent = await appendAndApplySizing(rect, p, hints);
+    checkOverlappingSiblings(rect, parent, hints);
+
+    applyAnnotations(rect, p, hints);
+    const result: any = { id: rect.id };
+    if (hints.length > 0) result.hints = hints;
+    return result;
+  } catch (e) {
+    rect.remove();
+    throw e;
+  }
+}
+
+// ─── Ellipse ────────────────────────────────────────────────────
+
+export async function createSingleEllipse(p: any) {
+  normalizeAliases(p, FRAME_ALIAS_KEYS);
+  const ellipse = figma.createEllipse();
+  try {
+    ellipse.x = p.x ?? 0;
+    ellipse.y = p.y ?? 0;
+    ellipse.resize(p.width ?? 100, p.height ?? p.width ?? 100);
+    ellipse.name = p.name || "Ellipse";
+
+    const hints: Hint[] = [];
+    await applyTokens(ellipse, { opacity: p.opacity }, hints);
+    const hasImageFill = await applyImageFill(ellipse, p, hints);
+    if (!hasImageFill) await applyFillWithAutoBind(ellipse, p, hints);
+    await applyStrokeWithAutoBind(ellipse, p, hints);
+    const parent = await appendAndApplySizing(ellipse, p, hints);
+    checkOverlappingSiblings(ellipse, parent, hints);
+
+    applyAnnotations(ellipse, p, hints);
+    const result: any = { id: ellipse.id };
+    if (hints.length > 0) result.hints = hints;
+    return result;
+  } catch (e) {
+    ellipse.remove();
+    throw e;
+  }
+}
+
+// ─── Line ───────────────────────────────────────────────────────
+
+export async function createSingleLine(p: any) {
+  normalizeAliases(p, FRAME_ALIAS_KEYS);
+  const line = figma.createLine();
+  try {
+    line.x = p.x ?? 0;
+    line.y = p.y ?? 0;
+    line.resize(p.length ?? 100, 0);
+    line.name = p.name || "Line";
+    if (p.rotation !== undefined) line.rotation = p.rotation;
+
+    // Lines use strokes not fills — default to black if no stroke specified
+    const hints: Hint[] = [];
+    await applyTokens(line, { opacity: p.opacity }, hints);
+    if (!p.strokes && !p.strokeColor && !p.strokeVariableId && !p.strokeVariableName && !p.strokeStyleName) {
+      line.strokes = [solidPaint({ r: 0, g: 0, b: 0 })];
+    }
+    // applyStrokeWithAutoBind handles both stroke color and strokeWeight tokens
+    await applyStrokeWithAutoBind(line, p, hints);
+
+    const parent = await appendAndApplySizing(line, p, hints);
+    checkOverlappingSiblings(line, parent, hints);
+    // Lines in vertical auto-layout default to FILL width (divider pattern)
+    if (!p.layoutSizingHorizontal && parent && "layoutMode" in parent && (parent as any).layoutMode === "VERTICAL") {
+      (line as any).layoutSizingHorizontal = "FILL";
+    }
+
+    applyAnnotations(line, p, hints);
+    const result: any = { id: line.id };
+    if (hints.length > 0) result.hints = hints;
+    return result;
+  } catch (e) {
+    line.remove();
+    throw e;
+  }
+}
+
+// ─── Group ──────────────────────────────────────────────────────
+
+async function createSingleGroup(p: any) {
+  if (!p.nodeIds?.length) throw new Error("nodeIds required (at least 1 node)");
+
+  const nodes: SceneNode[] = [];
+  for (const id of p.nodeIds) {
+    const node = await figma.getNodeByIdAsync(id);
+    if (!node) throw new Error(`Node not found: ${id}`);
+    nodes.push(node as SceneNode);
+  }
+
+  const parent = p.parentId
+    ? await figma.getNodeByIdAsync(p.parentId)
+    : nodes[0].parent;
+  if (!parent || !("children" in parent)) throw new Error("Invalid parent for group");
+
+  const group = figma.group(nodes, parent as any);
+  if (p.name) group.name = p.name;
+
+  return { id: group.id };
+}
+
+// ─── Boolean Operation ─────────────────────────────────────────
+
+async function createSingleBooleanOperation(p: any) {
+  if (!p.nodeIds?.length || p.nodeIds.length < 2) throw new Error("nodeIds required (at least 2 nodes)");
+
+  const nodes: SceneNode[] = [];
+  for (const id of p.nodeIds) {
+    const node = await figma.getNodeByIdAsync(id);
+    if (!node) throw new Error(`Node not found: ${id}`);
+    nodes.push(node as SceneNode);
+  }
+
+  const parent = p.parentId
+    ? await figma.getNodeByIdAsync(p.parentId)
+    : nodes[0].parent;
+  if (!parent || !("children" in parent)) throw new Error("Invalid parent for boolean operation");
+
+  const ops: Record<string, (nodes: readonly SceneNode[], parent: BaseNode & ChildrenMixin) => BooleanOperationNode> = {
+    UNION: figma.union,
+    SUBTRACT: figma.subtract,
+    INTERSECT: figma.intersect,
+    EXCLUDE: figma.exclude,
+  };
+
+  const op = ops[p.operation];
+  if (!op) throw new Error(`Unknown boolean operation: ${p.operation}. Expected: UNION, SUBTRACT, INTERSECT, EXCLUDE`);
+
+  const result = op(nodes, parent as any);
+  if (p.name) result.name = p.name;
+
+  const hints: Hint[] = [];
+  if (p.fillVariableName) {
+    await applyFillWithAutoBind(result, { fills: { _variable: p.fillVariableName } }, hints);
+  } else if (p.fillStyleName) {
+    await applyFillWithAutoBind(result, { fills: { _style: p.fillStyleName } }, hints);
+  }
+  if (p.strokeVariableName) {
+    await applyStrokeWithAutoBind(result, { strokes: { _variable: p.strokeVariableName } }, hints);
+  } else if (p.strokeStyleName) {
+    await applyStrokeWithAutoBind(result, { strokes: { _style: p.strokeStyleName } }, hints);
+  }
+
+  const response: any = { id: result.id };
+  if (hints.length > 0) response.hints = hints;
+  return response;
+}
+
+export const figmaHandlers: Record<string, (params: any) => Promise<any>> = {
+  create_section: (p) => batchHandler(p, createSingleSection, { keys: framesCreateSection, help: 'frames(method: "help", topic: "create")' }),
+  create_node_from_svg: (p) => batchHandler(p, createSingleSvg, { keys: SVG_KEYS, help: 'frames(method: "help", topic: "create")' }),
+  create_rectangle: (p) => batchHandler(p, createSingleRectangle, { keys: framesCreateRectangle, help: 'frames(method: "help", topic: "create")' }),
+  create_ellipse: (p) => batchHandler(p, createSingleEllipse, { keys: framesCreateEllipse, help: 'frames(method: "help", topic: "create")' }),
+  create_line: (p) => batchHandler(p, createSingleLine, { keys: LINE_KEYS, help: 'frames(method: "help", topic: "create")' }),
+  create_group: (p) => batchHandler(p, createSingleGroup, { keys: framesCreateGroup, help: 'frames(method: "help", topic: "create")' }),
+  create_boolean_operation: (p) => batchHandler(p, createSingleBooleanOperation, { keys: framesCreateBooleanOperation, help: 'frames(method: "help", topic: "create")' }),
+};

@@ -1,0 +1,36 @@
+{
+  "name": "@ufira/vibma-figma",
+  "description": "Figma adapter for Vibma — plugin + handler implementations.",
+  "version": "1.1.5",
+  "license": "MIT",
+  "author": "ufira <https://github.com/ufira-ai>",
+  "homepage": "https://github.com/ufira-ai/vibma",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ufira-ai/vibma.git",
+    "directory": "packages/adapter-figma"
+  },
+  "keywords": [
+    "figma",
+    "mcp",
+    "vibma",
+    "adapter"
+  ],
+  "type": "module",
+  "files": [
+    "dist",
+    "plugin"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch"
+  },
+  "dependencies": {
+    "@ufira/vibma": "*"
+  },
+  "devDependencies": {
+    "@figma/plugin-typings": "^1.124.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
+}

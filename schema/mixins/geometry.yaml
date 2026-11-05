@@ -1,0 +1,19 @@
+# Fill + stroke + corner params — mirrors Figma's GeometryMixin + CornerMixin
+# Composite of: fill_params, stroke_params, corner_params (see atomic mixin files)
+# Include via $mixin: geometry_params
+
+geometry_params:
+  # MinimalFillsMixin + custom aliases (see fill.yaml)
+  fills: { $ref: paints, optional: true, description: "Fill Paint[] authoring — accepts only SOLID or GRADIENT_LINEAR/RADIAL/ANGULAR/DIAMOND with gradientTransform + gradientStops. [] for transparent. Do not use CSS gradients, REST gradientHandlePositions, IMAGE/VIDEO/PATTERN, or top-level gradient boundVariables; use imageUrl/images for image authoring. IMAGE/VIDEO/PATTERN may appear in readback metadata only. Primary way to set non-image fills." }
+  fillColor: { $ref: color, optional: true, description: "Shorthand — sets a single solid fill (auto-binds to matching variable/style)" }
+  fillStyleName: { type: string, optional: true, description: "Paint style name for fill" }
+  fillVariableName: { type: string, optional: true, description: "Color variable by name e.g. 'bg/surface'" }
+  # MinimalStrokesMixin + custom aliases (see stroke.yaml)
+  strokes: { $ref: paints, optional: true, description: "Stroke Paint[] authoring — accepts only SOLID or GRADIENT_LINEAR/RADIAL/ANGULAR/DIAMOND with gradientTransform + gradientStops. [] to clear. Do not use CSS gradients, REST gradientHandlePositions, IMAGE/VIDEO/PATTERN, or top-level gradient boundVariables. IMAGE/VIDEO/PATTERN may appear in readback metadata only. Primary way to set strokes." }
+  strokeColor: { $ref: color, optional: true, description: "Shorthand — sets a single solid stroke (auto-binds to matching variable/style)" }
+  strokeStyleName: { type: string, optional: true, description: "Paint style name for stroke" }
+  strokeVariableName: { type: string, optional: true, description: "Color variable by name for stroke" }
+  strokeWeight: { $expand: stroke, type: token }
+  strokeAlign: { type: enum, values: [INSIDE, OUTSIDE, CENTER], optional: true, description: "Stroke position (default: INSIDE)" }
+  # CornerMixin (see corner.yaml)
+  cornerRadius: { $expand: corners, type: token }

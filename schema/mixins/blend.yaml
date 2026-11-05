@@ -1,0 +1,10 @@
+# Opacity + blend mode + effects — mirrors Figma's MinimalBlendMixin + custom aliases
+# visible/locked moved to scene_params (SceneNodeMixin) — see scene.yaml
+# Include via $mixin: blend_params
+
+blend_params:
+  # MinimalBlendMixin (1-1 Figma API)
+  opacity: { type: token, optional: true, description: "Opacity (0-1) or variable name" }
+  blendMode: { type: enum, values: [PASS_THROUGH, NORMAL, DARKEN, MULTIPLY, LINEAR_BURN, COLOR_BURN, LIGHTEN, SCREEN, LINEAR_DODGE, COLOR_DODGE, OVERLAY, SOFT_LIGHT, HARD_LIGHT, DIFFERENCE, EXCLUSION, HUE, SATURATION, COLOR, LUMINOSITY], optional: true }
+  # Custom alias
+  effectStyleName: { type: string, optional: true, description: "Effect style name (e.g. 'Shadow/Card') for shadows, blurs" }

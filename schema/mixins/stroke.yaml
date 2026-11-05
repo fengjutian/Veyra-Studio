@@ -1,0 +1,12 @@
+# Stroke params — mirrors Figma's MinimalStrokesMixin + custom aliases
+# Include via $mixin: stroke_params
+
+stroke_params:
+  # MinimalStrokesMixin (1-1 Figma API)
+  strokes: { $ref: paints, optional: true, description: "Stroke Paint[] authoring — accepts only SOLID or GRADIENT_LINEAR/RADIAL/ANGULAR/DIAMOND with gradientTransform + gradientStops. [] to clear. Do not use CSS gradients, REST gradientHandlePositions, IMAGE/VIDEO/PATTERN, or top-level gradient boundVariables. IMAGE/VIDEO/PATTERN may appear in readback metadata only. Primary way to set strokes." }
+  strokeWeight: { $expand: stroke, type: token }
+  strokeAlign: { type: enum, values: [INSIDE, OUTSIDE, CENTER], optional: true, description: "Stroke position (default: INSIDE)" }
+  # Custom aliases
+  strokeColor: { $ref: color, optional: true, description: "Shorthand — sets a single solid stroke (auto-binds to matching variable/style)" }
+  strokeStyleName: { type: string, optional: true, description: "Paint style name for stroke" }
+  strokeVariableName: { type: string, optional: true, description: "Color variable by name for stroke" }

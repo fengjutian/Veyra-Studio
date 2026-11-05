@@ -1,0 +1,307 @@
+# Base methods inherited by all scene-graph endpoints (frames, text, shapes, components, instances)
+# The compiler merges these into each endpoint that declares `extends: node`
+
+base: node
+
+notes: |
+  // depth: omit → id+name stubs | 0 → props + child stubs | N → recurse N | -1 → full tree
+  // fields: whitelist e.g. ["fills","opacity"] — id, name, type always included. Pass ["*"] for all.
+  // layoutSizingHorizontal/Vertical: FIXED | HUG | FILL — how the node sizes within auto-layout.
+  // Colors: fillVariableName/strokeVariableName bind by name — preferred over raw color values.
+  // Note: node-based endpoints (frames, text, instances, components) use `results` as the list key.
+  //   Standalone endpoints (styles, variables, variable_collections) use `items`. Components.list uses `items` (catalog view).
+  // ---
+  // visible: false hides the node. Omitted from response when true (the default).
+  // locked: true prevents editing in Figma UI. Omitted when false (the default).
+  // rotation: degrees (0-360). Omitted when 0.
+  // blendMode: layer blend mode. Omitted when PASS_THROUGH (the default).
+  // layoutPositioning: ABSOLUTE = floating inside auto-layout parent. Omitted when AUTO (the default).
+  // minWidth/maxWidth/minHeight/maxHeight: responsive constraints for auto-layout children.
+  // constraints: position behavior in non-auto-layout parents. Ignored inside auto-layout frames.
+  // bindings: bind design variables to node properties. field uses slash path: "fills/0/color" (first fill), "strokes/0/color", "opacity", "width", "height", "cornerRadius", "paddingLeft", "itemSpacing".
+  // explicitMode: pin a variable mode on this node. Use { collectionName, modeName } (preferred) or { collectionId, modeId }.
+  // clipsContent: clip children to the node bounds where supported (frames/components/instances). Set false for overflow-visible layouts.
+  interface Node {
+    id: string; name: string; type: string;
+    visible?: boolean;       // omitted when true
+    locked?: boolean;        // omitted when false
+    opacity?: number;        // omitted when 1
+    rotation?: number;       // omitted when 0
+    blendMode?: string;      // omitted when PASS_THROUGH
+    layoutPositioning?: "AUTO" | "ABSOLUTE";
+    layoutSizingHorizontal?: "FIXED" | "HUG" | "FILL";
+    layoutSizingVertical?: "FIXED" | "HUG" | "FILL";
+    minWidth?: number; maxWidth?: number; minHeight?: number; maxHeight?: number;
+    absoluteBoundingBox: { x: number; y: number; width: number; height: number };
+    fills?: Paint[];         // readback Paint[]; authoring supports SOLID + gradients via gradientTransform + gradientStops
+    strokes?: Paint[];
+    effects?: Effect[];      // DROP_SHADOW | INNER_SHADOW | LAYER_BLUR | BACKGROUND_BLUR
+    children?: NodeStub[];   // stubs: {id, name, type} — use depth to expand
+  }
+  // PatchItem uses flat params matching create shape — no nested sub-objects.
+  // Fill/stroke/corner/layout/text params are identical to frames.create and text.create. Paint[] authoring supports SOLID + gradients only; IMAGE/VIDEO/PATTERN are readback-only metadata.
+  // Unknown keys produce a warning, preventing silent failures.
+
+methods:
+  get:
+    # command auto-derived as {endpoint}.get
+    tier: read
+    description: Get serialized node data
+    params:
+      id:
+        $ref: nodeId
+        required: true
+      fields:
+        $ref: fields
+      depth:
+        $ref: depth
+      verbose:
+        type: boolean
+        optional: true
+        description: "Include all properties (bounding box, constraints, text style details). Default false — returns slim, actionable output."
+    response:
+      type: object
+      description: Serialized node tree. Shape depends on depth parameter.
+      properties:
+        results: { type: array, tsType: "Node[]", description: Serialized node trees, items: { type: object } }
+        _truncated: { type: boolean, description: True when node budget exceeded }
+        _notice: { type: string, description: Human-readable truncation notice }
+      required: [results]
+
+  list:
+    # command auto-derived as {endpoint}.list
+    tier: read
+    description: "Search for nodes (returns stubs only — use get with depth for full properties)"
+    params:
+      query:
+        type: string
+        optional: true
+        description: Name search query (case-insensitive substring match)
+      types:
+        type: string[]
+        coerce: json
+        optional: true
+        description: Filter by node types (e.g. ["FRAME", "TEXT"])
+      parentId:
+        type: string
+        optional: true
+        description: Search only within this subtree
+      fields:
+        $ref: fields
+      offset:
+        $ref: offset
+      limit:
+        $ref: limit
+    response:
+      type: object
+      description: Paginated node search results (uses `results` not `items`)
+      properties:
+        totalCount: { type: number, required: true, description: Total matching nodes }
+        returned: { type: number, required: true, description: Nodes in this page }
+        offset: { type: number }
+        limit: { type: number }
+        results:
+          type: array
+          description: Matching node stubs
+          items:
+            type: object
+            properties:
+              id: { type: string, required: true }
+              name: { type: string, required: true }
+              type: { type: string, required: true }
+              parentId: { type: string, required: true }
+              parentName: { type: string }
+              bounds: { type: object, properties: { x: { type: number }, y: { type: number }, width: { type: number }, height: { type: number } } }
+      required: [totalCount, results]
+
+  update:
+    # command auto-derived as {endpoint}.update
+    tier: edit
+    description: Patch node properties
+    params:
+      items:
+        type: array
+        coerce: json
+        required: true
+        tsType: "PatchItem[]"
+        description: "Array of {id, ...fields} to patch"
+        items:
+          type: object
+          properties:
+            $mixin: [geometry_params, scene_params, blend_params, auto_layout_params, sizing_params, text_params]
+            # --- identity ---
+            id: { type: string, required: true }
+            # --- scene node (SceneNodeMixin) ---
+            name: { type: string, optional: true, description: "Rename node" }
+            visible: { type: boolean, optional: true, description: "Show/hide (default true)" }
+            locked: { type: boolean, optional: true, description: "Lock/unlock (default false)" }
+            rotation: { type: number, optional: true, description: "Degrees (0-360)" }
+            blendMode: { type: enum, values: [PASS_THROUGH, NORMAL, DARKEN, MULTIPLY, LINEAR_BURN, COLOR_BURN, LIGHTEN, SCREEN, LINEAR_DODGE, COLOR_DODGE, OVERLAY, SOFT_LIGHT, HARD_LIGHT, DIFFERENCE, EXCLUSION, HUE, SATURATION, COLOR, LUMINOSITY], optional: true }
+            layoutPositioning: { type: enum, values: [AUTO, ABSOLUTE], optional: true, description: "ABSOLUTE = floating inside auto-layout parent" }
+            # --- geometry ---
+            x: { type: number, optional: true }
+            y: { type: number, optional: true }
+            width: { type: number, optional: true }
+            height: { type: number, optional: true }
+            clearFill: { type: boolean, optional: true, description: "Remove all fills" }
+            imageUrl: { type: string, optional: true, description: "Image source — 'pexel:<id>' for Pexels photos, a public URL, or a local file path. SVGs are inserted as vectors; raster images become IMAGE fills." }
+            imageScaleMode: { type: enum, values: [FILL, FIT, CROP, TILE], optional: true, description: "How the image is scaled within the frame (default: FILL)" }
+            # strokeWeight expanded via geometry_params mixin ($expand: stroke)
+            effects: { type: array, optional: true, description: "Effect array (DROP_SHADOW, INNER_SHADOW, LAYER_BLUR, BACKGROUND_BLUR)", items: { type: object } }
+            # --- prototyping ---
+            overflowDirection: { type: enum, values: [NONE, HORIZONTAL, VERTICAL, BOTH], optional: true, description: "Scroll overflow in prototype (default: NONE)" }
+            # --- advanced ---
+            constraints: { type: object, optional: true, properties: { horizontal: { type: enum, values: [MIN, CENTER, MAX, STRETCH, SCALE] }, vertical: { type: enum, values: [MIN, CENTER, MAX, STRETCH, SCALE] } } }
+            bindings: { type: array, optional: true, description: "Bind variables to properties. field path examples: 'fills/0/color', 'strokes/0/color', 'opacity', 'width', 'cornerRadius', 'itemSpacing'.", items: { type: object, properties: { field: { type: string, required: true }, variableName: { type: string }, variableId: { type: string } } } }
+            explicitMode: { type: object, optional: true, description: "Pin variable mode — use { collectionName, modeName } (preferred) or { collectionId, modeId }" }
+            exportSettings: { type: array, optional: true, description: "Export settings", items: { type: object } }
+            annotations: { type: array, coerce: json, optional: true, description: "Set annotations — [{label?, labelMarkdown?, properties?, categoryId?}]. Properties are validated per node type.", items: { type: object } }
+            clipsContent: { type: boolean, coerce: true, optional: true, description: "Clip children to bounds where supported (frames/components/instances)." }
+    response:
+      type: batch_mixed
+
+  delete:
+    # command auto-derived as {endpoint}.delete
+    tier: edit
+    description: Delete nodes
+    params:
+      id:
+        type: string
+        optional: true
+        description: Single node ID
+      items:
+        type: array
+        coerce: json
+        optional: true
+        description: "Batch: [{id}, ...]"
+        items:
+          type: object
+          properties:
+            id: { type: string }
+    response:
+      type: batch_ok
+
+  clone:
+    # command auto-derived as {endpoint}.clone
+    tier: create
+    description: "Duplicate nodes — produces a same-type copy (frame→frame, instance→instance, component→component). Instance clones reference the same source component; they do not duplicate the component definition."
+    params:
+      id:
+        $ref: nodeId
+      name:
+        type: string
+        optional: true
+        description: "Rename the clone (set before appending to parent — required when cloning a variant into its component set to avoid duplicate names)"
+      parentId:
+        $ref: parentId
+      x:
+        $ref: xPos
+      y:
+        $ref: yPos
+      items:
+        type: array
+        coerce: json
+        optional: true
+        description: "Batch: [{id, name?, parentId?, x?, y?}, ...]. Alternative to single-item params."
+        items:
+          type: object
+          properties:
+            id: { type: string, required: true, description: "Node ID to clone" }
+            name: { type: string, optional: true, description: "Rename the clone" }
+            parentId: { type: string, optional: true, description: "Target parent" }
+            x: { type: number, optional: true }
+            y: { type: number, optional: true }
+      depth:
+        $ref: depth
+    response:
+      type: batch
+      item: { id: { type: string } }
+
+  scale:
+    # command auto-derived as {endpoint}.scale
+    tier: edit
+    description: "Proportionally rescale a node subtree using Figma's visual Scale tool behavior. This is for visual/artifact scaling, not responsive layout resizing."
+    example: '{endpoint}(method:"scale", id:"1:23", factor:0.5)'
+    params:
+      id:
+        type: string
+        optional: true
+        description: "Node ID to scale"
+      factor:
+        type: number
+        coerce: true
+        optional: true
+        description: "Scale factor, >= 0.01. 0.5 = 50%, 2 = 200%. Scales children, text, strokes, effects, and layout geometry from the node's top-left. On auto-layout or HUG/FILL nodes, Figma may resolve responsive sizing to fixed width/height."
+      items:
+        type: array
+        coerce: json
+        optional: true
+        description: "Batch: [{id, factor}, ...]. Alternative to single-item params."
+        items:
+          type: object
+          properties:
+            id: { type: string, required: true, description: "Node ID to scale" }
+            factor: { type: number, coerce: true, required: true, description: "Scale factor, >= 0.01. 0.5 = 50%, 2 = 200%." }
+    response:
+      type: batch_ok
+
+  audit:
+    tier: read
+    description: "Run lint on a node — returns severity-ranked findings"
+    params:
+      id:
+        type: string
+        required: true
+        description: "Node ID to audit"
+      rules:
+        type: string[]
+        coerce: json
+        optional: true
+        description: 'Rules to check. Default: ["all"]. Categories: "component", "composition", "token", "naming", "wcag".'
+      maxDepth:
+        type: number
+        coerce: true
+        optional: true
+        description: "Max tree depth (default: 10)"
+      maxFindings:
+        type: number
+        coerce: true
+        optional: true
+        description: "Max findings (default: 50)"
+      minSeverity:
+        type: enum
+        values: [error, unsafe, heuristic, style, verbose]
+        optional: true
+        description: "Minimum severity to report (default: style). Set to 'verbose' to include AAA contrast and line-height checks."
+      skipInstances:
+        type: boolean
+        coerce: true
+        optional: true
+        description: "Skip instance internals — findings inside instances are owned by the component (default: true)"
+    response:
+      type: object
+      properties:
+        nodeId: { type: string }
+        nodeName: { type: string }
+        categories:
+          type: array
+          description: "Sorted by severity (error > unsafe > heuristic > style)"
+
+  reparent:
+    # command auto-derived as {endpoint}.reparent
+    tier: edit
+    description: Move nodes into a new parent
+    params:
+      items:
+        type: array
+        coerce: json
+        required: true
+        description: "Array of {id, parentId, index?}"
+        items:
+          type: object
+          properties:
+            id: { type: string, required: true }
+            parentId: { type: string, required: true }
+            index: { type: number, optional: true }
+    response:
+      type: batch_ok

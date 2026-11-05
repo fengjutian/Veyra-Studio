@@ -1,0 +1,30 @@
+import { defineConfig } from 'tsup';
+import { cpSync } from 'fs';
+
+export default defineConfig({
+  entry: [
+    'src/mcp.ts',
+    'src/tools/types.ts',
+    'src/tools/endpoint.ts',
+    'src/tools/schemas.ts',
+    'src/tools/registry.ts',
+    'src/tools/generated/guards.ts',
+    'src/utils/color.ts',
+    'src/utils/wcag.ts',
+    'src/utils/coercion.ts',
+  ],
+  format: ['cjs', 'esm'],
+  dts: true,
+  clean: true,
+  outDir: 'dist',
+  target: 'node18',
+  sourcemap: true,
+  minify: false,
+  splitting: false,
+  bundle: true,
+  async onSuccess() {
+    // Keep the root-level `dist/` folder for the repo scripts/docs,
+    // but also emit `packages/core/dist/` so workspace imports resolve.
+    cpSync('dist', '../../dist', { recursive: true, force: true });
+  },
+});

@@ -1,0 +1,92 @@
+---
+title: Endpoints
+description: How Vibma organizes tools as REST-style endpoints
+---
+
+Vibma exposes **18 endpoint tools** instead of dozens of standalone tools. Each endpoint groups related operations behind a single tool with a `method` parameter — similar to a REST resource.
+
+In addition to endpoint tools, Vibma also includes standalone `help` and `guidelines` tools. Use `help` to discover the API surface, and `guidelines` for design-system and structural best practices.
+
+## Why endpoints?
+
+LLMs work better with fewer, well-documented tools than with a long flat list. Instead of `create_frame`, `get_frame`, `list_frames`, `update_frame`, `delete_frame` as five separate tools, a single `frames` endpoint handles all of them. This:
+
+- **Reduces tool count** — 18 endpoints cover 93 methods
+- **Groups related operations** — the AI sees all frame operations together in one description
+- **Shares parameters** — `fields`, `depth`, `offset`, `limit` work the same everywhere
+- **Enables capability gating** — read methods are always available, create/edit methods appear based on `--create` / `--edit` flags
+
+## Calling an endpoint
+
+Every call requires a `method` parameter:
+
+```json
+{ "method": "list" }
+{ "method": "get", "id": "1:2", "depth": 0 }
+{ "method": "create", "type": "frame", "items": [{"name": "Card", "width": 300, "height": 200}] }
+```
+
+## Common methods
+
+Most endpoints support some subset of these:
+
+| Method | Purpose | Tier |
+|--------|---------|------|
+| `list` | Search / paginate resources | read |
+| `get` | Get detail by ID | read |
+| `create` | Create new resources | create |
+| `update` | Patch existing resources | edit |
+| `delete` | Remove resources | edit |
+
+Some endpoints add domain-specific methods like `clone`, `reparent`, `export`, `scan`, `swap`, `detach`, `add_mode`, etc.
+
+## Batch responses
+
+`create`, `update`, and `delete` return a `results` array — one entry per input item, in order. Each entry is either `"ok"`, an object like `{id: "..."}`, or `{error: "message"}`. This allows partial success:
+
+```json
+{
+  "results": [
+    { "id": "5:2" },
+    { "error": "Name already exists" }
+  ]
+}
+```
+
+## Inherited methods
+
+Endpoints that operate on scene-graph nodes (`frames`, `text`) extend a shared **node base** that provides `get`, `list`, `update`, `delete`, `clone`, and `reparent` automatically. These inherited methods work identically across all node endpoints.
+
+## Discriminated creates
+
+Some `create` methods use a `type` discriminant to select between different item shapes:
+
+```json
+{ "method": "create", "type": "auto_layout", "items": [{"layoutMode": "VERTICAL", "itemSpacing": 8}] }
+{ "method": "create", "type": "section", "items": [{"name": "Hero"}] }
+```
+
+Each type has its own parameter schema documented on the endpoint page.
+
+## Built-in help
+
+Every endpoint also supports `method: "help"` for endpoint-local reference:
+
+```json
+{ "method": "help" }
+{ "method": "help", "topic": "create" }
+```
+
+Use the standalone `help()` tool when you need the global directory of endpoints or method-level help in `endpoint.method` form, such as `help(topic: "frames.create")`.
+
+## Access tiers
+
+Methods are gated by startup flags:
+
+| Flag | Available methods |
+|------|------------------|
+| _(none)_ | `get`, `list`, `check`, `scan`, `export` |
+| `--create` | Above + `create`, `clone` |
+| `--edit` | All methods |
+
+If create/edit methods are missing, see the `missing_tools` prompt.
