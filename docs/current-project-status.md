@@ -17,6 +17,10 @@
 - `packages/design-runtime`：早期命令和运行时原型；
 - `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
   连续重放已提交事务的崩溃恢复原型；
+- `packages/design-layout`：宿主无关的 absolute/stack 布局原型，支持 fixed、fill、hug、
+  padding、gap、对齐、文本测量接口和结构化布局警告；
+- `packages/design-export`：独立 HTML/CSS 导出原型，保留布局与 CSS Token 语义，并对
+  不支持或降级的特性输出诊断；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 
@@ -37,7 +41,7 @@
 - 独立的 `studio-web` 或桌面工作台；
 - 可交互画布、图层面板和属性面板；
 - 生产可用的布局、文本测量和渲染系统；
-- HTML/CSS、PNG、SVG 的完整独立导出链路；
+- 生产可用的 HTML/CSS，以及 PNG、SVG 的完整独立导出链路；
 - AI Provider、Planner、dry-run、审批、Reviewer 的完整编辑闭环；
 - 独立 Studio 的 MCP adapter；
 - 不依赖 Figma 的端到端设计工作流。

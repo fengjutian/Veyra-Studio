@@ -41,3 +41,35 @@ test("rejects missing and type-incompatible token bindings", () => {
   document.tokens["spacing.large"] = { type: "number", value: 24 };
   assert.throws(() => validateDocument(document), /fill binding cannot use number token/);
 });
+
+test("rejects children on leaf nodes", () => {
+  const document = createDocument("doc:1", "Demo");
+  document.nodes.parent = {
+    id: "parent",
+    type: "text",
+    name: "Text",
+    parentId: "page:1",
+    childIds: ["child"],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: defaultAppearance(),
+    text: "Parent",
+    fontFamily: "Inter",
+    fontSize: 16,
+    lineHeight: 24,
+  };
+  document.nodes.child = {
+    id: "child",
+    type: "rectangle",
+    name: "Child",
+    parentId: "parent",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: defaultAppearance(),
+  };
+  document.pages["page:1"].childIds = ["parent"];
+  assert.throws(() => validateDocument(document), /text cannot contain children/);
+});

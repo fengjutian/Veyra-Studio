@@ -43,6 +43,7 @@ export function validateDocument(input: unknown): DesignDocument {
   for (const [nodeId, node] of Object.entries(document.nodes)) {
     if (node.id !== nodeId) issues.push(`node record key ${nodeId} does not match node.id ${node.id}`);
     if (new Set(node.childIds).size !== node.childIds.length) issues.push(`node ${nodeId} contains duplicate child IDs`);
+    if (node.childIds.length && node.type !== "frame" && node.type !== "component") issues.push(`node ${nodeId} of type ${node.type} cannot contain children`);
     for (const childId of node.childIds) {
       claim(childId, `node ${nodeId}`);
       const child = document.nodes[childId];
