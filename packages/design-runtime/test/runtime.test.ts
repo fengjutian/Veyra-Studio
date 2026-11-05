@@ -68,6 +68,19 @@ test("prevents reparenting into a descendant", () => {
   ])), /descendant/);
 });
 
+test("reorders a node when reparenting within the same container", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: frame("bottom") } },
+    { type: "node.create", payload: { node: frame("middle") } },
+    { type: "node.create", payload: { node: frame("top") } },
+  ]));
+  const result = runtime.execute(envelope(1, [
+    { type: "node.reparent", payload: { id: "bottom", parentId: "page:1", index: 2 } },
+  ]));
+  assert.deepEqual(result.changes.after.pages["page:1"]?.childIds, ["middle", "top", "bottom"]);
+});
+
 test("returns structural warnings without blocking a valid change", () => {
   const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   const node = frame("node:1");

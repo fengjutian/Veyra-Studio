@@ -17,6 +17,7 @@ function App() {
   const [project, setProject] = useState<StudioProject>();
   const [projects, setProjects] = useState<StoredProjectSummary[]>([]);
   const [document, setDocument] = useState<DesignDocument>();
+  const [currentPageId, setCurrentPageId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("添加一个蓝色卡片");
   const [preview, setPreview] = useState<AiPlanPreview>();
@@ -25,7 +26,7 @@ function App() {
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
   const operationInFlight = useRef(false);
   const clipboard = useRef<NodeClipboard | undefined>(undefined);
-  const keyboardAction = useRef<(action: "copy" | "paste" | "duplicate" | "delete") => void>(() => undefined);
+  const keyboardAction = useRef<(action: "copy" | "paste" | "duplicate" | "delete" | "layerUp" | "layerDown") => void>(() => undefined);
   const importInput = useRef<HTMLInputElement>(null);
   const editor = useMemo(() => project ? new SafeAiEditor(project, demoPlanner) : undefined, [project]);
 
@@ -36,14 +37,14 @@ function App() {
     setDocument(snapshot); setProjects(await repository.listProjects()); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setMessage(`${direction === "undo" ? "撤销" : "重做"}完成 · revision ${committed.result.revision}`);
   };
 
-  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { setProject(value); setDocument(value.snapshot()); setProjects(await repository.listProjects()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
   useEffect(() => {
     if (!project) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
       const modifier = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
-      const action = modifier && key === "c" ? "copy" : modifier && key === "v" ? "paste" : modifier && key === "d" ? "duplicate" : key === "delete" || key === "backspace" ? "delete" : undefined;
+      const action = modifier && key === "c" ? "copy" : modifier && key === "v" ? "paste" : modifier && key === "d" ? "duplicate" : modifier && key === "]" ? "layerUp" : modifier && key === "[" ? "layerDown" : key === "delete" || key === "backspace" ? "delete" : undefined;
       if (action) { event.preventDefault(); keyboardAction.current(action); return; }
       if (!modifier || key !== "z") return;
       event.preventDefault();
@@ -55,7 +56,8 @@ function App() {
   }, [project]);
 
   if (!project || !document) return <main className="loading">{message}</main>;
-  const page = document.pages[document.pageOrder[0]!];
+  const activePageId = currentPageId && document.pages[currentPageId] ? currentPageId : document.pageOrder[0]!;
+  const page = document.pages[activePageId]!;
   const selected = selectedIds.length ? document.nodes[selectedIds.at(-1)!] : undefined;
 
   const run = async (operation: () => Promise<void>) => {
@@ -74,12 +76,13 @@ function App() {
   };
   const openProject = async (id: string) => {
     const opened = await StudioProject.open(repository, id);
-    setProject(opened.project); setDocument(opened.project.snapshot()); setSelectedIds([]); setPreview(undefined); setMessage(opened.recovery.degraded ? "项目已降级恢复，请检查事务日志" : "项目已打开");
+    const snapshot = opened.project.snapshot();
+    setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined); setMessage(opened.recovery.degraded ? "项目已降级恢复，请检查事务日志" : "项目已打开");
   };
   const createProject = () => void run(async () => {
     const name = window.prompt("新项目名称", "未命名设计")?.trim(); if (!name) return;
     const created = await StudioProject.create(repository, `project:${crypto.randomUUID()}`, name, `page:${crypto.randomUUID()}`);
-    setProject(created); setDocument(created.snapshot()); setProjects(await repository.listProjects()); setSelectedIds([]); setPreview(undefined); setMessage("项目已创建");
+    const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSelectedIds([]); setPreview(undefined); setMessage("项目已创建");
   });
   const renameProject = () => void run(async () => {
     const name = window.prompt("项目名称", document.meta.name)?.trim(); if (!name || name === document.meta.name) return;
@@ -92,11 +95,28 @@ function App() {
     if (remaining[0]) await openProject(remaining[0].id);
     else {
       const created = await StudioProject.create(repository, `project:${crypto.randomUUID()}`, "未命名设计", `page:${crypto.randomUUID()}`);
-      setProject(created); setDocument(created.snapshot()); setSelectedIds([]); setPreview(undefined);
+      const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined);
     }
     setProjects(await repository.listProjects()); setMessage("项目已删除");
   });
   const addNode = (type: "frame" | "text" | "rectangle") => void run(() => execute([{ type: "node.create", payload: { node: makeNode(type, page.id) } }]));
+  const switchPage = (id: string) => { setCurrentPageId(id); setSelectedIds([]); setPreview(undefined); };
+  const createPage = () => void run(async () => {
+    const name = window.prompt("页面名称", `页面 ${document.pageOrder.length + 1}`)?.trim(); if (!name) return;
+    const id = `page:${crypto.randomUUID()}`;
+    await execute([{ type: "page.create", payload: { page: { id, name, childIds: [] } } }]);
+    switchPage(id);
+  });
+  const renamePage = () => void run(async () => {
+    const name = window.prompt("页面名称", page.name)?.trim(); if (!name || name === page.name) return;
+    await execute([{ type: "page.rename", payload: { id: page.id, name } }]);
+  });
+  const deletePage = () => void run(async () => {
+    if (document.pageOrder.length === 1 || page.childIds.length) return;
+    const nextPageId = document.pageOrder.find(id => id !== page.id)!;
+    await execute([{ type: "page.delete", payload: { id: page.id } }]);
+    switchPage(nextPageId);
+  });
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => selected && patchNode(selected.id, patchValue);
@@ -147,18 +167,26 @@ function App() {
     const roots = copyNodeTrees(document, selectedIds).roots;
     void run(async () => { await execute(roots.map(id => ({ type: "node.delete", payload: { id } }))); setSelectedIds([]); });
   };
+  const selectedLayerIndex = selectedIds.length === 1 ? page.childIds.indexOf(selectedIds[0]!) : -1;
+  const reorderLayer = (targetIndex: number) => {
+    if (selectedLayerIndex < 0 || targetIndex === selectedLayerIndex) return;
+    const id = selectedIds[0]!;
+    void run(() => execute([{ type: "node.reparent", payload: { id, parentId: page.id, index: targetIndex } }]));
+  };
   keyboardAction.current = action => {
     if (busy) return;
     if (action === "copy") copySelection();
     else if (action === "paste") pasteSelection();
     else if (action === "duplicate") duplicateSelection();
+    else if (action === "layerUp") reorderLayer(Math.min(page.childIds.length - 1, selectedLayerIndex + 1));
+    else if (action === "layerDown") reorderLayer(Math.max(0, selectedLayerIndex - 1));
     else deleteSelection();
   };
   const previewStale = preview?.baseRevision !== document.revision;
 
   return <div className="studio">
     <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} onClick={exportHtml}>HTML</button><button disabled={busy} onClick={exportJson}>JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}>导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
-    <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 12 }}><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+C" onClick={copySelection}>复制</button><button disabled={busy || !clipboard.current} title="Ctrl/Cmd+V" onClick={pasteSelection}>粘贴</button><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+D" onClick={duplicateSelection}>重复</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
+    <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}>新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}>重命名</button><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} title={page.childIds.length ? "请先清空页面" : "删除当前页面"} onClick={deletePage}>删除</button></div><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+C" onClick={copySelection}>复制</button><button disabled={busy || !clipboard.current} title="Ctrl/Cmd+V" onClick={pasteSelection}>粘贴</button><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+D" onClick={duplicateSelection}>重复</button></div><div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><button disabled={busy || selectedLayerIndex <= 0} onClick={() => reorderLayer(0)}>置底</button><button disabled={busy || selectedLayerIndex <= 0} title="Ctrl/Cmd+[" onClick={() => reorderLayer(selectedLayerIndex - 1)}>下移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= page.childIds.length - 1} title="Ctrl/Cmd+]" onClick={() => reorderLayer(selectedLayerIndex + 1)}>上移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= page.childIds.length - 1} onClick={() => reorderLayer(page.childIds.length - 1)}>置顶</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
     <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} fill={resolveFill(document, document.nodes[id]!)} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy || selectedIds.some(id => document.nodes[id]?.locked)} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selected ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
