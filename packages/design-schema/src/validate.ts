@@ -1,0 +1,110 @@
+import { designDocumentSchema } from "./schema";
+import type { DesignDocument, NodeId, PageId } from "./types";
+
+export class DocumentValidationError extends Error {
+  constructor(public readonly issues: string[]) {
+    super(`Invalid design document:\n- ${issues.join("\n- ")}`);
+    this.name = "DocumentValidationError";
+  }
+}
+
+export function validateDocument(input: unknown): DesignDocument {
+  const parsed = designDocumentSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new DocumentValidationError(parsed.error.issues.map(issue => `${issue.path.join(".")}: ${issue.message}`));
+  }
+
+  const document = parsed.data as DesignDocument;
+  const issues: string[] = [];
+  const pageIds = new Set(Object.keys(document.pages));
+
+  if (new Set(document.pageOrder).size !== document.pageOrder.length) issues.push("pageOrder contains duplicate IDs");
+  for (const pageId of document.pageOrder) if (!document.pages[pageId]) issues.push(`pageOrder references missing page ${pageId}`);
+  for (const pageId of pageIds) if (!document.pageOrder.includes(pageId)) issues.push(`page ${pageId} is missing from pageOrder`);
+
+  const claimed = new Map<NodeId, string>();
+  const claim = (childId: NodeId, owner: string) => {
+    const previous = claimed.get(childId);
+    if (previous) issues.push(`node ${childId} is listed by both ${previous} and ${owner}`);
+    else claimed.set(childId, owner);
+  };
+
+  for (const page of Object.values(document.pages)) {
+    if (page.id !== findRecordKey(document.pages, page)) issues.push(`page record key does not match page.id ${page.id}`);
+    if (new Set(page.childIds).size !== page.childIds.length) issues.push(`page ${page.id} contains duplicate child IDs`);
+    for (const childId of page.childIds) {
+      claim(childId, `page ${page.id}`);
+      const child = document.nodes[childId];
+      if (!child) issues.push(`page ${page.id} references missing node ${childId}`);
+      else if (child.parentId !== page.id) issues.push(`node ${childId} parentId does not match page ${page.id}`);
+    }
+  }
+
+  for (const [nodeId, node] of Object.entries(document.nodes)) {
+    if (node.id !== nodeId) issues.push(`node record key ${nodeId} does not match node.id ${node.id}`);
+    if (new Set(node.childIds).size !== node.childIds.length) issues.push(`node ${nodeId} contains duplicate child IDs`);
+    for (const childId of node.childIds) {
+      claim(childId, `node ${nodeId}`);
+      const child = document.nodes[childId];
+      if (!child) issues.push(`node ${nodeId} references missing child ${childId}`);
+      else if (child.parentId !== nodeId) issues.push(`child ${childId} parentId does not match node ${nodeId}`);
+    }
+    if (node.type === "image" && !document.assets[node.assetId]) issues.push(`image ${nodeId} references missing asset ${node.assetId}`);
+    if (node.type === "instance" && !document.components[node.componentId]) issues.push(`instance ${nodeId} references missing component ${node.componentId}`);
+  }
+
+  for (const nodeId of Object.keys(document.nodes)) {
+    if (!claimed.has(nodeId)) issues.push(`node ${nodeId} is orphaned`);
+  }
+
+  detectCycles(document, issues);
+
+  for (const [componentId, component] of Object.entries(document.components)) {
+    if (component.id !== componentId) issues.push(`component record key ${componentId} does not match component.id`);
+    const root = document.nodes[component.rootNodeId];
+    if (!root) issues.push(`component ${componentId} references missing root ${component.rootNodeId}`);
+    else if (root.type !== "component") issues.push(`component ${componentId} root ${root.id} is not a component node`);
+  }
+
+  if (issues.length) throw new DocumentValidationError(issues);
+  return document;
+}
+
+function findRecordKey<T extends { id: string }>(records: Record<string, T>, value: T): string | undefined {
+  return Object.entries(records).find(([, candidate]) => candidate === value)?.[0];
+}
+
+function detectCycles(document: DesignDocument, issues: string[]): void {
+  const visiting = new Set<NodeId>();
+  const visited = new Set<NodeId>();
+
+  const visit = (nodeId: NodeId) => {
+    if (visiting.has(nodeId)) {
+      issues.push(`node tree contains a cycle at ${nodeId}`);
+      return;
+    }
+    if (visited.has(nodeId)) return;
+    visiting.add(nodeId);
+    for (const childId of document.nodes[nodeId]?.childIds ?? []) visit(childId);
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+  };
+
+  for (const page of Object.values(document.pages)) for (const childId of page.childIds) visit(childId);
+}
+
+export function createDocument(id: string, name: string, pageId = "page:1"): DesignDocument {
+  const now = new Date().toISOString();
+  return {
+    schemaVersion: 1,
+    id,
+    revision: 0,
+    meta: { name, createdAt: now, updatedAt: now },
+    pageOrder: [pageId],
+    pages: { [pageId]: { id: pageId, name: "Page 1", childIds: [] } },
+    nodes: {},
+    components: {},
+    tokens: {},
+    assets: {},
+  };
+}
