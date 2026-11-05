@@ -126,6 +126,39 @@ GitNexus 当前索引覆盖 153 个文件、3,257 个符号和 282 条执行流�
 - 不用 Figma ID、plugin data 或远程 library key 作为内部主标识。
 - 不让 AI 绕过人工编辑所使用的校验和事务入口。
 
+### 4.3 开源能力引入需求
+
+为缩短 Studio 工作台、导出与 AI 闭环的开发周期，项目优先复用成熟开源项目，但只复用通用机制，不让第三方库接管设计领域语义。所有候选依赖在进入生产代码前必须完成许可证、维护活跃度、包体积、安全公告、浏览器兼容性和退出成本审查，并记录到 ADR 与第三方软件清单。
+
+强制边界如下：
+
+1. 画布交互库只能输出选择、移动、缩放、旋转和吸附意图；拖拽中的变化属于 preview，`pointerup` 后必须转换为 `DesignCommand` 并通过 `DesignRuntime.execute` 原子提交。
+2. 状态、编辑器或渲染库的对象不得写入 `DesignDocument`，不得成为节点 ID、历史记录或持久化格式的一部分。
+3. AI SDK 只负责模型 Provider、流式输出、结构化输出和工具调用；Planner、影响集、dry-run、审批、`baseRevision`、事务和回滚由 Studio 自己实现。
+4. 持久化库必须实现 `ProjectRepository`，不得让 IndexedDB、OPFS、SQLite 或第三方数据结构泄漏到应用服务和领域层。
+5. 布局、渲染与导出候选必须位于适配器之后，并以同一份 `DesignDocument`、同一套布局结果和支持矩阵为输入。
+6. 引入依赖前必须准备退出路径：适配器契约、最小集成面、契约测试和可替换实现；禁止在 UI 中直接散布第三方 API 调用。
+
+候选矩阵：
+
+| 缺失能力 | 候选项目 | 决策 | 集成边界 |
+| --- | --- | --- | --- |
+| 拖拽、缩放、旋转、组合与吸附 | Moveable（MIT） | Phase 1/2 优先验证 | `CanvasInteractionAdapter`，只产生 preview 与命令意图 |
+| 框选与多选 | Selecto（MIT） | 与 Moveable 配套验证 | 写入 Selection Service，不直接修改文档 |
+| Web 项目持久化 | Dexie（Apache-2.0） | Phase 1 采用 | 实现 IndexedDB `ProjectRepository`；大资产可后接 OPFS |
+| PNG/PDF 与视觉回归 | Playwright（Apache-2.0） | Phase 2 优先采用 | 加载隔离的 HTML/CSS 预览并截图；不作为领域渲染器 |
+| 多模型 Provider 与流式 UI | Vercel AI SDK（Apache-2.0） | Phase 3 优先采用 | 位于 `ai-orchestrator` Provider 层，输出必须转为受校验的命令计划 |
+| 增量变更与 inverse patch | Immer（MIT） | 先做 spike | 可作为 `ChangeSet` 内部实现，不作为公开日志协议 |
+| 图层树和面板拖放 | dnd-kit（MIT） | Phase 1/2 采用 | 仅用于 UI 排序与拖放意图，最终通过 `node.reparent` 等命令提交 |
+| Flex 布局 | Yoga（MIT） | 与当前布局器、浏览器做三方 spike | 位于 `LayoutEngine` 适配器之后，不持久化 Yoga 节点 |
+| Token 跨平台转换 | Style Dictionary（Apache-2.0） | Phase 4 采用 | 只消费规范化 token 并生成 CSS/JSON 等交付物 |
+| 大规模 WebGL 渲染 | PixiJS（MIT） | DOM 基准失败后再评估 | 仅实现 `RenderAdapter`，不得替代场景文档 |
+| 多人协作 | Yjs（MIT） | V1 后置 | 同步命令/事务及 awareness，不把 Y 类型写入文档 Schema |
+
+参考型项目不作为核心依赖：Puck 可借鉴 React 组件面板、slot 和属性配置；GrapesJS 可借鉴 Block、Style、Device 与 Asset Manager；Excalidraw 可借鉴无限画布、快捷键、复制粘贴和恢复体验。它们各自的数据模型不得替换 `DesignDocument`。tldraw 当前生产许可不符合“核心能力使用宽松开源许可证”的默认要求，只允许作为交互参考，除非后续 ADR 明确接受商业许可。
+
+首批依赖目标限定为 `react-moveable`、`react-selecto`、`dexie`、`dnd-kit`、`playwright` 和 Vercel AI SDK。Immer 与 Yoga 必须先通过 spike；PixiJS 与 Yjs 只有在性能或协作需求被正式纳入范围后才可引入。
+
 ## 5. 目标架构
 
 ```text
@@ -370,25 +403,25 @@ interface ProjectRepository {
 
 ### Phase 0：审计与技术验证（2—3 周）
 
-交付工具逐方法复用矩阵、Figma 能力替代清单、许可证清单、`DesignDocument v0`、核心命令、事务恢复原型、两类画布 spike、导出一致性 spike、三个基准页面和 ADR 初稿。
+交付工具逐方法复用矩阵、Figma 能力替代清单、开源依赖与许可证清单、`DesignDocument v0`、核心命令、事务恢复原型、Moveable/Selecto 交互 spike、当前布局器/Yoga/浏览器三方布局 spike、DOM 与 Canvas 两类渲染 spike、Playwright 导出一致性 spike、三个基准页面和 ADR 初稿。
 
 退出条件：关键 ADR 通过评审，布局、文本、画布、持久化和导出没有阻断性风险。
 
 ### Phase 1：文档核心与应用骨架（4—6 周）
 
-交付项目管理、Schema 迁移、场景图、命令总线、历史、基础工作台和自动保存。
+交付项目管理、Schema 迁移、场景图、命令总线、历史、基础工作台、基于 Dexie 的 Web Repository、图层树拖放和自动保存。
 
 退出条件：无需 Figma 和 AI，可以创建项目、编辑节点、撤销重做、关闭并恢复。
 
 ### Phase 2：人工设计闭环（6—10 周）
 
-交付画布、图层树、属性面板、基础节点、自动布局、token、组件、lint 和 HTML/PNG 导出。
+交付画布、图层树、属性面板、基础节点、Moveable/Selecto 交互适配器、自动布局、token、组件、lint，以及 HTML 与基于 Playwright 的 PNG 导出。
 
 退出条件：可人工完成三个基准页面；重启后无数据丢失；导出通过视觉回归。
 
 ### Phase 3：AI 设计闭环（5—8 周）
 
-交付 Provider、上下文构建、命令工具、计划预览、局部修改、AI 历史、审查和成本控制。
+交付基于 Vercel AI SDK 的 Provider 与流式 UI、上下文构建、命令工具、计划预览、局部修改、AI 历史、审查和成本控制。AI SDK 不承担领域事务、审批和回滚。
 
 退出条件：AI 可生成结构化页面并只修改指定范围；失败不破坏文档；所有修改可整体撤销。
 
@@ -448,6 +481,11 @@ interface ProjectRepository {
 | ADR-008 | AI 权限与冲突 | capability、影响集合、审批和 `baseRevision`。 |
 | ADR-009 | 导出支持矩阵 | HTML/PNG 优先，React/PDF 后置。 |
 | ADR-010 | Schema 编译器迁移 | 抽取生成机制，工具定义按新领域模型版本化。 |
+| ADR-011 | 画布交互开源组件 | 优先验证 Moveable + Selecto；事件经适配器转为 preview 和领域命令。 |
+| ADR-012 | Web 持久化实现 | Dexie 实现 IndexedDB Repository，大资产按基准决定是否接入 OPFS。 |
+| ADR-013 | PNG/PDF 导出链路 | 优先复用 HTML/CSS 渲染结果，通过 Playwright 截图与生成 PDF。 |
+| ADR-014 | AI Provider SDK | Vercel AI SDK 只负责 Provider、流式输出和工具协议，领域闭环保持自有。 |
+| ADR-015 | Patch 与布局引擎评估 | 分别评估 Immer 和 Yoga，不在 spike 通过前替换现有 ChangeSet 与布局实现。 |
 
 ## 13. 下一步
 
@@ -460,5 +498,6 @@ interface ProjectRepository {
 5. 对比 DOM/SVG 与 Canvas 候选，不让 renderer 对象进入文档模型。
 6. 从 Schema 编译器抽取最小闭环，为 `node.create`、`node.patch`、`node.delete` 和 `node.reparent` 生成校验、帮助和类型。
 7. 用基准数据完成 ADR 评审，再冻结 V1 范围、团队配置和里程碑。
+8. 完成首批第三方依赖的许可证、安全、包体积、维护状态与退出成本审查，并建立 `CanvasInteractionAdapter`、`IndexedDbProjectRepository`、`AiProvider` 和 `BrowserExportAdapter` 契约测试。
 
 最终结论：Vibma 为新产品提供的是经过验证的工具契约、结构化设计规则和 Agent 交互经验，而不是现成的独立设计引擎。AI Design Studio 的核心资产必须是宿主无关的设计文档、命令事务、布局组件系统，以及人和 AI 共用的安全编辑闭环。

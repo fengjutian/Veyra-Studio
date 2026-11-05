@@ -1,0 +1,27 @@
+{
+  "name": "@ufira/studio-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ufira/ai-orchestrator": "*",
+    "@ufira/design-persistence": "*",
+    "@ufira/design-runtime": "*",
+    "@ufira/design-schema": "*",
+    "@ufira/studio-application": "*",
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "^5.9.3"
+  }
+}

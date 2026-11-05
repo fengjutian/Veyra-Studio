@@ -10,6 +10,12 @@ export interface StudioExecuteResult {
   checkpointError?: string;
 }
 
+export interface StudioPreviewResult {
+  before: DesignDocument;
+  after: DesignDocument;
+  result: CommandResult;
+}
+
 export interface OpenProjectResult {
   project: StudioProject;
   recovery: Omit<ProjectSnapshot, "document">;
@@ -47,6 +53,13 @@ export class StudioProject {
 
   snapshot(): DesignDocument {
     return this.runtime.snapshot();
+  }
+
+  preview(envelope: CommandEnvelope): StudioPreviewResult {
+    const before = this.runtime.snapshot();
+    const previewRuntime = new DesignRuntime(before);
+    const result = previewRuntime.execute(envelope);
+    return { before, after: previewRuntime.snapshot(), result };
   }
 
   execute(envelope: CommandEnvelope): Promise<StudioExecuteResult> {

@@ -22,7 +22,11 @@
 - `packages/design-export`：独立 HTML/CSS 导出原型，保留布局与 CSS Token 语义，并对
   不支持或降级的特性输出诊断；
 - `packages/studio-application`：串联项目创建、命令事务、日志与快照、恢复、布局和
-  HTML 导出的应用服务原型，作为未来工作台与 AI Orchestrator 的共同入口；
+  HTML 导出的应用服务原型，并提供不修改真实项目的命令预演入口，作为未来工作台与
+  AI Orchestrator 的共同入口；
+- `packages/ai-orchestrator`：AI 安全编辑闭环的第一阶段原型，包含可替换 Planner
+  契约、临时运行时 dry-run、before/after 预览、影响节点、warnings、取消、显式确认
+  提交，以及基于 `baseRevision` 的过期计划拒绝；尚未接入真实模型 Provider 和 UI；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 
@@ -44,7 +48,8 @@
 - 可交互画布、图层面板和属性面板；
 - 生产可用的布局、文本测量和渲染系统；
 - 生产可用的 HTML/CSS，以及 PNG、SVG 的完整独立导出链路；
-- AI Provider、Planner、dry-run、审批、Reviewer 的完整编辑闭环；
+- AI Provider、真实 Planner、可视化审批、Reviewer 的完整编辑闭环；当前仅有安全计划、
+  dry-run 与确认提交的应用层原型；
 - 独立 Studio 的 MCP adapter；
 - 不依赖 Figma 的端到端设计工作流。
 
