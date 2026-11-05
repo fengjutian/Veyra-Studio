@@ -28,8 +28,9 @@
   契约、临时运行时 dry-run、before/after 预览、影响节点、warnings、取消、显式确认
   提交，以及基于 `baseRevision` 的过期计划拒绝；尚未接入真实模型 Provider 和 UI；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
-  节点创建/选择/删除、基础属性编辑、localStorage 项目恢复，以及 AI 计划预览、取消和
-  确认提交界面；它用于验证闭环，尚未接入 Moveable/Selecto、Dexie 和真实 AI Provider；
+  节点创建/选择/拖动/删除、基础属性编辑、带 pending snapshot 保护的 localStorage
+  项目恢复，以及 AI 计划预览、过期提示、取消和确认提交界面；它用于验证闭环，尚未
+  接入 Moveable/Selecto、Dexie 和真实 AI Provider；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 
