@@ -5,6 +5,7 @@ import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
 import { BrowserProjectRepository } from "./browser-repository";
+import { CanvasInteractionLayer } from "./canvas-interaction-layer";
 import "./styles.css";
 
 const PROJECT_ID = "studio:local";
@@ -17,6 +18,7 @@ function App() {
   const [preview, setPreview] = useState<AiPlanPreview>();
   const [message, setMessage] = useState("正在打开本地项目…");
   const [busy, setBusy] = useState(false);
+  const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
   const operationInFlight = useRef(false);
   const editor = useMemo(() => project ? new SafeAiEditor(project, demoPlanner) : undefined, [project]);
 
@@ -48,7 +50,7 @@ function App() {
   return <div className="studio">
     <header><strong>AI Design Studio</strong><span>{document.meta.name} · r{document.revision}</span><span className="status">{message}</span></header>
     <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedId === id ? "layer active" : "layer"} key={id} onClick={() => setSelectedId(id)}>{document.nodes[id]?.name}</button>)}</aside>
-    <section className="workspace"><div className="canvas" onClick={() => setSelectedId(undefined)}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedId === id} onSelect={() => setSelectedId(id)} onMove={(x, y) => patchNode(id, { layout: { ...document.nodes[id]!.layout, x, y } })} />)}</div></section>
+    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={() => setSelectedId(undefined)}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedId === id} onSelect={() => setSelectedId(id)} />)}<CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedId={selectedId} disabled={busy} onSelect={setSelectedId} onCommit={(id, layout) => patchNode(id, { layout })} /></div></section>
     <aside className="inspector"><h2>属性</h2>{selected ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
       {(["x", "y", "width", "height"] as const).map(key => <Field key={key} label={key} type="number" value={selected.layout[key]} onCommit={value => patch({ layout: { ...selected.layout, [key]: Number(value) } })} />)}
@@ -62,16 +64,9 @@ function App() {
   </div>;
 }
 
-function CanvasNode({ node, selected, onSelect, onMove }: { node: DesignNode; selected: boolean; onSelect(): void; onMove(x: number, y: number): void }) {
-  const [drag, setDrag] = useState<{ pointerId: number; startX: number; startY: number; originX: number; originY: number; x: number; y: number }>();
-  const x = drag?.x ?? node.layout.x, y = drag?.y ?? node.layout.y;
-  const style: React.CSSProperties = { left: x, top: y, width: node.layout.width, height: node.layout.height, background: node.appearance.fill ?? "transparent", borderRadius: node.appearance.cornerRadius, opacity: node.appearance.opacity };
-  return <button className={`node${selected ? " selected" : ""}${drag ? " dragging" : ""}`} style={style}
-    onPointerDown={event => { event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); onSelect(); setDrag({ pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, originX: node.layout.x, originY: node.layout.y, x: node.layout.x, y: node.layout.y }); }}
-    onPointerMove={event => setDrag(current => current?.pointerId === event.pointerId ? { ...current, x: Math.round(current.originX + event.clientX - current.startX), y: Math.round(current.originY + event.clientY - current.startY) } : current)}
-    onPointerUp={event => { if (!drag || drag.pointerId !== event.pointerId) return; const finalX = Math.round(drag.originX + event.clientX - drag.startX), finalY = Math.round(drag.originY + event.clientY - drag.startY); setDrag(undefined); if (finalX !== node.layout.x || finalY !== node.layout.y) onMove(finalX, finalY); }}>
-    {node.type === "text" ? node.text : node.name}
-  </button>;
+function CanvasNode({ node, selected, onSelect }: { node: DesignNode; selected: boolean; onSelect(): void }) {
+  const style: React.CSSProperties = { left: node.layout.x, top: node.layout.y, width: node.layout.width, height: node.layout.height, background: node.appearance.fill ?? "transparent", borderRadius: node.appearance.cornerRadius, opacity: node.appearance.opacity };
+  return <button data-node-id={node.id} className={selected ? "node selected" : "node"} style={style} onClick={event => { event.stopPropagation(); onSelect(); }}>{node.type === "text" ? node.text : node.name}</button>;
 }
 
 function Field({ label, value, type = "text", onCommit }: { label: string; value: string | number; type?: string; onCommit(value: string): void }) {

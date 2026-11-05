@@ -16,9 +16,11 @@
     "@ufira/design-schema": "*",
     "@ufira/studio-application": "*",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "react-moveable": "^0.56.0",
+    "react-selecto": "^1.26.3",
+    "vite": "latest"
   },
   "devDependencies": {
     "@types/react": "latest",
