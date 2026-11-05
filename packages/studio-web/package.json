@@ -16,6 +16,7 @@
     "@ufira/design-schema": "*",
     "@ufira/studio-application": "*",
     "@vitejs/plugin-react": "latest",
+    "dexie": "^4.4.7",
     "react": "latest",
     "react-dom": "latest",
     "react-moveable": "^0.56.0",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "fake-indexeddb": "^6.2.7",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   }

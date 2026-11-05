@@ -4,7 +4,7 @@ import { SafeAiEditor, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orch
 import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
-import { BrowserProjectRepository } from "./browser-repository";
+import { DexieProjectRepository } from "./browser-repository";
 import "./styles.css";
 
 const PROJECT_ID = "studio:local";
@@ -13,7 +13,7 @@ const CanvasInteractionLayer = lazy(() => import("./canvas-interaction-layer"));
 function App() {
   const [project, setProject] = useState<StudioProject>();
   const [document, setDocument] = useState<DesignDocument>();
-  const [selectedId, setSelectedId] = useState<string>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("添加一个蓝色卡片");
   const [preview, setPreview] = useState<AiPlanPreview>();
   const [message, setMessage] = useState("正在打开本地项目…");
@@ -26,7 +26,7 @@ function App() {
 
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[document.pageOrder[0]!];
-  const selected = selectedId ? document.nodes[selectedId] : undefined;
+  const selected = selectedIds.length ? document.nodes[selectedIds.at(-1)!] : undefined;
 
   const run = async (operation: () => Promise<void>) => {
     if (operationInFlight.current) return;
@@ -44,29 +44,30 @@ function App() {
   };
   const addNode = (type: "frame" | "text" | "rectangle") => void run(() => execute([{ type: "node.create", payload: { node: makeNode(type, page.id) } }]));
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
+  const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => selected && patchNode(selected.id, patchValue);
   const previewStale = preview?.baseRevision !== document.revision;
 
   return <div className="studio">
     <header><strong>AI Design Studio</strong><span>{document.meta.name} · r{document.revision}</span><span className="status">{message}</span></header>
-    <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedId === id ? "layer active" : "layer"} key={id} onClick={() => setSelectedId(id)}>{document.nodes[id]?.name}</button>)}</aside>
-    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedId(undefined)}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedId === id} onSelect={() => setSelectedId(id)} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedId={selectedId} disabled={busy} onSelect={setSelectedId} onCommit={(id, layout) => patchNode(id, { layout })} /></Suspense></div></section>
-    <aside className="inspector"><h2>属性</h2>{selected ? <>
+    <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
+    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
+    <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selected ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
       {(["x", "y", "width", "height"] as const).map(key => <Field key={key} label={key} type="number" value={selected.layout[key]} onCommit={value => patch({ layout: { ...selected.layout, [key]: Number(value) } })} />)}
       <Field label="填充" value={selected.appearance.fill ?? "#ffffff"} onCommit={value => patch({ appearance: { ...selected.appearance, fill: value } })} />
-      <button disabled={busy} className="danger" onClick={() => void run(async () => { await execute([{ type: "node.delete", payload: { id: selected.id } }]); setSelectedId(undefined); })}>删除</button>
+      <button disabled={busy} className="danger" onClick={() => void run(async () => { await execute(selectedIds.map(id => ({ type: "node.delete", payload: { id } }))); setSelectedIds([]); })}>删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
     </> : <p>选择画布中的节点</p>}
     <hr/><h2>AI 安全编辑</h2><textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
-      <button disabled={busy || !prompt.trim()} onClick={() => editor && void run(async () => { setPreview(await editor.createPlan(prompt, selectedId ? [selectedId] : [])); setMessage("AI 计划已完成 dry-run，等待确认"); })}>生成变更预览</button>
+      <button disabled={busy || !prompt.trim()} onClick={() => editor && void run(async () => { setPreview(await editor.createPlan(prompt, selectedIds)); setMessage("AI 计划已完成 dry-run，等待确认"); })}>生成变更预览</button>
       {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p>{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}>确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}>取消</button></div></div>}
     </aside>
   </div>;
 }
 
-function CanvasNode({ node, selected, onSelect }: { node: DesignNode; selected: boolean; onSelect(): void }) {
+function CanvasNode({ node, selected, onSelect }: { node: DesignNode; selected: boolean; onSelect(event: React.MouseEvent): void }) {
   const style: React.CSSProperties = { left: node.layout.x, top: node.layout.y, width: node.layout.width, height: node.layout.height, background: node.appearance.fill ?? "transparent", borderRadius: node.appearance.cornerRadius, opacity: node.appearance.opacity };
-  return <button data-node-id={node.id} className={selected ? "node selected" : "node"} style={style} onClick={event => { event.stopPropagation(); onSelect(); }}>{node.type === "text" ? node.text : node.name}</button>;
+  return <button data-node-id={node.id} className={selected ? "node selected" : "node"} style={style} onClick={event => { event.stopPropagation(); onSelect(event); }}>{node.type === "text" ? node.text : node.name}</button>;
 }
 
 function Field({ label, value, type = "text", onCommit }: { label: string; value: string | number; type?: string; onCommit(value: string): void }) {
@@ -76,9 +77,17 @@ function Field({ label, value, type = "text", onCommit }: { label: string; value
 }
 
 async function initialize() {
-  const repository = new BrowserProjectRepository();
+  const repository = new DexieProjectRepository();
+  await migrateLegacySnapshot(repository, PROJECT_ID);
   try { return await StudioProject.open(repository, PROJECT_ID); }
   catch { return { project: await StudioProject.create(repository, PROJECT_ID, "本地设计", "page:1"), recovery: undefined }; }
+}
+
+async function migrateLegacySnapshot(repository: DexieProjectRepository, projectId: string): Promise<void> {
+  const key = `studio:${projectId}:document`, serialized = localStorage.getItem(key);
+  if (!serialized) return;
+  try { await repository.saveSnapshot(JSON.parse(serialized) as DesignDocument); localStorage.removeItem(key); localStorage.removeItem(`${key}:pending`); localStorage.removeItem(`studio:${projectId}:transactions`); }
+  catch { /* Preserve invalid legacy data for manual recovery. */ }
 }
 
 function makeNode(type: "frame" | "text" | "rectangle", parentId: string): DesignNode {
@@ -91,5 +100,7 @@ function makeNode(type: "frame" | "text" | "rectangle", parentId: string): Desig
 const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "创建一个经过安全预演的蓝色卡片", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fill: "#2563eb", cornerRadius: 20 } } } }] }; } };
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+
+function toggleId(ids: string[], id: string): string[] { return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]; }
 
 createRoot(document.getElementById("root")!).render(<App />);
