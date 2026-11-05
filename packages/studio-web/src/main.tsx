@@ -6,7 +6,7 @@ import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode 
 import { StudioProject } from "@ufira/studio-application";
 import { DexieProjectRepository, type StoredProjectSummary } from "./browser-repository";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
-import { arrangeNodes, type Arrangement } from "./node-arrangement";
+import { arrangeNodes, nudgeNodes, type Arrangement } from "./node-arrangement";
 import { prepareImportedDocument } from "./project-import";
 import "./styles.css";
 
@@ -28,6 +28,7 @@ function App() {
   const operationInFlight = useRef(false);
   const clipboard = useRef<NodeClipboard | undefined>(undefined);
   const keyboardAction = useRef<(action: "copy" | "paste" | "duplicate" | "delete" | "layerUp" | "layerDown") => void>(() => undefined);
+  const nudgeAction = useRef<(dx: number, dy: number) => void>(() => undefined);
   const importInput = useRef<HTMLInputElement>(null);
   const editor = useMemo(() => project ? new SafeAiEditor(project, demoPlanner) : undefined, [project]);
 
@@ -47,6 +48,8 @@ function App() {
       const modifier = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
       const action = modifier && key === "c" ? "copy" : modifier && key === "v" ? "paste" : modifier && key === "d" ? "duplicate" : modifier && key === "]" ? "layerUp" : modifier && key === "[" ? "layerDown" : key === "delete" || key === "backspace" ? "delete" : undefined;
       if (action) { event.preventDefault(); keyboardAction.current(action); return; }
+      const arrow = !modifier ? ({ arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] } as const)[key as "arrowleft"] : undefined;
+      if (arrow) { event.preventDefault(); const step = event.shiftKey ? 10 : 1; nudgeAction.current(arrow[0] * step, arrow[1] * step); return; }
       if (!modifier || key !== "z") return;
       event.preventDefault();
       if (operationInFlight.current) return;
@@ -60,6 +63,8 @@ function App() {
   const activePageId = currentPageId && document.pages[currentPageId] ? currentPageId : document.pageOrder[0]!;
   const page = document.pages[activePageId]!;
   const selected = selectedIds.length ? document.nodes[selectedIds.at(-1)!] : undefined;
+  const selectedNodes = selectedIds.map(id => document.nodes[id]!).filter(Boolean);
+  const selectionLocked = selectedNodes.some(node => node.locked);
 
   const run = async (operation: () => Promise<void>) => {
     if (operationInFlight.current) return;
@@ -174,7 +179,10 @@ function App() {
     const id = selectedIds[0]!;
     void run(() => execute([{ type: "node.reparent", payload: { id, parentId: page.id, index: targetIndex } }]));
   };
-  const arrangeSelection = (arrangement: Arrangement) => patchLayouts(arrangeNodes(selectedIds.map(id => document.nodes[id]!).filter(Boolean), arrangement));
+  const arrangeSelection = (arrangement: Arrangement) => { if (!selectionLocked) patchLayouts(arrangeNodes(selectedNodes, arrangement)); };
+  nudgeAction.current = (dx, dy) => {
+    if (!busy && selectedNodes.length && !selectionLocked) patchLayouts(nudgeNodes(selectedNodes, dx, dy));
+  };
   keyboardAction.current = action => {
     if (busy) return;
     if (action === "copy") copySelection();
@@ -190,7 +198,7 @@ function App() {
     <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} onClick={exportHtml}>HTML</button><button disabled={busy} onClick={exportJson}>JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}>导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
     <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}>新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}>重命名</button><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} title={page.childIds.length ? "请先清空页面" : "删除当前页面"} onClick={deletePage}>删除</button></div><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+C" onClick={copySelection}>复制</button><button disabled={busy || !clipboard.current} title="Ctrl/Cmd+V" onClick={pasteSelection}>粘贴</button><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+D" onClick={duplicateSelection}>重复</button></div><div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><button disabled={busy || selectedLayerIndex <= 0} onClick={() => reorderLayer(0)}>置底</button><button disabled={busy || selectedLayerIndex <= 0} title="Ctrl/Cmd+[" onClick={() => reorderLayer(selectedLayerIndex - 1)}>下移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= page.childIds.length - 1} title="Ctrl/Cmd+]" onClick={() => reorderLayer(selectedLayerIndex + 1)}>上移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= page.childIds.length - 1} onClick={() => reorderLayer(page.childIds.length - 1)}>置顶</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
     <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} fill={resolveFill(document, document.nodes[id]!)} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy || selectedIds.some(id => document.nodes[id]?.locked)} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
-    <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selectedIds.length > 1 && <><h2>对齐与分布</h2><div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginBottom: 12 }}><button disabled={busy} onClick={() => arrangeSelection("left")}>左</button><button disabled={busy} onClick={() => arrangeSelection("centerX")}>水平中</button><button disabled={busy} onClick={() => arrangeSelection("right")}>右</button><button disabled={busy} onClick={() => arrangeSelection("top")}>上</button><button disabled={busy} onClick={() => arrangeSelection("centerY")}>垂直中</button><button disabled={busy} onClick={() => arrangeSelection("bottom")}>下</button><button disabled={busy || selectedIds.length < 3} onClick={() => arrangeSelection("distributeX")}>水平分布</button><button disabled={busy || selectedIds.length < 3} onClick={() => arrangeSelection("distributeY")}>垂直分布</button></div></>}{selected ? <>
+    <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selectedIds.length > 1 && <><h2>对齐与分布</h2><div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginBottom: 12 }}><button disabled={busy} onClick={() => arrangeSelection("left")}>左</button><button disabled={busy} onClick={() => arrangeSelection("centerX")}>水平中</button><button disabled={busy} onClick={() => arrangeSelection("right")}>右</button><button disabled={busy} onClick={() => arrangeSelection("top")}>上</button><button disabled={busy} onClick={() => arrangeSelection("centerY")}>垂直中</button><button disabled={busy} onClick={() => arrangeSelection("bottom")}>下</button><button disabled={busy || selectedIds.length < 3} onClick={() => arrangeSelection("distributeX")}>水平分布</button><button disabled={busy || selectedIds.length < 3} onClick={() => arrangeSelection("distributeY")}>垂直分布</button></div></>}{selected && selectedIds.length === 1 ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
       {(["x", "y", "width", "height"] as const).map(key => <Field key={key} label={key} type="number" value={selected.layout[key]} onCommit={value => patch({ layout: { ...selected.layout, [key]: Number(value) } })} />)}
       <Field label="填充" value={selected.appearance.fill ?? "#ffffff"} onCommit={value => patch({ appearance: { ...selected.appearance, fill: value } })} />
@@ -198,7 +206,7 @@ function App() {
       <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
       {selected.type === "text" && <><Field label="文本" value={selected.text} onCommit={text => patchText({ text })} /><Field label="字体" value={selected.fontFamily} onCommit={fontFamily => patchText({ fontFamily })} /><Field label="字号" type="number" value={selected.fontSize} onCommit={value => patchText({ fontSize: Number(value) })} /><Field label="行高" type="number" value={selected.lineHeight} onCommit={value => patchText({ lineHeight: Number(value) })} /></>}
       <button disabled={busy} className="danger" onClick={deleteSelection}>删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
-    </> : <p>选择画布中的节点</p>}
+    </> : <p>{selectedIds.length > 1 ? "使用上方工具批量调整所选节点" : "选择画布中的节点"}</p>}
     <hr/><div className="section-heading"><h2>颜色 Tokens</h2><button disabled={busy} onClick={createColorToken}>新增</button></div>
     <div className="token-list">{Object.entries(document.tokens).map(([name, token]) => <div className="token-row" style={{ gridTemplateColumns: "18px minmax(0,1fr) auto auto auto" }} key={name}><span className="token-swatch" style={{ background: String(token.value) }} /><span title={`${name}: ${String(token.value)}`}>{name}</span>{token.type === "color" && <button disabled={busy} onClick={() => updateColorToken(name, token.value)}>改</button>}{token.type === "color" && selected && <button disabled={busy} onClick={() => patchNode(selected.id, { bindings: { ...selected.bindings, fill: name } })}>绑定</button>}<button disabled={busy} onClick={() => void run(() => execute([{ type: "token.delete", payload: { name } }]))}>×</button></div>)}</div>
     {selected?.bindings?.fill && <button className="unbind" disabled={busy} onClick={unbindFill}>解绑填充：{selected.bindings.fill}</button>}

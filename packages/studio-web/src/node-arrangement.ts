@@ -26,6 +26,13 @@ export function arrangeNodes(nodes: DesignNode[], arrangement: Arrangement): Lay
   });
 }
 
+export function nudgeNodes(nodes: DesignNode[], dx: number, dy: number): LayoutChange[] {
+  return nodes.map(node => ({
+    id: node.id,
+    layout: { ...node.layout, x: node.layout.x + dx, y: node.layout.y + dy },
+  }));
+}
+
 function distribute(nodes: DesignNode[], axis: "x" | "y"): LayoutChange[] {
   if (nodes.length < 3) return [];
   const size = axis === "x" ? "width" : "height";

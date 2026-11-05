@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { defaultAppearance, defaultLayout, type DesignNode } from "@ufira/design-schema";
-import { arrangeNodes } from "../src/node-arrangement";
+import { arrangeNodes, nudgeNodes } from "../src/node-arrangement";
 
 test("aligns nodes against their shared bounding box", () => {
   const nodes = [frame("a", 10, 20, 40, 20), frame("b", 90, 60, 20, 40)];
@@ -18,6 +18,11 @@ test("distributes nodes while preserving the outer edges", () => {
 
 test("requires three nodes for distribution", () => {
   assert.deepEqual(arrangeNodes([frame("a", 0, 0, 10, 10), frame("b", 10, 0, 10, 10)], "distributeX"), []);
+});
+
+test("nudges every selected node by the same delta", () => {
+  const changes = nudgeNodes([frame("a", 10, 20, 10, 10), frame("b", -5, 8, 10, 10)], 10, -1);
+  assert.deepEqual(changes.map(change => [change.layout.x, change.layout.y]), [[20, 19], [5, 7]]);
 });
 
 function frame(id: string, x: number, y: number, width: number, height: number): DesignNode {
