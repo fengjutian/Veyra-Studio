@@ -74,6 +74,8 @@ export function CanvasInteractionLayer({ canvas, nodes, selectedId, disabled, on
   </>;
 }
 
+export default CanvasInteractionLayer;
+
 function parsePixels(value: string, fallback: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? Math.round(parsed) : fallback;

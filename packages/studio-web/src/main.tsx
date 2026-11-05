@@ -1,14 +1,14 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { SafeAiEditor, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
 import { BrowserProjectRepository } from "./browser-repository";
-import { CanvasInteractionLayer } from "./canvas-interaction-layer";
 import "./styles.css";
 
 const PROJECT_ID = "studio:local";
+const CanvasInteractionLayer = lazy(() => import("./canvas-interaction-layer"));
 
 function App() {
   const [project, setProject] = useState<StudioProject>();
@@ -50,7 +50,7 @@ function App() {
   return <div className="studio">
     <header><strong>AI Design Studio</strong><span>{document.meta.name} · r{document.revision}</span><span className="status">{message}</span></header>
     <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedId === id ? "layer active" : "layer"} key={id} onClick={() => setSelectedId(id)}>{document.nodes[id]?.name}</button>)}</aside>
-    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={() => setSelectedId(undefined)}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedId === id} onSelect={() => setSelectedId(id)} />)}<CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedId={selectedId} disabled={busy} onSelect={setSelectedId} onCommit={(id, layout) => patchNode(id, { layout })} /></div></section>
+    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedId(undefined)}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedId === id} onSelect={() => setSelectedId(id)} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedId={selectedId} disabled={busy} onSelect={setSelectedId} onCommit={(id, layout) => patchNode(id, { layout })} /></Suspense></div></section>
     <aside className="inspector"><h2>属性</h2>{selected ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
       {(["x", "y", "width", "height"] as const).map(key => <Field key={key} label={key} type="number" value={selected.layout[key]} onCommit={value => patch({ layout: { ...selected.layout, [key]: Number(value) } })} />)}
