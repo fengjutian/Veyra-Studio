@@ -5,6 +5,8 @@ import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
 import { DexieProjectRepository, type StoredProjectSummary } from "./browser-repository";
+import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
+import { prepareImportedDocument } from "./project-import";
 import "./styles.css";
 
 const PROJECT_ID = "studio:local";
@@ -22,6 +24,9 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
   const operationInFlight = useRef(false);
+  const clipboard = useRef<NodeClipboard | undefined>(undefined);
+  const keyboardAction = useRef<(action: "copy" | "paste" | "duplicate" | "delete") => void>(() => undefined);
+  const importInput = useRef<HTMLInputElement>(null);
   const editor = useMemo(() => project ? new SafeAiEditor(project, demoPlanner) : undefined, [project]);
 
   const applyHistory = async (direction: "undo" | "redo") => {
@@ -36,7 +41,11 @@ function App() {
     if (!project) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z" || target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      const modifier = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
+      const action = modifier && key === "c" ? "copy" : modifier && key === "v" ? "paste" : modifier && key === "d" ? "duplicate" : key === "delete" || key === "backspace" ? "delete" : undefined;
+      if (action) { event.preventDefault(); keyboardAction.current(action); return; }
+      if (!modifier || key !== "z") return;
       event.preventDefault();
       if (operationInFlight.current) return;
       operationInFlight.current = true; setBusy(true);
@@ -98,12 +107,59 @@ function App() {
     setMessage(`HTML 已导出 · ${result.diagnostics.length} 条诊断`);
   };
   const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
+  const importJson = (file: File) => void run(async () => {
+    const imported = prepareImportedDocument(JSON.parse(await file.text()));
+    await repository.saveSnapshot(imported); await openProject(imported.id); setProjects(await repository.listProjects());
+    setMessage(`项目已导入${Object.keys(imported.assets).length ? "；二进制资产需重新关联" : ""}`);
+  });
+  const createColorToken = () => void run(async () => {
+    const name = window.prompt("Token 名称", "color.primary")?.trim(); if (!name) return;
+    const value = window.prompt("颜色值", "#6366f1")?.trim(); if (!value) return;
+    await execute([{ type: "token.upsert", payload: { name, token: { type: "color", value } } }]);
+  });
+  const updateColorToken = (name: string, currentValue: unknown) => void run(async () => {
+    const value = window.prompt("颜色值", String(currentValue))?.trim(); if (!value || value === currentValue) return;
+    await execute([{ type: "token.upsert", payload: { name, token: { type: "color", value } } }]);
+  });
+  const unbindFill = () => {
+    if (!selected) return;
+    const remaining = { ...selected.bindings };
+    delete remaining.fill;
+    patchNode(selected.id, { bindings: Object.keys(remaining).length ? remaining : undefined });
+  };
+  const copySelection = () => {
+    if (!selectedIds.length) return;
+    clipboard.current = copyNodeTrees(document, selectedIds);
+    setMessage(`已复制 ${clipboard.current.roots.length} 个图层树`);
+  };
+  const pasteSelection = () => {
+    if (!clipboard.current) return;
+    const pasted = pasteNodeTrees(clipboard.current, page.id);
+    void run(async () => { await execute(pasted.commands); setSelectedIds(pasted.rootIds); });
+  };
+  const duplicateSelection = () => {
+    if (!selectedIds.length) return;
+    const pasted = pasteNodeTrees(copyNodeTrees(document, selectedIds), page.id);
+    void run(async () => { await execute(pasted.commands); setSelectedIds(pasted.rootIds); });
+  };
+  const deleteSelection = () => {
+    if (!selectedIds.length) return;
+    const roots = copyNodeTrees(document, selectedIds).roots;
+    void run(async () => { await execute(roots.map(id => ({ type: "node.delete", payload: { id } }))); setSelectedIds([]); });
+  };
+  keyboardAction.current = action => {
+    if (busy) return;
+    if (action === "copy") copySelection();
+    else if (action === "paste") pasteSelection();
+    else if (action === "duplicate") duplicateSelection();
+    else deleteSelection();
+  };
   const previewStale = preview?.baseRevision !== document.revision;
 
   return <div className="studio">
-    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} onClick={exportHtml}>HTML</button><button disabled={busy} onClick={exportJson}>JSON</button><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
-    <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
-    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy || selectedIds.some(id => document.nodes[id]?.locked)} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
+    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} onClick={exportHtml}>HTML</button><button disabled={busy} onClick={exportJson}>JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}>导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
+    <aside className="layers"><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 12 }}><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+C" onClick={copySelection}>复制</button><button disabled={busy || !clipboard.current} title="Ctrl/Cmd+V" onClick={pasteSelection}>粘贴</button><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+D" onClick={duplicateSelection}>重复</button></div>{page.childIds.map(id => <button className={selectedIds.includes(id) ? "layer active" : "layer"} key={id} onClick={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])}>{document.nodes[id]?.name}</button>)}</aside>
+    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} node={document.nodes[id]!} fill={resolveFill(document, document.nodes[id]!)} selected={selectedIds.includes(id)} onSelect={event => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={page.childIds.map(id => document.nodes[id]!)} selectedIds={selectedIds} disabled={busy || selectedIds.some(id => document.nodes[id]?.locked)} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selected ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
       {(["x", "y", "width", "height"] as const).map(key => <Field key={key} label={key} type="number" value={selected.layout[key]} onCommit={value => patch({ layout: { ...selected.layout, [key]: Number(value) } })} />)}
@@ -111,8 +167,11 @@ function App() {
       <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
       <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
       {selected.type === "text" && <><Field label="文本" value={selected.text} onCommit={text => patchText({ text })} /><Field label="字体" value={selected.fontFamily} onCommit={fontFamily => patchText({ fontFamily })} /><Field label="字号" type="number" value={selected.fontSize} onCommit={value => patchText({ fontSize: Number(value) })} /><Field label="行高" type="number" value={selected.lineHeight} onCommit={value => patchText({ lineHeight: Number(value) })} /></>}
-      <button disabled={busy} className="danger" onClick={() => void run(async () => { await execute(selectedIds.map(id => ({ type: "node.delete", payload: { id } }))); setSelectedIds([]); })}>删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
+      <button disabled={busy} className="danger" onClick={deleteSelection}>删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
     </> : <p>选择画布中的节点</p>}
+    <hr/><div className="section-heading"><h2>颜色 Tokens</h2><button disabled={busy} onClick={createColorToken}>新增</button></div>
+    <div className="token-list">{Object.entries(document.tokens).map(([name, token]) => <div className="token-row" style={{ gridTemplateColumns: "18px minmax(0,1fr) auto auto auto" }} key={name}><span className="token-swatch" style={{ background: String(token.value) }} /><span title={`${name}: ${String(token.value)}`}>{name}</span>{token.type === "color" && <button disabled={busy} onClick={() => updateColorToken(name, token.value)}>改</button>}{token.type === "color" && selected && <button disabled={busy} onClick={() => patchNode(selected.id, { bindings: { ...selected.bindings, fill: name } })}>绑定</button>}<button disabled={busy} onClick={() => void run(() => execute([{ type: "token.delete", payload: { name } }]))}>×</button></div>)}</div>
+    {selected?.bindings?.fill && <button className="unbind" disabled={busy} onClick={unbindFill}>解绑填充：{selected.bindings.fill}</button>}
     <hr/><h2>AI 安全编辑</h2><textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
       <button disabled={busy || !prompt.trim()} onClick={() => editor && void run(async () => { setPreview(await editor.createPlan(prompt, selectedIds)); setMessage("AI 计划已完成 dry-run，等待确认"); })}>生成变更预览</button>
       {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p>{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}>确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}>取消</button></div></div>}
@@ -120,8 +179,8 @@ function App() {
   </div>;
 }
 
-function CanvasNode({ node, selected, onSelect }: { node: DesignNode; selected: boolean; onSelect(event: React.MouseEvent): void }) {
-  const style: React.CSSProperties = { display: node.visible ? "flex" : "none", left: node.layout.x, top: node.layout.y, width: node.layout.width, height: node.layout.height, background: node.appearance.fill ?? "transparent", borderRadius: node.appearance.cornerRadius, opacity: node.appearance.opacity };
+function CanvasNode({ node, fill, selected, onSelect }: { node: DesignNode; fill: string; selected: boolean; onSelect(event: React.MouseEvent): void }) {
+  const style: React.CSSProperties = { display: node.visible ? "flex" : "none", left: node.layout.x, top: node.layout.y, width: node.layout.width, height: node.layout.height, background: fill, borderRadius: node.appearance.cornerRadius, opacity: node.appearance.opacity };
   return <button data-node-id={node.id} className={`${selected ? "node selected" : "node"}${node.locked ? " locked" : ""}`} style={style} onClick={event => { event.stopPropagation(); onSelect(event); }}>{node.type === "text" ? node.text : node.name}</button>;
 }
 
@@ -159,6 +218,8 @@ const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "�
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
 function toggleId(ids: string[], id: string): string[] { return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]; }
+
+function resolveFill(document: DesignDocument, node: DesignNode): string { const token = node.bindings?.fill ? document.tokens[node.bindings.fill] : undefined; return token?.type === "color" ? String(token.value) : node.appearance.fill ?? "transparent"; }
 
 function safeFilename(name: string): string { return name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-").trim() || "design"; }
 function downloadFile(name: string, content: string, type: string): void { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
