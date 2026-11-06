@@ -74,6 +74,8 @@ export interface BaseNode {
   appearance: AppearanceSpec;
   bindings?: PropertyBindings;
   externalRefs?: ExternalReference[];
+  /** 作为组件插槽的 frame：实例可以往这里填充自己的内容。 */
+  slot?: boolean;
 }
 
 /** 文本在自身盒内的水平对齐方式。 */

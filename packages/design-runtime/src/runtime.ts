@@ -1,4 +1,4 @@
-import { validateDocument, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
+import { findOwningComponentId, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
 export class RevisionConflictError extends Error {
@@ -132,6 +132,7 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "node.create": return createNode(document, command.payload.node, command.payload.index);
     case "node.patch": {
       const node = requireNode(document, command.payload.id);
+      if (command.payload.patch.slot !== undefined && typeof command.payload.patch.slot !== "boolean") throw new CommandError("Slot flag must be a boolean");
       Object.assign(node, structuredClone(command.payload.patch));
       return;
     }
@@ -192,6 +193,9 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.create": return createComponent(document, command.payload.id, command.payload.nodeId, command.payload.name);
     case "component.remove": return removeComponent(document, command.payload.id);
     case "component.instantiate": return instantiateComponent(document, command.payload.node, command.payload.index);
+    case "component.detach": return detachComponent(document, command.payload.id);
+    case "slot.fill": return fillSlot(document, command.payload);
+    case "component.override": return overrideInstanceNode(document, command.payload);
   }
 }
 
@@ -257,6 +261,8 @@ function createComponent(document: DesignDocument, componentId: string, nodeId: 
   if (node.type === "instance") throw new CommandError(`Node ${nodeId} is an instance and cannot become a component root`);
   const duplicate = Object.values(document.components).find(existing => existing.rootNodeId === nodeId);
   if (duplicate) throw new CommandError(`Node ${nodeId} already defines component ${duplicate.id}`);
+  // 子树里如果已经引用了目标组件，提升之后就会变成环。
+  if (wouldCreateComponentCycle(document, componentId, nodeId)) throw new CommandError(`Component ${componentId} would reference itself through ${nodeId}`);
   node.type = "component";
   document.components[componentId] = { id: componentId, name: name.trim(), rootNodeId: nodeId };
 }
@@ -269,6 +275,95 @@ function createComponent(document: DesignDocument, componentId: string, nodeId: 
  * derived from the source node ids so a repeated instantiation stays deterministic
  * for a given instance id.
  */
+/**
+ * 把实例脱离成普通 frame。
+ *
+ * 子节点本来就已经物化，脱离只是丢掉"实例"这层身份，因此不需要重建子树，
+ * 也不会产生新的节点 id（画布选中、布局结果和撤销历史都保持稳定）。
+ */
+function detachComponent(document: DesignDocument, id: NodeId): void {
+  const node = requireNode(document, id);
+  if (node.type !== "instance") throw new CommandError(`Node ${id} is not a component instance`);
+  const detached = { ...structuredClone(node), type: "frame" as const };
+  delete (detached as { componentId?: string }).componentId;
+  delete (detached as { overrides?: Record<string, unknown> }).overrides;
+  document.nodes[id] = detached;
+}
+
+/**
+ * 往实例的插槽里放内容。
+ *
+ * 插槽是组件根子树里 `slot: true` 的 frame；真正的节点在实例化时被物化，
+ * 所以填充只需要在实例自己的子树里挂新节点，不影响组件定义和其它实例。
+ */
+function fillSlot(
+  document: DesignDocument,
+  payload: { instanceId: NodeId; slotNodeId: NodeId; template: { roots: NodeId[]; nodes: Record<NodeId, DesignNode> } },
+): void {
+  const instance = requireNode(document, payload.instanceId);
+  if (instance.type !== "instance") throw new CommandError(`Node ${instance.id} is not a component instance`);
+  const slot = requireNode(document, payload.slotNodeId);
+  if (!slot.slot) throw new CommandError(`Node ${slot.id} is not a slot`);
+  if (!isInside(document, slot.id, instance.id)) throw new CommandError(`Slot ${slot.id} does not belong to instance ${instance.id}`);
+
+  // 重复填充时先清空旧内容，调用方不必自己删。
+  for (const childId of [...slot.childIds]) deleteNode(document, childId);
+
+  const create = (sourceId: NodeId, parentId: NodeId): NodeId => {
+    const source = payload.template.nodes[sourceId];
+    if (!source) throw new CommandError(`Slot template is missing node ${sourceId}`);
+    const newId = `${instance.id}--slot--${slot.id}--${sourceId}`;
+    if (document.nodes[newId]) throw new CommandError(`Slot content ${sourceId} is already materialized`);
+    const copy = structuredClone(source);
+    copy.id = newId;
+    copy.parentId = parentId;
+    copy.childIds = [];
+    document.nodes[newId] = copy;
+    for (const childId of source.childIds) copy.childIds.push(create(childId, newId));
+    return newId;
+  };
+
+  for (const rootId of payload.template.roots) slot.childIds.push(create(rootId, slot.id));
+}
+
+/** 给实例里的物化副本写入覆盖值，并把它记进实例的 overrides。 */
+function overrideInstanceNode(
+  document: DesignDocument,
+  payload: { instanceId: NodeId; sourceNodeId: NodeId; patch: { text?: string; name?: string; visible?: boolean } },
+): void {
+  const instance = requireNode(document, payload.instanceId);
+  if (instance.type !== "instance") throw new CommandError(`Node ${instance.id} is not a component instance`);
+  const copyId = `${instance.id}--${payload.sourceNodeId}`;
+  const copy = requireNode(document, copyId);
+  if (!isInside(document, copyId, instance.id)) throw new CommandError(`Node ${copyId} does not belong to instance ${instance.id}`);
+
+  const { text, name, visible } = payload.patch;
+  if (text !== undefined) {
+    if (copy.type !== "text") throw new CommandError(`Node ${copyId} is not a text node`);
+    copy.text = text;
+  }
+  if (name !== undefined) copy.name = name;
+  if (visible !== undefined) copy.visible = visible;
+
+  const previous = instance.overrides[payload.sourceNodeId];
+  const merged = typeof previous === "object" && previous !== null ? previous : {};
+  instance.overrides = {
+    ...instance.overrides,
+    [payload.sourceNodeId]: { ...merged, ...(text !== undefined ? { text } : {}), ...(name !== undefined ? { name } : {}), ...(visible !== undefined ? { visible } : {}) },
+  };
+}
+/** `id` 是否是 `ancestorId` 的后代（沿 parentId 链向上找）。 */
+function isInside(document: DesignDocument, id: NodeId, ancestorId: NodeId): boolean {
+  let current: string | undefined = id;
+  const visited = new Set<string>();
+  while (current) {
+    if (current === ancestorId) return true;
+    if (visited.has(current)) return false;
+    visited.add(current);
+    current = document.nodes[current]?.parentId;
+  }
+  return false;
+}
 function instantiateComponent(document: DesignDocument, node: InstanceNode, index?: number): void {
   const definition = document.components[node.componentId];
   if (!definition) throw new CommandError(`Component ${node.componentId} does not exist`);
@@ -354,6 +449,11 @@ function reparentNode(document: DesignDocument, id: NodeId, parentId: string, in
   if (id === parentId || isDescendant(document, id, parentId)) throw new CommandError(`Cannot move ${id} into itself or its descendant ${parentId}`);
   const oldOwner = requireContainer(document, node.parentId);
   const newOwner = requireContainer(document, parentId);
+  // 把一个会绕回组件 C 的节点移进 C 的子树，会让 C 依赖自己（直接或间接）。
+  const ownerComponent = findOwningComponentId(document, parentId);
+  if (ownerComponent && wouldCreateComponentCycle(document, ownerComponent, id)) {
+    throw new CommandError(`Cannot move ${id} into component ${ownerComponent}: it would create a component cycle`);
+  }
   oldOwner.childIds = oldOwner.childIds.filter(childId => childId !== id);
   insertAt(newOwner.childIds, id, index);
   node.parentId = parentId;

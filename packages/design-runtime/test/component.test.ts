@@ -131,3 +131,178 @@ test("blocks component removal while an instance still uses it", () => {
   }]));
   assert.throws(() => runtime.execute(envelope(4, [{ type: "component.remove", payload: { id: "component:button" } }])), /still used/);
 });
+
+test("detaches an instance into a plain frame and keeps its children", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: { label: { text: "Hi" } } } },
+  }]));
+
+  runtime.execute(envelope(4, [{ type: "component.detach", payload: { id: "instance:1" } }]));
+  const snapshot = runtime.snapshot();
+  const detached = snapshot.nodes["instance:1"] as Record<string, unknown>;
+
+  assert.equal(detached.type, "frame");
+  assert.equal("componentId" in detached, false);
+  assert.equal("overrides" in detached, false);
+  // 物化的子节点原样保留，展开的文字也还在。
+  assert.equal((snapshot.nodes["instance:1--label"] as { text?: string }).text, "Hi");
+
+  // 脱离之后组件不再被引用，可以删除。
+  runtime.execute(envelope(5, [{ type: "component.remove", payload: { id: "component:button" } }]));
+  assert.equal(runtime.snapshot().components["component:button"], undefined);
+});
+
+test("refuses to detach a node that is not an instance", () => {
+  const runtime = componentRuntime();
+  assert.throws(() => runtime.execute(envelope(2, [{ type: "component.detach", payload: { id: "root" } }])), /not a component instance/);
+});
+
+test("rejects moving an instance into its own component subtree", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:card", nodeId: "root", name: "Card" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:card", overrides: {} } },
+  }]));
+
+  // root 是组件 card 的根：把 card 的实例塞回去会形成自引用。
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "node.reparent", payload: { id: "instance:1", parentId: "root" } }])),
+    /component cycle/,
+  );
+});
+
+test("rejects an indirect component cycle created by reparenting", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: frame("a-root") } },
+    { type: "node.create", payload: { node: frame("b-root") } },
+  ]));
+  runtime.execute(envelope(1, [{ type: "component.create", payload: { id: "component:a", nodeId: "a-root", name: "A" } }]));
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:b", nodeId: "b-root", name: "B" } }]));
+  // A 的实例放进 B：B -> A。
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:a"), type: "instance", componentId: "component:a", overrides: {} } },
+  }]));
+  runtime.execute(envelope(4, [{ type: "node.reparent", payload: { id: "instance:a", parentId: "b-root" } }]));
+
+  // 再把 B 的实例放进 A，就会形成 A -> B -> A。
+  runtime.execute(envelope(5, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:b"), type: "instance", componentId: "component:b", overrides: {} } },
+  }]));
+  assert.throws(
+    () => runtime.execute(envelope(6, [{ type: "node.reparent", payload: { id: "instance:b", parentId: "a-root" } }])),
+    /component cycle/,
+  );
+});
+
+test("fills a component slot with template nodes and replaces previous content", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: { ...frame("card"), type: "component" } } },
+    { type: "node.create", payload: { node: { ...frame("slot"), slot: true } } },
+  ]));
+  // slot 挂到组件根下。
+  runtime.execute(envelope(1, [{ type: "node.reparent", payload: { id: "slot", parentId: "card" } }]));
+  runtime.execute(envelope(2, [{ type: "component.define", payload: { component: { id: "component:card", name: "Card", rootNodeId: "card" } } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:card", overrides: {} } },
+  }]));
+
+  const materializedSlot = "instance:1--slot";
+  const template = {
+    roots: ["content"],
+    nodes: {
+      content: { ...frame("content", "slot"), type: "text", text: "标题", fontFamily: "Inter", fontSize: 16, lineHeight: 24 },
+    },
+  };
+
+  runtime.execute(envelope(4, [{ type: "slot.fill", payload: { instanceId: "instance:1", slotNodeId: materializedSlot, template } }]));
+  const firstFill = runtime.snapshot();
+  assert.deepEqual(firstFill.nodes[materializedSlot]?.childIds, ["instance:1--slot--instance:1--slot--content"]);
+  assert.equal((firstFill.nodes["instance:1--slot--instance:1--slot--content"] as { text?: string }).text, "标题");
+
+  // 再填一次：旧内容被清掉，不会越堆越多。
+  runtime.execute(envelope(5, [{ type: "slot.fill", payload: { instanceId: "instance:1", slotNodeId: materializedSlot, template } }]));
+  assert.equal(runtime.snapshot().nodes[materializedSlot]?.childIds.length, 1);
+});
+
+test("rejects filling a node that is not a slot or does not belong to the instance", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: { ...frame("card"), type: "component" } } },
+    { type: "node.create", payload: { node: { ...frame("slot"), slot: true } } },
+    { type: "node.create", payload: { node: frame("plain") } },
+  ]));
+  runtime.execute(envelope(1, [{ type: "node.reparent", payload: { id: "slot", parentId: "card" } }]));
+  runtime.execute(envelope(2, [{ type: "component.define", payload: { component: { id: "component:card", name: "Card", rootNodeId: "card" } } }]));
+  runtime.execute(envelope(3, [
+    { type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:card", overrides: {} } } },
+    { type: "component.instantiate", payload: { node: { ...frame("instance:2"), type: "instance", componentId: "component:card", overrides: {} } } },
+  ]));
+
+  const template = { roots: [], nodes: {} };
+  // plain 不是插槽。
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "slot.fill", payload: { instanceId: "instance:1", slotNodeId: "plain", template } }])),
+    /not a slot/,
+  );
+  // instance:2 的插槽不属于 instance:1。
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "slot.fill", payload: { instanceId: "instance:1", slotNodeId: "instance:2--slot", template } }])),
+    /does not belong/,
+  );
+});
+test("rejects non-boolean slot flags", () => {
+  const runtime = componentRuntime();
+  assert.throws(() => runtime.execute(envelope(2, [{ type: "node.patch", payload: { id: "root", patch: { slot: "yes" } } }])), /boolean/);
+});
+
+test("records instance overrides and applies them to the materialized copy", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } },
+  }]));
+
+  runtime.execute(envelope(4, [{
+    type: "component.override",
+    payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { text: "已覆盖" } },
+  }]));
+
+  const snapshot = runtime.snapshot();
+  assert.equal((snapshot.nodes["instance:1--label"] as { text?: string }).text, "已覆盖");
+  const instance = snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> };
+  assert.deepEqual(instance.overrides?.label, { text: "已覆盖" });
+  // 组件定义本身没有变化。
+  assert.equal((snapshot.nodes.label as { text?: string }).text, "Hello");
+});
+
+test("rejects overrides for unknown nodes, foreign instances and non-text fields", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } },
+  }]));
+
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "missing", patch: { text: "x" } } }])),
+    /does not exist/,
+  );
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "component.override", payload: { instanceId: "root", sourceNodeId: "label", patch: { text: "x" } } }])),
+    /not a component instance/,
+  );
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "root", patch: { text: "x" } } }])),
+    /not a text node|does not exist/,
+  );
+});

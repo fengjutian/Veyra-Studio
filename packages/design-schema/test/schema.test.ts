@@ -122,3 +122,25 @@ test("rejects invalid text style values", () => {
     assert.throws(() => validateDocument(document), new RegExp(field));
   }
 });
+
+test("only frames or components can be slots", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  document.nodes["text:1"] = {
+    id: "text:1",
+    type: "text",
+    name: "文字",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: defaultAppearance(),
+    text: "x",
+    fontFamily: "Inter",
+    fontSize: 16,
+    lineHeight: 24,
+    slot: true,
+  } as never;
+  document.pages["page:1"]!.childIds = ["text:1"];
+  assert.throws(() => validateDocument(document), /cannot be a slot/);
+});

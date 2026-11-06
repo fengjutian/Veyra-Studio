@@ -31,10 +31,24 @@ export interface PatchNodeCommand {
   type: "node.patch";
   payload: {
     id: NodeId;
-    patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings">>;
+    patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot">>;
   };
 }
 
+/**
+ * 往组件实例的插槽里填充内容。
+ *
+ * 模板是一棵"从别处复制过来的节点树"，运行时会给它重新分配 id 并挂到插槽下面；
+ * 重复填充会先清空插槽旧内容，所以调用方不需要自己删除。
+ */
+export interface FillSlotCommand {
+  type: "slot.fill";
+  payload: {
+    instanceId: NodeId;
+    slotNodeId: NodeId;
+    template: { roots: NodeId[]; nodes: Record<NodeId, DesignNode> };
+  };
+}
 export interface PatchTextCommand {
   type: "text.patch";
   payload: {
@@ -131,6 +145,30 @@ export interface RemoveComponentCommand {
   payload: { id: string };
 }
 
+/**
+ * 把组件实例脱离成普通 frame。
+ *
+ * 实例的子树本来就是真实节点，脱离只是去掉"这是某个组件的实例"这层身份：
+ * 类型改为 frame，清掉 componentId 与 overrides，组件定义本身保留。
+ */
+export interface DetachComponentCommand {
+  type: "component.detach";
+  payload: { id: NodeId };
+}
+/**
+ * 给实例里的某个物化节点写入覆盖值。
+ *
+ * 覆盖同时做两件事：改实例自己的副本（立刻可见），并把补丁记进
+ * `instance.overrides[sourceNodeId]`（语义上属于这个实例，导出和后续读取都看它）。
+ */
+export interface ComponentOverrideCommand {
+  type: "component.override";
+  payload: {
+    instanceId: NodeId;
+    sourceNodeId: NodeId;
+    patch: { text?: string; name?: string; visible?: boolean };
+  };
+}
 export interface InstantiateComponentCommand {
   type: "component.instantiate";
   payload: { node: InstanceNode; index?: number };
@@ -155,7 +193,10 @@ export type DesignCommand =
   | DefineComponentCommand
   | CreateComponentCommand
   | RemoveComponentCommand
-  | InstantiateComponentCommand;
+  | InstantiateComponentCommand
+  | DetachComponentCommand
+  | FillSlotCommand
+  | ComponentOverrideCommand;
 
 export interface CommandEnvelope {
   commandId: string;

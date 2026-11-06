@@ -1,4 +1,4 @@
-import { resolveGap, validateDocument, type DesignDocument, type DesignNode, type NodeId, type TextNode } from "@ufira/design-schema";
+import { resolveGap, validateDocument, type DesignDocument, type DesignNode, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
 

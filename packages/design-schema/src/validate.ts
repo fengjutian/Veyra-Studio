@@ -1,5 +1,5 @@
 import { designDocumentSchema } from "./schema";
-import type { DesignDocument, NodeId, PageId } from "./types";
+import type { DesignDocument, NodeId } from "./types";
 
 export class DocumentValidationError extends Error {
   constructor(public readonly issues: string[]) {
@@ -50,6 +50,7 @@ export function validateDocument(input: unknown): DesignDocument {
       if (!child) issues.push(`node ${nodeId} references missing child ${childId}`);
       else if (child.parentId !== nodeId) issues.push(`child ${childId} parentId does not match node ${nodeId}`);
     }
+    if (node.slot && node.type !== "frame" && node.type !== "component") issues.push(`node ${nodeId} of type ${node.type} cannot be a slot`);
     if (node.type === "image" && !document.assets[node.assetId]) issues.push(`image ${nodeId} references missing asset ${node.assetId}`);
     if (node.type === "instance" && !document.components[node.componentId]) issues.push(`instance ${nodeId} references missing component ${node.componentId}`);
     for (const [property, tokenName] of Object.entries(node.bindings ?? {})) {
