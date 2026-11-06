@@ -33,15 +33,19 @@ import {
   FileImage,
   FilePlus,
   Frame as FrameIcon,
+  Hand,
   Image as ImageIcon,
   Layers as LayersIcon,
   Link2,
   Lock,
   LockOpen,
+  PanelLeft,
+  PanelRight,
   Pencil,
   Plus,
   Redo2,
   Scan,
+  Search,
   SendToBack,
   Shapes,
   Spline,
@@ -98,6 +102,15 @@ export const ICONS = {
   zoomIn: ZoomIn,
   zoomOut: ZoomOut,
   zoomFit: Scan,
+  pan: Hand,
+
+  // 面板开合
+  panelLeft: PanelLeft,
+  panelRight: PanelRight,
+
+  // 通用
+  search: Search,
+  close: X,
 
   // 图层顺序
   toBack: SendToBack,

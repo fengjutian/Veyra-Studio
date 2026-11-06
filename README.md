@@ -21,6 +21,9 @@ See [Current Project Status](./docs/current-project-status.md) for authoritative
 and [AI Design Studio Architecture](./docs/ai-design-studio-architecture-analysis.md)
 for the draft target architecture.
 
+See [Project Progress and Version Roadmap](./docs/project-progress-and-version-roadmap.md)
+for the Studio version baseline, per-version scope, and release gates.
+
 ## Development
 
 ```bash

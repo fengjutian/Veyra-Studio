@@ -1,4 +1,4 @@
-import type { AppearanceSpec, DesignDocument, DesignNode, LayoutSpec, PropertyBindings, SizeMode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, type AppearanceSpec, type DesignDocument, type DesignNode, type FontStyle, type LayoutSpec, type PropertyBindings, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
 
 /** 批量面板里一个字段的取值状态：值一致时 `value` 有效，值不一致时 `mixed` 为 true。 */
 export interface BatchField<T> {
@@ -22,13 +22,21 @@ export interface BatchLayoutChanges {
   height?: number;
 }
 
+/** 批量文字样式改动。只列出要改的字段，未列出的字段保持节点自己的值。 */
+export interface BatchTextChanges {
+  fontWeight?: number;
+  fontStyle?: FontStyle;
+  textAlign?: TextAlign;
+  letterSpacing?: number;
+}
+
 /**
  * Reads the value a field has across a selection.
  *
  * When the selected nodes disagree the field reports `mixed`, so the inspector can
  * leave it blank instead of pretending that one of the values is the truth.
  */
-export function sharedField<T>(nodes: readonly DesignNode[], pick: (node: DesignNode) => T): BatchField<T> {
+export function sharedField<T, N extends DesignNode = DesignNode>(nodes: readonly N[], pick: (node: N) => T): BatchField<T> {
   if (!nodes.length) return { value: undefined as unknown as T, mixed: false };
   const first = pick(nodes[0]!);
   return { value: first, mixed: nodes.some(node => !Object.is(pick(node), first)) };
@@ -101,6 +109,31 @@ export function planLayoutPatches(nodes: readonly DesignNode[], changes: BatchLa
   return nodes.flatMap(node => {
     const layout = mergedLayout(node, changes);
     return sameLayout(node.layout, layout) ? [] : [{ id: node.id, layout }];
+  });
+}
+
+/** 一个节点的文字样式批量改动。 */
+export interface TextStylePatch {
+  id: string;
+  patch: TextPatch;
+}
+
+/**
+ * Plans the text style patches for a selection.
+ *
+ * Only text nodes take part: the other nodes in the selection are skipped instead of
+ * failing the command. Nodes whose style would not change are skipped too, so the
+ * edit does not bump the document revision for nothing.
+ */
+export function planTextPatches(nodes: readonly DesignNode[], changes: BatchTextChanges): TextStylePatch[] {
+  return nodes.flatMap(node => {
+    if (node.type !== "text") return [];
+    const patch: TextPatch = {};
+    if (changes.fontWeight !== undefined && (node.fontWeight ?? TEXT_DEFAULTS.fontWeight) !== changes.fontWeight) patch.fontWeight = changes.fontWeight;
+    if (changes.fontStyle !== undefined && (node.fontStyle ?? TEXT_DEFAULTS.fontStyle) !== changes.fontStyle) patch.fontStyle = changes.fontStyle;
+    if (changes.textAlign !== undefined && (node.textAlign ?? TEXT_DEFAULTS.textAlign) !== changes.textAlign) patch.textAlign = changes.textAlign;
+    if (changes.letterSpacing !== undefined && (node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing) !== changes.letterSpacing) patch.letterSpacing = changes.letterSpacing;
+    return Object.keys(patch).length ? [{ id: node.id, patch }] : [];
   });
 }
 

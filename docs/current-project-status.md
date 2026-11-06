@@ -37,13 +37,15 @@
   AI Orchestrator 的共同入口；
 - `packages/ai-orchestrator`：AI 安全编辑闭环的第一阶段原型，包含可替换 Planner
   契约、临时运行时 dry-run、before/after 预览、影响节点、warnings、取消、显式确认
-  提交，以及基于 `baseRevision` 的过期计划拒绝；尚未接入真实模型 Provider 和 UI；
+  提交，以及基于 `baseRevision` 的过期计划拒绝；已实现 OpenAI-compatible
+  `/chat/completions` Planner、命令提示、文档摘要和 JSON 计划解析；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
   节点创建/选择/框选/拖动/缩放/吸附/删除、基础属性编辑、Dexie/IndexedDB 项目、事务
   和二进制资产存储，以及 AI 计划预览、过期提示、取消和确认提交界面；画布交互层
   已接入 Moveable/Selecto 并延迟加载，支持 Shift/框选、多节点批量拖动、缩放和删除，
   所有群组变换在交互结束时作为一个原子事务提交；浏览器存储支持快照后事务重放、
-  revision 缺口降级报告、资产哈希校验和旧 localStorage 快照迁移；尚未接入真实 AI Provider；
+  revision 缺口降级报告、资产哈希校验和旧 localStorage 快照迁移；已提供 AI 服务地址、
+  模型和密钥设置入口，但尚未完成真实 Provider 的生产级端到端验证、流式体验和支持矩阵；
   工作台顶部支持项目列表、新建、切换、通过领域命令重命名，以及原子清理项目快照、
   事务和资产的删除操作；
 - 画布几何改由 `design-layout` 解析，不再直接读取节点的 `layout` 原始值，因此 hug、fill、
@@ -96,6 +98,11 @@
   会随字重和字距变化（例如 8 个汉字在字距 4px 下比 0px 宽 32px）；
 - 工作台可下载当前页面的独立 HTML、SVG 交付物和当前项目 JSON 备份，并报告导出诊断数量；
   PNG 交付物由 SVG 经浏览器 Canvas 光栅化生成；
+- 编辑器外围补齐四项：① 多选时可批量改文字样式（粗细/字形/对齐/字距），只作用于选中的
+  文本节点，逐条走 `text.patch`，值没变的节点不发补丁；② 图层面板支持按名称或文本内容
+  搜索，命中项的祖先层同样保留可见，搜索时自动展开折叠的层级；③ 左右面板可折叠，
+  收起后画布拿到全部宽度；④ 画布支持抓手平移（工具栏切换，或按住中键拖动），平移只改
+  视口滚动位置，不写文档也不涨 revision；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 
@@ -118,17 +125,18 @@
 - 生产可用的文本测量；浏览器端测量依赖 Canvas 字体度量，未做跨平台字体基线与缓存策略；
 - PNG 导出的独立交付链路；当前由 SVG 经浏览器 Canvas 光栅化生成，外部图片会污染画布；
 - React、PDF 等后续导出格式；
-- AI Provider、真实 Planner、可视化审批、Reviewer 的完整编辑闭环；当前仅有安全计划、
-  dry-run 与确认提交的应用层原型；
+- 生产级 AI Provider 体验、流式响应、凭据安全、Reviewer 和完整结构审查闭环；当前已有
+  OpenAI-compatible Planner、安全计划、dry-run、可视化确认与提交原型；
 - 独立 Studio 的 MCP adapter；
 - 不依赖 Figma 的端到端设计工作流。
 
 ## 文档阅读优先级
 
 1. 本文：确认当前实际能力；
-2. 根级 `AGENTS.md`：开发约束和当前边界；
-3. 各包源码、测试及包级 `AGENTS.md`：确认实现细节；
-4. `ai-design-studio-architecture-analysis.md`：了解目标架构和未来路线。
+2. `project-progress-and-version-roadmap.md`：确认功能对应的软件版本和发布门槛；
+3. 根级 `AGENTS.md`：开发约束和当前边界；
+4. 各包源码、测试及包级 `AGENTS.md`：确认实现细节；
+5. `ai-design-studio-architecture-analysis.md`：了解目标架构和未来路线。
 
 架构文档中的 V1 功能、目标目录和 Phase 1—5 都是规划内容。名称出现在文档中，不代表
 相应目录、包或能力已经存在。

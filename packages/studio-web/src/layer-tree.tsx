@@ -18,6 +18,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { arrayMove, resolveDropPosition } from "./layer-reorder";
+import { visibleLayerIds } from "./layer-search";
 import type { DesignDocument, DesignNode } from "@ufira/design-schema";
 import { Icon, type IconName } from "./icons";
 
@@ -71,12 +72,18 @@ export function buildSortableGroups(document: DesignDocument, rootIds: string[])
 export function LayerTree({ document, rootIds, selectedIds, onSelect, onReorder }: LayerTreeProps) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [draggingId, setDraggingId] = useState<string>();
+  const [query, setQuery] = useState("");
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const rows = useMemo(() => flattenLayers(document, rootIds, collapsed), [document, rootIds, collapsed]);
+  const visible = useMemo(() => visibleLayerIds(document, rootIds, query), [document, rootIds, query]);
+  const rows = useMemo(() => {
+    // 搜索时展开所有层级，否则命中项会被折叠的父级藏起来。
+    const collapsedNow = query.trim() ? new Set<string>() : collapsed;
+    return flattenLayers(document, rootIds, collapsedNow).filter(row => visible.has(row.id));
+  }, [document, rootIds, collapsed, query, visible]);
   const groups = useMemo(() => buildSortableGroups(document, rootIds), [document, rootIds]);
 
   const toggle = (id: string) => {
@@ -110,6 +117,11 @@ export function LayerTree({ document, rootIds, selectedIds, onSelect, onReorder 
 
   return (
     <div className="layer-tree">
+      <div className="layer-search">
+        <Icon name="search" size={12} />
+        <input type="search" placeholder="搜索图层" value={query} onChange={event => setQuery(event.target.value)} />
+        {query && <button className="icon-only" aria-label="清除搜索" onClick={() => setQuery("")}><Icon name="close" size={12} /></button>}
+      </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setDraggingId(undefined)}>
         <SortableContext items={rows.map(row => row.id)} strategy={verticalListSortingStrategy}>
           {rows.map(row => (
@@ -126,6 +138,7 @@ export function LayerTree({ document, rootIds, selectedIds, onSelect, onReorder 
         </SortableContext>
         <DragOverlay>{draggingId && document.nodes[draggingId] ? <div className="layer layer-drag-overlay">{document.nodes[draggingId].name}</div> : null}</DragOverlay>
       </DndContext>
+      {rows.length === 0 && <p className="empty-hint">没有匹配的图层</p>}
     </div>
   );
 }
