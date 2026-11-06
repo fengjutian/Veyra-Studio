@@ -85,6 +85,18 @@
   放行与确认：白/黑名单、单次命令上限（默认 50）、整篇 `history.restore` 默认禁止
   （需显式 `allowDocumentRestore`）、破坏性命令即使关闭人工确认也仍然要确认；
   `createAuditEntry()` 记录工具、调用方、命令类型、修订号与结果，供审计；
+- MCP stdio server：`npm run mcp:studio` 启动，读 `STUDIO_PROJECT_DIR` /
+  `STUDIO_PROJECT_ID` 打开文件系统项目，处理 `initialize` / `tools/list` /
+  `tools/call` / `ping`；`design.apply` 依次校验 revision、策略与审批，默认没有
+  人工确认时返回 `approval_required` 而不是执行；审计记录写 stderr、stdout 只留
+  JSON-RPC。`STUDIO_MCP_AUTO_APPROVE=1`、`STUDIO_MCP_ALLOWED_COMMANDS`、
+  `STUDIO_MCP_ALLOW_RESTORE=1` 控制本会话的授权范围；
+- MCP HTTP 传输：`npm run mcp:http` 提供 `POST /mcp` 与 `GET /healthz`，所有请求要求
+  Bearer token，缺少令牌时拒绝启动（临时调试需显式 `STUDIO_MCP_HTTP_INSECURE=1`，
+  此时随机生成一次性令牌并打印）；`initialize` 下发 `Mcp-Session-Id`，后续调用必须
+  携带，会话按空闲时间过期，同一会话的请求串行执行；请求体上限 256 KB；
+  未实现 SSE 服务端推送与 OAuth —— 当前工具都是请求-响应式，公网部署仍需反向代理
+  再加一层鉴权；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
   节点创建/选择/框选/拖动/缩放/吸附/删除、基础属性编辑、Dexie/IndexedDB 项目、事务
   和二进制资产存储，以及 AI 计划预览、过期提示、取消和确认提交界面；画布交互层
@@ -159,6 +171,12 @@
   （`system-ui / PingFang SC / Microsoft YaHei / sans-serif`），字体名会先去掉引号、
   分号等可能跳出 CSS 声明的字符；文档用到的字体会被异步加载，加载完成后清空测量
   缓存并触发一次重排，避免一直沿用回退字形的宽度；
+- 视觉回归：`npm run visual:baseline` 用本机 Chrome/Edge headless 渲染 golden HTML，把
+  截图存成 `test/golden/page.png`；`npm run visual:check` 重新截图并按像素比较，默认
+  允许 0.5% 差异，超出则非零退出，并把差异图标红写到 `page.diff.png`。PNG 编解码与
+  像素对比用 `node:zlib` 自实现，不引入原生图像库；找不到浏览器时 check 会跳过并提示，
+  加 `--require-browser` 则明确失败。基线绑定本机字体，跨机器更新需要显式
+  `--update`；
 - 布局性能基线：`npm run bench:layout` 用合成文档（文本节点 + 自动布局容器）测
   200/500/1000/2000 节点的中位数与 p95，支持 `--json` 与 `--budget`（超预算非零退出）；
   本机基线约 1.3 / 2.9 / 4.6 / 10.4 ms，接近线性（约 5µs/节点）。`test:studio-core`
@@ -191,7 +209,8 @@
   越界的透明度与圆角都会被命令层拒绝。`exposedOverrideTargets()` 把这份契约变成可查询
   的清单（源节点 id、类型、默认文本、允许字段），供 UI、AI 与外部集成共用；
   实例也支持 `component.detachMany` 批量脱离，任一目标不是实例就整批失败并回滚。
-  面板目前只暴露文本编辑与「重置」；
+  「实例覆盖」面板已接上这些能力：每个文本副本可改文字、填充色与透明度，可单条重置；
+  顶部有「全部重置」与「脱离组件」，多选全是实例时还有「批量脱离」。
 - 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
   以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
 - 属性面板是独立的 `PropertyPanel` 组件，覆盖布局引擎已支持的完整词汇：布局模式
@@ -313,7 +332,8 @@
   一个标签页，刷新后需要重新输入）；结构审查目前覆盖删除、锁定、页面、历史还原、
   批量规模和硬编码颜色，跨页面一致性、组件语义与可访问性审查尚未覆盖；流式响应、
   超时、取消、重试、凭据不落盘和失败恢复已实现；
-- 独立 Studio 的 MCP adapter 传输层（stdio/HTTP）；命令契约、权限与审计规则已实现；
+- 独立 Studio MCP adapter 的 OAuth / 多租户隔离与 SSE 服务端推送；stdio 与 HTTP
+  传输、Bearer 校验、会话隔离、命令契约、权限与审计已实现；
 - 不依赖 Figma 的端到端设计工作流；
 - 导入冲突：id 相同会询问覆盖还是另存，重名会给「原名（2）」的建议名让用户确认，
   但改名方案是自动编号的，还不能让用户自己输入新名字；也没有批量导入；

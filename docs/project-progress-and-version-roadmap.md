@@ -235,6 +235,8 @@ AI 原型：
   命令层还支持外观覆盖、单条 `component.resetOverride` 与批量 `component.resetOverrides`
   （恢复组件定义值，不重新实例化），以及按节点类型定义的 `overridableFields` 字段契约；
   `exposedOverrideTargets()` 输出可查询的属性暴露清单，`component.detachMany` 支持批量脱离。
+- 检查器接线：实例覆盖面板可改文字/填充/透明度、单条重置，并有「全部重置」「脱离组件」；
+  多选全是实例时提供「批量脱离」。
 
 仍未完成：字体 token 的渲染语义、token 分组/别名/主题切换、从样式表或 Figma 导入；
 非文本属性覆盖与 override 重置；图片资源来源元数据与 SVG 支持。
@@ -296,21 +298,41 @@ AI 原型：
 ### `0.8.0`：外部 Agent 与集成
 
 - 范围：独立 Studio MCP adapter，不依赖 legacy 或 Figma；外部 Agent 与内置 AI 使用相同的权限、dry-run、审批、事务和审计；外部素材服务具备缓存、归因和退出策略。
-本轮已完成的部分（契约层，不含传输）：
+- 验收：不启动 relay、不安装 Figma 插件即可完成外部 Agent 端到端编辑；权限和审计测试通过。
+
+本轮已完成的部分：
 
 - `MCP_TOOLS` 工具清单（design.read / design.preview / design.apply）与输入 schema；
 - 命令类型穷举表：用 `Record<DesignCommand["type"], true>` 强制覆盖全部领域命令；
 - `authorizeCommands()` 权限模型：白/黑名单、批量上限、整篇还原默认禁止、
   破坏性命令强制人工确认；
 - `createAuditEntry()` 审计记录：工具、调用方、命令类型、修订号与结果。
+- stdio 传输：`npm run mcp:studio` 提供 JSON-RPC 循环，`tools/call` 直接落到
+  同一个 `StudioProject`（文件系统仓库）；默认需要人工确认，没有确认渠道时返回
+  `approval_required` 而不是执行，审计写 stderr、stdout 只留协议消息。
 
-仍未完成：stdio/HTTP 传输、OAuth 或令牌校验、并发会话隔离、外部素材服务策略。
-- 验收：不启动 relay、不安装 Figma 插件即可完成外部 Agent 端到端编辑；权限和审计测试通过。
+- HTTP 传输：`npm run mcp:http` 暴露 `POST /mcp` 与 `GET /healthz`，Bearer token 鉴权，
+  `initialize` 下发 `Mcp-Session-Id`、会话按空闲过期、同会话请求串行，请求体 256 KB 上限。
+
+仍未完成：OAuth / 多租户隔离、SSE 服务端推送、外部素材服务策略。
 
 ### `0.9.0`：Beta 稳定化
 
 - 范围：支持浏览器、操作系统、字体和项目规模矩阵；启动、交互、布局、保存和导出性能预算；键盘、焦点、对比度和屏幕阅读器关键路径；默认入口与 legacy 隔离。
 - 验收：Beta 阻断级缺陷清零；升级与回滚演练通过；连续使用和大文档基准达到预算。
+
+本轮已完成的部分：
+
+- 视觉回归：本机 Chrome/Edge headless 渲染 golden HTML，与提交的基线 PNG 做像素比较
+  （`npm run visual:check`），默认 0.5% 阈值，差异图落盘；PNG 编解码与 diff 用
+  `node:zlib` 自实现，没有原生依赖。找不到浏览器时跳过，`--require-browser` 让 CI 明确失败。
+- 性能预算门禁：`npm run bench:layout:budget` 在 200/500/1000/2000 节点超预算时非零退出，
+  可直接接 CI；本机中位数约 1.3 / 2.9 / 4.6 / 10.4 ms。
+- 兼容性矩阵（初步）：Windows + Chrome/Edge headless 已实测；字体只有确定性估算器与
+  浏览器 Canvas 两条测量路径，尚无跨平台字体基线；DOM 画布绘制性能未纳入预算。
+
+仍未完成：Firefox/Safari 与移动端浏览器矩阵、跨平台字体基线、可访问性检查、
+大文档（>5000 节点）与绘制性能预算。
 
 ### `0.10.0`：V1 Release Candidate
 

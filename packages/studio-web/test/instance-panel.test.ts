@@ -33,7 +33,7 @@ function documentWithInstance(): DesignDocument {
 test("collects only the materialized text nodes defined by the component", () => {
   const copies = collectTextCopies(documentWithInstance(), "instance:1");
   assert.equal(copies.length, 1);
-  assert.deepEqual(copies[0], { id: "instance:1--label", sourceNodeId: "label", name: "instance:1--label", text: "标题" });
+  assert.deepEqual(copies[0], { id: "instance:1--label", sourceNodeId: "label", name: "instance:1--label", text: "标题", fill: "#000000", opacityPercent: 100 });
 });
 
 test("slot content and non-text copies are not treated as overridable", () => {

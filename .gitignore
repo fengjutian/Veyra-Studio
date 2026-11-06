@@ -17,3 +17,6 @@ docs/.astro/
 docs/node_modules/
 .vibma/pipeline-runs/
 graphify-out/
+# 视觉回归的临时产物（基线 page.png 需要提交）
+packages/design-export/test/golden/page.rendered.png
+packages/design-export/test/golden/page.diff.png

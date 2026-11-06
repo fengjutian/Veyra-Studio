@@ -4,7 +4,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, resolveRadius, resolveStroke, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
-import { StudioProject, collectAssetUsage, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
+import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -235,6 +235,8 @@ function App() {
   useEffect(() => { if (exportScope === "selection" && !selectedIds.length) setExportScope("page"); }, [exportScope, selectedIds.length]);
   // 资源面板和画布共用同一份使用情况与缺失集合。
   const assetUsage = useMemo(() => document ? collectAssetUsage(document) : [], [document]);
+  // 对比度检查只依赖文档颜色，不需要渲染，因此可以随文档变化实时计算。
+  const contrastIssues = useMemo(() => document ? collectContrastIssues(document) : [], [document]);
   const missingIds = useMemo(() => missingAssetIds(missingAssets), [missingAssets]);
   const transactionRows = useMemo(() => {
     const oldestSnapshotRevision = snapshots.length ? Math.min(...snapshots.map(item => item.revision)) : undefined;
@@ -827,6 +829,24 @@ function App() {
       setMessage("已脱离组件：实例变成普通 frame，子图层保留");
     });
   };
+  /** 清空选中实例的全部覆盖。 */
+  const resetAllOverrides = () => {
+    if (selected?.type !== "instance") return;
+    const instanceId = selected.id;
+    void run(async () => {
+      await execute([{ type: "component.resetOverrides", payload: { instanceId } }]);
+      setMessage("已清除该实例的全部覆盖");
+    });
+  };
+  /** 多选全是实例时，一次把它们都脱离成普通 frame。 */
+  const detachSelectedInstances = () => {
+    const ids = selectedNodes.filter(node => node.type === "instance").map(node => node.id);
+    if (ids.length < 2) return;
+    void run(async () => {
+      await execute([{ type: "component.detachMany", payload: { ids } }]);
+      setMessage(`已脱离 ${ids.length} 个实例`);
+    });
+  };
   /** 取消编组：把 frame 的子节点放回原位置，再删掉空 frame。 */
   const ungroupSelection = () => {
     if (selectionLocked || selectedIds.length !== 1) return;
@@ -933,7 +953,7 @@ function App() {
                 <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
-                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} />}
+                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} onResetAll={resetAllOverrides} onDetach={detachComponent} />}
                 <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
                 <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
                 <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除</button>
@@ -943,10 +963,29 @@ function App() {
               ? (
                 <section className="inspector-section">
                   <BatchPanel nodes={selectedNodes} disabled={busy} onPatchAppearance={patchBatchAppearance} onPatchLayout={patchBatchLayout} onPatchText={patchBatchText} />
+                  {selectedNodes.every(node => node.type === "instance") && <button disabled={busy} onClick={detachSelectedInstances}><Icon name="nodeComponent" />批量脱离 {selectedNodes.length} 个实例</button>}
                   <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除 {selectedIds.length} 个节点</button>
                 </section>
               )
               : <p className="empty-hint">选择画布中的节点，这里会显示它的布局、外观和文字属性。</p>}
+          {contrastIssues.length > 0 && (
+            <section className="inspector-section">
+              <h2>可访问性 · 对比度</h2>
+              <div className="warning-list">
+                {contrastIssues.map(issue => (
+                  <button
+                    key={issue.nodeId}
+                    className="warning-row"
+                    onClick={() => setSelectedIds([issue.nodeId])}
+                    title={`${issue.foreground || "未设置"} 在 ${issue.background} 上`}
+                  >
+                    <span className="warning-code warning-code-contrast">AA</span>
+                    <span className="warning-message">{issue.text || issue.nodeId} · {issue.ratio.toFixed(2)}:1（需 {issue.threshold}:1）</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
           {canvasLayout.warnings.length > 0 && (
             <section className="inspector-section">
               <h2>布局警告</h2>

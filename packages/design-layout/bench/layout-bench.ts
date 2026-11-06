@@ -21,10 +21,10 @@ interface Case {
   p95Ms: number;
 }
 
-const SIZES = [200, 500, 1000, 2000];
-const ITERATIONS: Record<number, number> = { 200: 30, 500: 20, 1000: 10, 2000: 5 };
+const SIZES = [200, 500, 1000, 2000, 5000];
+const ITERATIONS: Record<number, number> = { 200: 30, 500: 20, 1000: 10, 2000: 5, 5000: 3 };
 /** 每档预算（毫秒，中位数）。超出说明有数量级退化，而不是几毫秒的波动。 */
-const BUDGET_MS: Record<number, number> = { 200: 250, 500: 600, 1000: 1500, 2000: 4000 };
+const BUDGET_MS: Record<number, number> = { 200: 250, 500: 600, 1000: 1500, 2000: 4000, 5000: 12000 };
 
 function base(id: string, parentId: string, options: { x?: number; y?: number; width?: number; height?: number } = {}): DesignNode {
   return {

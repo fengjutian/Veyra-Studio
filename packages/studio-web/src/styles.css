@@ -179,3 +179,11 @@ button.icon-only{padding:5px;min-width:26px}
 .ai-settings select{width:100%;border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;padding:6px 7px;font-size:12px}
 .ai-provider{margin:0;font-size:11px;line-height:1.6;color:#c8ccd6}
 .ai-provider-known{color:#c4b5fd}
+
+.instance-actions{display:flex;gap:6px}
+.instance-actions button{padding:3px 6px;font-size:11px}
+.instance-override{display:grid;gap:4px;margin-bottom:10px}
+.instance-override-appearance{display:flex;align-items:flex-end;gap:8px}
+.instance-override-appearance input[type=color]{width:34px;height:26px;padding:0;border:1px solid #363d4b;border-radius:5px;background:#111318}
+:focus-visible{outline:2px solid #8b5cf6;outline-offset:2px}
+.warning-code-contrast{color:#f0abfc}
