@@ -79,6 +79,12 @@
   地址匹配支持大小写/尾斜杠归一化与「官方地址下挂代理」的更深路径；未收录的端点按
   通用协议处理，并保守地关闭 json 模式。设置面板会实时显示识别结果与能力标签，
   并可按预设一键填入地址和模型；`jsonMode` 现在由这张表决定，而不是写死；
+- MCP adapter 的命令契约（无传输层）：`MCP_TOOLS` 只暴露三个工具——读取、预览、
+  应用，避免工具列表过长让模型选错；命令类型用 `Record<DesignCommand["type"], true>`
+  强制穷举，新增命令忘了登记会直接编译失败。`authorizeCommands()` 按策略判定
+  放行与确认：白/黑名单、单次命令上限（默认 50）、整篇 `history.restore` 默认禁止
+  （需显式 `allowDocumentRestore`）、破坏性命令即使关闭人工确认也仍然要确认；
+  `createAuditEntry()` 记录工具、调用方、命令类型、修订号与结果，供审计；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
   节点创建/选择/框选/拖动/缩放/吸附/删除、基础属性编辑、Dexie/IndexedDB 项目、事务
   和二进制资产存储，以及 AI 计划预览、过期提示、取消和确认提交界面；画布交互层
@@ -153,6 +159,10 @@
   （`system-ui / PingFang SC / Microsoft YaHei / sans-serif`），字体名会先去掉引号、
   分号等可能跳出 CSS 声明的字符；文档用到的字体会被异步加载，加载完成后清空测量
   缓存并触发一次重排，避免一直沿用回退字形的宽度；
+- 布局性能基线：`npm run bench:layout` 用合成文档（文本节点 + 自动布局容器）测
+  200/500/1000/2000 节点的中位数与 p95，支持 `--json` 与 `--budget`（超预算非零退出）；
+  本机基线约 1.3 / 2.9 / 4.6 / 10.4 ms，接近线性（约 5µs/节点）。`test:studio-core`
+  里另有一条 1000 节点、2 秒上限的 smoke 测试，只拦截数量级退化，避免 CI 抖动误报；
 - 设计 Token 扩展到三类：颜色 token 绑定填充/描边，数值 token 绑定圆角与自动布局
   间距；`resolveRadius` / `resolveGap` / `resolveStroke` 是唯一解析入口，画布渲染、
   布局引擎和 HTML/SVG 导出共用它，不会各算一套。Token 面板支持新增颜色/数值 token、
@@ -252,7 +262,9 @@
   **支持矩阵**（`EXPORT_SUPPORT_MATRIX`：绝对/自动布局、尺寸策略、文字样式与换行、
   Token、基础形状、图片、组件实例、矢量、隐藏节点、PNG 光栅化），逐项写明在
   HTML / SVG / PNG 三种交付物里的支持程度。矩阵和诊断共用同一套特性 id，并有测试
-  保证导出器发出的每一种诊断都能在矩阵里找到对应行；
+  保证导出器发出的每一种诊断都能在矩阵里找到对应行。组件实例的覆盖有单独的
+  `component-override` 诊断（说明这个实例导出了几个被覆盖的节点），和"实例只导出
+  物化子树"的近似诊断分开显示；
 - 导出基线（golden files）：`design-export` 的测试里锁住了 HTML 交付物、SVG 交付物、
   选区导出产物和布局包围盒——字体走纯字符估算器，因此结果跨平台确定。任何无意的
   几何、CSS 或 token 变量变化都会变成测试 diff；确认改动后用 `UPDATE_GOLDEN=1` 重新
@@ -301,7 +313,7 @@
   一个标签页，刷新后需要重新输入）；结构审查目前覆盖删除、锁定、页面、历史还原、
   批量规模和硬编码颜色，跨页面一致性、组件语义与可访问性审查尚未覆盖；流式响应、
   超时、取消、重试、凭据不落盘和失败恢复已实现；
-- 独立 Studio 的 MCP adapter；
+- 独立 Studio 的 MCP adapter 传输层（stdio/HTTP）；命令契约、权限与审计规则已实现；
 - 不依赖 Figma 的端到端设计工作流；
 - 导入冲突：id 相同会询问覆盖还是另存，重名会给「原名（2）」的建议名让用户确认，
   但改名方案是自动编号的，还不能让用户自己输入新名字；也没有批量导入；
@@ -345,6 +357,7 @@
 ```bash
 npm run build:studio-core
 npm run test:studio-core
+npm run bench:layout
 npm run build:studio-web
 npm run test -w packages/studio-web
 ```
