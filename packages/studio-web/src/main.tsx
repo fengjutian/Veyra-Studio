@@ -41,8 +41,9 @@ import { AssetPanel } from "./asset-panel";
 import { backupRestoreConfirmation, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
 import { historyRows, type HistoryRow } from "./history-rows";
 import { HistoryPanel } from "./history-panel";
-import { readStorageEstimate, type StorageEstimate } from "./storage-estimate";
+import { readStorageEstimate, storagePercent, type StorageEstimate } from "./storage-estimate";
 import { StoragePanel } from "./storage-panel";
+import { inspectorTabs, type InspectorTabId } from "./inspector-tabs";
 import { assetUrlCacheVersion, forgetAssetUrl, loadAssetUrl } from "./asset-url";
 import { Icon } from "./icons";
 import { DialogProvider, useChoice, useConfirm, usePrompt } from "./ui/dialogs";
@@ -81,6 +82,8 @@ function App() {
   const [panning, setPanning] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  // 右侧栏当前分段。原来是属性、导出、历史、存储、AI 全塞在一条长滚动列里。
+  const [inspectorTab, setInspectorTab] = useState<InspectorTabId>("properties");
   // 导出范围：整页，或只导出当前选区。
   const [exportScope, setExportScope] = useState<"page" | "selection">("page");
   const panPointer = useRef<{ pointerId: number; x: number; y: number } | null>(null);
@@ -871,59 +874,168 @@ function App() {
   const previewStale = preview?.baseRevision !== document.revision;
   const componentSummaries = listComponents(document);
   const versionRows = snapshotRows(snapshots);
+  // 分段标题的上下文与角标来自纯函数：哪个分段有需要处理的条目，就在标签上显示数字。
+  const inspectorTabRows = inspectorTabs({
+    selectionCount: selectedIds.length,
+    selectedName: selected?.name,
+    exportScope,
+    revision: document.revision,
+    assetCount: assetUsage.length,
+    componentCount: componentSummaries.length,
+    diagnosticCount: exportReport?.diagnostics.length ?? 0,
+    warningCount: canvasLayout.warnings.length,
+    missingAssetCount: missingIds.size,
+    aiModel: aiSettingsComplete(aiSettings) ? aiSettings.model : undefined,
+  });
+  const activeInspectorTab = inspectorTabRows.find(tab => tab.id === inspectorTab) ?? inspectorTabRows[0]!;
 
   return <div className={`studio${leftPanelOpen ? "" : " left-collapsed"}${rightPanelOpen ? "" : " right-collapsed"}`}>
-    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip><Tooltip label={rightPanelOpen ? "收起属性面板" : "展开属性面板"}><button className="icon-only" aria-label="属性面板" onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip><button disabled={busy} onClick={createProject}><Icon name="newProject" />新建</button><button disabled={busy} onClick={renameProject}><Icon name="rename" />重命名</button><Tooltip label="撤销 · Ctrl/Cmd+Z"><button disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" />撤销</button></Tooltip><Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" />重做</button></Tooltip><select className="export-scope" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />HTML</button><button disabled={busy} onClick={exportSvg}><Icon name="exportSvg" />SVG</button><button disabled={busy} onClick={exportPng}><Icon name="exportPng" />PNG</button><button disabled={busy} onClick={exportJson}><Icon name="exportJson" />JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" />导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}><Icon name="trash" />删除项目</button><span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span><span className="status" title={message}>{message}</span></header>
+    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip><Tooltip label={rightPanelOpen ? "收起右侧面板" : "展开右侧面板"}><button className="icon-only" aria-label="右侧面板" onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip><button disabled={busy} onClick={createProject}><Icon name="newProject" />新建</button><button disabled={busy} onClick={renameProject}><Icon name="rename" />重命名</button><Tooltip label="撤销 · Ctrl/Cmd+Z"><button disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" />撤销</button></Tooltip><Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" />重做</button></Tooltip><select className="export-scope" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />HTML</button><button disabled={busy} onClick={exportSvg}><Icon name="exportSvg" />SVG</button><button disabled={busy} onClick={exportPng}><Icon name="exportPng" />PNG</button><button disabled={busy} onClick={exportJson}><Icon name="exportJson" />JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" />导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}><Icon name="trash" />删除项目</button><span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span><span className="status" title={message}>{message}</span></header>
     <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}><Icon name="pageAdd" />新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}><Icon name="rename" />重命名</button><Tooltip label={page.childIds.length ? "请先清空页面" : "删除当前页面"}><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} onClick={deletePage}><Icon name="pageDelete" />删除</button></Tooltip></div><div className="section-heading"><h2>图层</h2><Tooltip label="全选页面顶层对象 · Ctrl/Cmd+A"><button disabled={busy || !page.childIds.length} onClick={selectAll}><Icon name="selectAll" />全选</button></Tooltip></div><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}><Icon name="addFrame" />Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}><Icon name="addRectangle" />矩形</button><button disabled={busy} onClick={() => addNode("ellipse")}><Icon name="addEllipse" />椭圆</button><button disabled={busy} onClick={() => addNode("text")}><Icon name="addText" />文本</button><button disabled={busy} onClick={() => imageInput.current?.click()}><Icon name="nodeImage" />图片</button></div><input ref={imageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) insertImage(file); }} /><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><Tooltip label="复制 · Ctrl/Cmd+C"><button disabled={busy || !selectedIds.length} onClick={copySelection}><Icon name="copy" />复制</button></Tooltip><Tooltip label="粘贴 · Ctrl/Cmd+V"><button disabled={busy || !clipboard.current} onClick={pasteSelection}><Icon name="paste" />粘贴</button></Tooltip><Tooltip label="重复 · Ctrl/Cmd+D"><button disabled={busy || !selectedIds.length} onClick={duplicateSelection}><Icon name="duplicate" />重复</button></Tooltip></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><Tooltip label="编组 · Ctrl/Cmd+G"><button disabled={busy || selectedIds.length < 2 || !selectionSameParent} onClick={groupSelection}><Icon name="nodeComponent" />编组</button></Tooltip><Tooltip label="取消编组 · Shift+Ctrl/Cmd+G"><button disabled={busy || selectedIds.length !== 1 || selected.type !== "frame" || !selected.childIds.length} onClick={ungroupSelection}><Icon name="tokenUnbind" />取消编组</button></Tooltip></div><div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><Tooltip label="置底"><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="置底" onClick={() => reorderLayer(0)}><Icon name="toBack" /></button></Tooltip><Tooltip label="下移 · Ctrl/Cmd+["><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="下移" onClick={() => reorderLayer(selectedLayerIndex - 1)}><Icon name="moveDown" /></button></Tooltip><Tooltip label="上移 · Ctrl/Cmd+]"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="上移" onClick={() => reorderLayer(selectedLayerIndex + 1)}><Icon name="moveUp" /></button></Tooltip><Tooltip label="置顶"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="置顶" onClick={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}><Icon name="toFront" /></button></Tooltip></div><LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} /></aside>    <section className="workspace"><div className={`canvas-scroller${panMode ? " pan-mode" : ""}${panning ? " panning" : ""}`} ref={setScroller} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}><ContextMenuRoot><ContextMenuTrigger onContextMenu={handleCanvasContextMenu}><div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={ids => setSelectedIds(ids.filter(id => { const node = document.nodes[id]; return !node || canvasSelectable(node); }))} onCommit={patchLayouts} /></Suspense></div></ContextMenuTrigger><ContextMenuContent>{contextIds.length ? <><ContextMenuItem icon="copy" shortcut="Ctrl/Cmd+C" disabled={busy} onSelect={copySelection}>复制</ContextMenuItem><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuItem icon="duplicate" shortcut="Ctrl/Cmd+D" disabled={busy} onSelect={duplicateSelection}>重复</ContextMenuItem><ContextMenuSeparator /><ContextMenuItem icon="trash" shortcut="Delete" danger disabled={busy} onSelect={deleteSelection}>删除</ContextMenuItem><ContextMenuSeparator />{contextIds.length === 1 && <ContextMenuSub label="图层顺序" icon="layerOrder"><ContextMenuItem icon="toFront" disabled={busy} onSelect={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}>置顶</ContextMenuItem><ContextMenuItem icon="toBack" disabled={busy} onSelect={() => reorderLayer(0)}>置底</ContextMenuItem><ContextMenuItem icon="moveUp" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex + 1)}>上移</ContextMenuItem><ContextMenuItem icon="moveDown" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex - 1)}>下移</ContextMenuItem></ContextMenuSub>}{contextIds.length > 1 && <ContextMenuSub label="对齐" icon="alignGroup"><ContextMenuItem icon="alignLeft" disabled={busy} onSelect={() => arrangeSelection("left")}>左对齐</ContextMenuItem><ContextMenuItem icon="alignCenterX" disabled={busy} onSelect={() => arrangeSelection("centerX")}>水平居中</ContextMenuItem><ContextMenuItem icon="alignRight" disabled={busy} onSelect={() => arrangeSelection("right")}>右对齐</ContextMenuItem><ContextMenuItem icon="alignTop" disabled={busy} onSelect={() => arrangeSelection("top")}>顶对齐</ContextMenuItem><ContextMenuItem icon="alignCenterY" disabled={busy} onSelect={() => arrangeSelection("centerY")}>垂直居中</ContextMenuItem><ContextMenuItem icon="alignBottom" disabled={busy} onSelect={() => arrangeSelection("bottom")}>底对齐</ContextMenuItem></ContextMenuSub>}<ContextMenuItem icon="nodeComponent" disabled={busy || !selectionSameParent} onSelect={groupSelection}>编组</ContextMenuItem>{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}{contextIds.length === 1 && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={ungroupSelection}>取消编组</ContextMenuItem>}{contextIds.length === 1 && selected?.type === "instance" && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={detachComponent}>脱离组件</ContextMenuItem>}</> : <><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuSeparator /><ContextMenuSub label="添加" icon="addFrame"><ContextMenuItem icon="addFrame" disabled={busy} onSelect={() => addNode("frame")}>Frame</ContextMenuItem><ContextMenuItem icon="addRectangle" disabled={busy} onSelect={() => addNode("rectangle")}>矩形</ContextMenuItem><ContextMenuItem icon="addEllipse" disabled={busy} onSelect={() => addNode("ellipse")}>椭圆</ContextMenuItem><ContextMenuItem icon="addText" disabled={busy} onSelect={() => addNode("text")}>文本</ContextMenuItem></ContextMenuSub></>}</ContextMenuContent></ContextMenuRoot></div><div className="canvas-controls"><Tooltip label={panMode ? "退出抓手" : "抓手拖动画布"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setPanMode(on => !on)}><Icon name="pan" /></button></Tooltip><Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => setZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip><Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => setZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip><Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip><Tooltip label="适应内容"><button className="icon-only zoom-fit" aria-label="适应内容" onClick={fitCanvas}><Icon name="zoomFit" /></button></Tooltip></div></section>
-    <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selectedIds.length > 1 && <><h2>对齐与分布</h2><div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginBottom: 12 }}><Tooltip label="左对齐"><button className="icon-only" disabled={busy} aria-label="左对齐" onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip><Tooltip label="水平居中"><button className="icon-only" disabled={busy} aria-label="水平居中" onClick={() => arrangeSelection("centerX")}><Icon name="alignCenterX" /></button></Tooltip><Tooltip label="右对齐"><button className="icon-only" disabled={busy} aria-label="右对齐" onClick={() => arrangeSelection("right")}><Icon name="alignRight" /></button></Tooltip><Tooltip label="顶对齐"><button className="icon-only" disabled={busy} aria-label="顶对齐" onClick={() => arrangeSelection("top")}><Icon name="alignTop" /></button></Tooltip><Tooltip label="垂直居中"><button className="icon-only" disabled={busy} aria-label="垂直居中" onClick={() => arrangeSelection("centerY")}><Icon name="alignCenterY" /></button></Tooltip><Tooltip label="底对齐"><button className="icon-only" disabled={busy} aria-label="底对齐" onClick={() => arrangeSelection("bottom")}><Icon name="alignBottom" /></button></Tooltip><Tooltip label="水平分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="水平分布" onClick={() => arrangeSelection("distributeX")}><Icon name="distributeX" /></button></Tooltip><Tooltip label="垂直分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="垂直分布" onClick={() => arrangeSelection("distributeY")}><Icon name="distributeY" /></button></Tooltip></div></>}{selected && selectedIds.length === 1 ? <>
-      <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
-      <PropertyPanel node={selected} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} />
-      <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
-      {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
-      {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
-      {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} />}
-      <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
-      <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
-      <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
-    </> : selectedIds.length > 1 ? <><BatchPanel nodes={selectedNodes} disabled={busy} onPatchAppearance={patchBatchAppearance} onPatchLayout={patchBatchLayout} onPatchText={patchBatchText} /><button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除 {selectedIds.length} 个节点</button></> : <p>选择画布中的节点</p>}
-    {canvasLayout.warnings.length > 0 && <><h2>布局警告</h2><div className="warning-list">{canvasLayout.warnings.map((warning, index) => <button key={`${warning.nodeId}:${warning.code}:${index}`} className="warning-row" onClick={() => warning.nodeId && setSelectedIds([warning.nodeId])} title={warning.nodeId ? `选中 ${warning.nodeId}` : warning.message}><span className={`warning-code warning-code-${warning.code}`}>{warning.code}</span><span className="warning-message">{warning.message}</span></button>)}</div></>}
-    <hr/><h2>导出诊断</h2>
-    <div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}>
-      <Tooltip label="在隔离沙箱里预览 HTML 交付物"><button disabled={busy} onClick={previewHtml}><Icon name="exportHtml" />预览 HTML</button></Tooltip>
-      <Tooltip label="预览 SVG 交付物"><button disabled={busy} onClick={previewSvg}><Icon name="exportSvg" />预览 SVG</button></Tooltip>
-      <Tooltip label="预览 PNG 交付物（会先光栅化）"><button disabled={busy} onClick={previewPng}><Icon name="exportPng" />预览 PNG</button></Tooltip>
-    </div>
-    <ExportDiagnosticsPanel format={exportReport?.format} diagnostics={exportReport?.diagnostics ?? []} onSelect={nodeId => { if (document.nodes[nodeId]) setSelectedIds([nodeId]); }} />
-    {recovery && <><h2>恢复报告</h2><div className="recovery-report">{recoveryReportRows({ ...recovery, missingAssets }).map(row => <div className="recovery-row" key={row.label}><span className="recovery-label">{row.label}</span><span className={row.tone === "warning" ? "recovery-value recovery-warning" : "recovery-value"}>{row.value}</span></div>)}</div><button disabled={busy} onClick={() => { downloadFile(recoveryReportFileName(recovery.projectName), JSON.stringify({ ...recovery, missingAssets }, null, 2), "application/json"); setMessage("恢复报告已导出"); }}><Icon name="exportJson" />导出报告</button></>}
-    <hr/><div className="section-heading"><h2>历史版本</h2></div>
-    <div className="snapshot-list">{versionRows.length
-      ? versionRows.map(row => <div className="snapshot-row" key={row.revision}><span className="snapshot-label">{row.label}</span><span className="snapshot-time" title={row.updatedAt}>{formatSnapshotTime(row.updatedAt)}</span>{row.schemaVersion < CURRENT_SCHEMA_VERSION && <span className="snapshot-legacy">旧格式</span>}{row.current
-        ? <span className="snapshot-current">当前</span>
-        : <Tooltip label={`还原到 ${row.label}`}><button className="icon-only" aria-label={`还原到 ${row.label}`} disabled={busy} onClick={() => restoreVersion(row)}><Icon name="versionRestore" /></button></Tooltip>}</div>)
-      : <p className="empty-hint">还没有历史版本。改动落盘之后，这里会列出可以回滚到的版本。</p>}</div>
-    <hr/><h2>操作历史</h2>
-    <HistoryPanel rows={transactionRows} disabled={busy} onRestore={restoreTransaction} />
-    <hr/><h2>存储用量</h2>
-    <StoragePanel estimate={storage} disabled={busy} onRefresh={refreshStorage} onExportBackup={exportJson} />
-    <hr/><h2>自动备份</h2>
-    <div className="backup-list">{backups.length
-      ? backups.map(row => <div className="backup-row" key={row.createdAt}><span className="backup-time">{formatSnapshotTime(row.createdAt)}</span><span className="backup-meta">r{row.revision} · {formatBytes(row.byteLength)}</span><Tooltip label="把这份备份下载成 JSON"><button className="icon-only" aria-label="下载备份" disabled={busy} onClick={() => downloadBackup(row)}><Icon name="exportJson" /></button></Tooltip><Tooltip label="还原到这份备份"><button className="icon-only" aria-label="还原备份" disabled={busy} onClick={() => restoreBackup(row)}><Icon name="versionRestore" /></button></Tooltip></div>)
-      : <p className="empty-hint">还没有自动备份。每次落盘后最多每 10 分钟保存一份，保留最近 3 份。</p>}</div>
-    <hr/><TokenPanel tokens={document.tokens} bindings={selected?.bindings} disabled={busy} canBind={Boolean(selected)} onCreate={createToken} onUpdate={updateToken} onBind={bindToken} onUnbind={unbindToken} onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))} />
-    <hr/><div className="section-heading"><h2>图片资源</h2></div>
-    <AssetPanel usage={assetUsage} missingIds={missingIds} disabled={busy} onRelink={startRelink} onDelete={deleteAsset} />
-    <input ref={relinkInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) relinkAssetFile(file); }} />
-    <hr/><h2>组件</h2>
-    <div className="component-create"><input type="text" placeholder="组件名称" value={componentName} onChange={event => setComponentName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") createComponentFromSelection(componentName); }} /><Tooltip label={selected?.type === "instance" ? "实例不能转为组件" : "将选中节点转为组件"}><button disabled={busy || !componentName.trim() || !selected || selectedIds.length !== 1 || selected.type === "instance"} onClick={() => createComponentFromSelection(componentName)}><Icon name="componentCreate" />创建</button></Tooltip></div>
-    <div className="component-list">{componentSummaries.length
-      ? componentSummaries.map(component => <div className="component-row" key={component.id}><span className="component-glyph"><Icon name="nodeComponent" size={12} /></span><span className="component-name" title={component.name}>{component.name}</span><span className="component-count">{component.instanceCount}</span><Tooltip label="创建实例"><button className="icon-only" aria-label="创建实例" disabled={busy} onClick={() => instantiateComponent(component.id)}><Icon name="componentInstantiate" /></button></Tooltip><Tooltip label="删除组件"><button className="icon-only" aria-label="删除组件" disabled={busy} onClick={() => removeComponent(component.id)}><Icon name="componentRemove" /></button></Tooltip></div>)
-      : <p className="empty-hint">还没有组件。选中一个节点，输入名称后点击「创建」。</p>}</div>
-    <hr/><AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
-    <hr/><h2>AI 安全编辑</h2><textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
-      <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
-      {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
-      {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
-      {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
+    <aside className="inspector">
+      <div className="inspector-head">
+        <h2>{activeInspectorTab.label}</h2>
+        <span className="inspector-head-meta" title={activeInspectorTab.meta}>{activeInspectorTab.meta}</span>
+      </div>
+      <div className="inspector-tabs" role="tablist" aria-label="右侧面板分段">
+        {inspectorTabRows.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            id={`inspector-tab-${tab.id}`}
+            aria-selected={inspectorTab === tab.id}
+            aria-controls="inspector-body"
+            className="inspector-tab"
+            onClick={() => setInspectorTab(tab.id)}
+          >
+            {tab.label}
+            {tab.badge ? <span className="inspector-tab-badge">{tab.badge}</span> : null}
+          </button>
+        ))}
+      </div>
+      <div className="inspector-body" id="inspector-body" role="tabpanel" aria-labelledby={`inspector-tab-${inspectorTab}`}>
+        {inspectorTab === "properties" && <>
+          {selectedIds.length > 1 && (
+            <section className="inspector-section">
+              <h2>对齐与分布</h2>
+              <div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5 }}>
+                <Tooltip label="左对齐"><button className="icon-only" disabled={busy} aria-label="左对齐" onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>
+                <Tooltip label="水平居中"><button className="icon-only" disabled={busy} aria-label="水平居中" onClick={() => arrangeSelection("centerX")}><Icon name="alignCenterX" /></button></Tooltip>
+                <Tooltip label="右对齐"><button className="icon-only" disabled={busy} aria-label="右对齐" onClick={() => arrangeSelection("right")}><Icon name="alignRight" /></button></Tooltip>
+                <Tooltip label="顶对齐"><button className="icon-only" disabled={busy} aria-label="顶对齐" onClick={() => arrangeSelection("top")}><Icon name="alignTop" /></button></Tooltip>
+                <Tooltip label="垂直居中"><button className="icon-only" disabled={busy} aria-label="垂直居中" onClick={() => arrangeSelection("centerY")}><Icon name="alignCenterY" /></button></Tooltip>
+                <Tooltip label="底对齐"><button className="icon-only" disabled={busy} aria-label="底对齐" onClick={() => arrangeSelection("bottom")}><Icon name="alignBottom" /></button></Tooltip>
+                <Tooltip label="水平分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="水平分布" onClick={() => arrangeSelection("distributeX")}><Icon name="distributeX" /></button></Tooltip>
+                <Tooltip label="垂直分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="垂直分布" onClick={() => arrangeSelection("distributeY")}><Icon name="distributeY" /></button></Tooltip>
+              </div>
+            </section>
+          )}
+          {selected && selectedIds.length === 1
+            ? (
+              <section className="inspector-section">
+                <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
+                <PropertyPanel node={selected} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} />
+                <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
+                {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
+                {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
+                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} />}
+                <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
+                <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
+                <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除</button>
+              </section>
+            )
+            : selectedIds.length > 1
+              ? (
+                <section className="inspector-section">
+                  <BatchPanel nodes={selectedNodes} disabled={busy} onPatchAppearance={patchBatchAppearance} onPatchLayout={patchBatchLayout} onPatchText={patchBatchText} />
+                  <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除 {selectedIds.length} 个节点</button>
+                </section>
+              )
+              : <p className="empty-hint">选择画布中的节点，这里会显示它的布局、外观和文字属性。</p>}
+          {canvasLayout.warnings.length > 0 && (
+            <section className="inspector-section">
+              <h2>布局警告</h2>
+              <div className="warning-list">{canvasLayout.warnings.map((warning, index) => <button key={`${warning.nodeId}:${warning.code}:${index}`} className="warning-row" onClick={() => warning.nodeId && setSelectedIds([warning.nodeId])} title={warning.nodeId ? `选中 ${warning.nodeId}` : warning.message}><span className={`warning-code warning-code-${warning.code}`}>{warning.code}</span><span className="warning-message">{warning.message}</span></button>)}</div>
+            </section>
+          )}
+        </>}
+        {inspectorTab === "export" && <>
+          <section className="inspector-section">
+            <h2>预览交付物</h2>
+            <div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+              <Tooltip label="在隔离沙箱里预览 HTML 交付物"><button disabled={busy} onClick={previewHtml}><Icon name="exportHtml" />预览 HTML</button></Tooltip>
+              <Tooltip label="预览 SVG 交付物"><button disabled={busy} onClick={previewSvg}><Icon name="exportSvg" />预览 SVG</button></Tooltip>
+              <Tooltip label="预览 PNG 交付物（会先光栅化）"><button disabled={busy} onClick={previewPng}><Icon name="exportPng" />预览 PNG</button></Tooltip>
+            </div>
+          </section>
+          <section className="inspector-section">
+            <h2>导出诊断</h2>
+            <ExportDiagnosticsPanel format={exportReport?.format} diagnostics={exportReport?.diagnostics ?? []} onSelect={nodeId => { if (document.nodes[nodeId]) setSelectedIds([nodeId]); }} />
+          </section>
+        </>}
+        {inspectorTab === "history" && <>
+          <section className="inspector-section">
+            <h2>历史版本</h2>
+            <div className="snapshot-list">{versionRows.length
+              ? versionRows.map(row => <div className="snapshot-row" key={row.revision}><span className="snapshot-label">{row.label}</span><span className="snapshot-time" title={row.updatedAt}>{formatSnapshotTime(row.updatedAt)}</span>{row.schemaVersion < CURRENT_SCHEMA_VERSION && <span className="snapshot-legacy">旧格式</span>}{row.current
+                ? <span className="snapshot-current">当前</span>
+                : <Tooltip label={`还原到 ${row.label}`}><button className="icon-only" aria-label={`还原到 ${row.label}`} disabled={busy} onClick={() => restoreVersion(row)}><Icon name="versionRestore" /></button></Tooltip>}</div>)
+              : <p className="empty-hint">还没有历史版本。改动落盘之后，这里会列出可以回滚到的版本。</p>}</div>
+          </section>
+          <section className="inspector-section">
+            <h2>操作历史</h2>
+            <HistoryPanel rows={transactionRows} disabled={busy} onRestore={restoreTransaction} />
+          </section>
+          <section className="inspector-section">
+            <h2>自动备份</h2>
+            <div className="backup-list">{backups.length
+              ? backups.map(row => <div className="backup-row" key={row.createdAt}><span className="backup-time">{formatSnapshotTime(row.createdAt)}</span><span className="backup-meta">r{row.revision} · {formatBytes(row.byteLength)}</span><Tooltip label="把这份备份下载成 JSON"><button className="icon-only" aria-label="下载备份" disabled={busy} onClick={() => downloadBackup(row)}><Icon name="exportJson" /></button></Tooltip><Tooltip label="还原到这份备份"><button className="icon-only" aria-label="还原备份" disabled={busy} onClick={() => restoreBackup(row)}><Icon name="versionRestore" /></button></Tooltip></div>)
+              : <p className="empty-hint">还没有自动备份。每次落盘后最多每 10 分钟保存一份，保留最近 3 份。</p>}</div>
+          </section>
+          {recovery && (
+            <section className="inspector-section">
+              <h2>恢复报告</h2>
+              <div className="recovery-report">{recoveryReportRows({ ...recovery, missingAssets }).map(row => <div className="recovery-row" key={row.label}><span className="recovery-label">{row.label}</span><span className={row.tone === "warning" ? "recovery-value recovery-warning" : "recovery-value"}>{row.value}</span></div>)}</div>
+              <button disabled={busy} onClick={() => { downloadFile(recoveryReportFileName(recovery.projectName), JSON.stringify({ ...recovery, missingAssets }, null, 2), "application/json"); setMessage("恢复报告已导出"); }}><Icon name="exportJson" />导出报告</button>
+            </section>
+          )}
+        </>}
+        {inspectorTab === "data" && <>
+          <section className="inspector-section">
+            <TokenPanel tokens={document.tokens} bindings={selected?.bindings} disabled={busy} canBind={Boolean(selected)} onCreate={createToken} onUpdate={updateToken} onBind={bindToken} onUnbind={unbindToken} onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))} />
+          </section>
+          <section className="inspector-section">
+            <h2>图片资源</h2>
+            <AssetPanel usage={assetUsage} missingIds={missingIds} disabled={busy} onRelink={startRelink} onDelete={deleteAsset} />
+            <input ref={relinkInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) relinkAssetFile(file); }} />
+          </section>
+          <section className="inspector-section">
+            <h2>组件</h2>
+            <div className="component-create"><input type="text" placeholder="组件名称" value={componentName} onChange={event => setComponentName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") createComponentFromSelection(componentName); }} /><Tooltip label={selected?.type === "instance" ? "实例不能转为组件" : "将选中节点转为组件"}><button disabled={busy || !componentName.trim() || !selected || selectedIds.length !== 1 || selected.type === "instance"} onClick={() => createComponentFromSelection(componentName)}><Icon name="componentCreate" />创建</button></Tooltip></div>
+            <div className="component-list">{componentSummaries.length
+              ? componentSummaries.map(component => <div className="component-row" key={component.id}><span className="component-glyph"><Icon name="nodeComponent" size={12} /></span><span className="component-name" title={component.name}>{component.name}</span><span className="component-count">{component.instanceCount}</span><Tooltip label="创建实例"><button className="icon-only" aria-label="创建实例" disabled={busy} onClick={() => instantiateComponent(component.id)}><Icon name="componentInstantiate" /></button></Tooltip><Tooltip label="删除组件"><button className="icon-only" aria-label="删除组件" disabled={busy} onClick={() => removeComponent(component.id)}><Icon name="componentRemove" /></button></Tooltip></div>)
+              : <p className="empty-hint">还没有组件。选中一个节点，输入名称后点击「创建」。</p>}</div>
+          </section>
+        </>}
+        {inspectorTab === "ai" && <>
+          <section className="inspector-section">
+            <AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
+          </section>
+          <section className="inspector-section">
+            <h2>AI 安全编辑</h2>
+            <textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
+            <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
+            {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
+            {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
+            {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
+          </section>
+        </>}
+      </div>
+      <div className="inspector-foot">
+        <span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span>
+        <span className="inspector-foot-meta">{storage ? `存储 ${storagePercent(storage)}%` : "存储用量未知"}</span>
+      </div>
     </aside>
     <ExportPreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} preview={exportPreview} />
   </div>;
