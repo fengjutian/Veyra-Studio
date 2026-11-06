@@ -51,7 +51,7 @@ function buildDocument(): DesignDocument {
   const child = { ...node("frame:b", "矩形"), parentId: "frame:a" };
   const text = { ...node("text:a", "标题"), type: "text" as const, parentId: "frame:a", text: "欢迎来到设计编辑器", fontFamily: "Inter", fontSize: 20, lineHeight: 28 };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "doc:1",
     revision: 1,
     meta: { name: "文档", createdAt: "2026-11-06T00:00:00.000Z", updatedAt: "2026-11-06T00:00:00.000Z" },

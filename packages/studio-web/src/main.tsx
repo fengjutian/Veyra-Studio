@@ -1,10 +1,11 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
-import { defaultAppearance, defaultLayout, TEXT_DEFAULTS, type DesignDocument, type DesignNode, type TextPatch } from "@ufira/design-schema";
+import { defaultAppearance, defaultLayout, migrateDocument, TEXT_DEFAULTS, type DesignDocument, type DesignNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
-import { DexieProjectRepository, type StoredProjectSummary } from "./browser-repository";
+import type { AutosaveStatus, ProjectRepository, ProjectSummary } from "@ufira/design-persistence";
+import { currentAutosaveStatus, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
 import { arrangeNodes, nudgeNodes, type Arrangement } from "./node-arrangement";
 import { flattenNodeTrees } from "./node-tree";
@@ -30,11 +31,10 @@ import "./styles.css";
 
 const PROJECT_ID = "studio:local";
 const CanvasInteractionLayer = lazy(() => import("./canvas-interaction-layer"));
-const repository = new DexieProjectRepository();
 
 function App() {
   const [project, setProject] = useState<StudioProject>();
-  const [projects, setProjects] = useState<StoredProjectSummary[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [document, setDocument] = useState<DesignDocument>();
   const [currentPageId, setCurrentPageId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -65,6 +65,8 @@ function App() {
   const [aiSettings, setAiSettings] = useState<AiSettings>(() => readAiSettings());
   const askText = usePrompt();
   const askConfirm = useConfirm();
+  // 自动保存状态：待保存 / 保存中 / 已保存 / 失败（含存储配额耗尽）。
+  const autosave = useSyncExternalStore(subscribeAutosave, currentAutosaveStatus);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
   const planner = useMemo(() => aiSettingsComplete(aiSettings)
     ? createOpenAiCompatiblePlanner({ baseUrl: aiSettings.baseUrl, model: aiSettings.model, apiKey: aiSettings.apiKey || undefined })
@@ -79,6 +81,8 @@ function App() {
   };
 
   useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  // 页面被关闭或切到后台时立刻把待写快照落盘，避免最后几次编辑留在内存里。
+  useEffect(() => installAutosaveFlush(), []);
   useEffect(() => {
     if (!project) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -149,7 +153,10 @@ function App() {
   const openProject = async (id: string) => {
     const opened = await StudioProject.open(repository, id);
     const snapshot = opened.project.snapshot();
-    setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined); setMessage(opened.recovery.degraded ? "项目已降级恢复，请检查事务日志" : "项目已打开");
+    setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined);
+    setMessage(opened.recovery.migratedFrom !== undefined
+      ? `项目已从格式版本 ${opened.recovery.migratedFrom} 升级到当前版本`
+      : opened.recovery.degraded ? "项目已降级恢复，请检查事务日志" : "项目已打开");
   };
   const createProject = () => void run(async () => {
     const name = (await askText({ title: "新项目名称", defaultValue: "未命名设计" }))?.trim(); if (!name) return;
@@ -231,9 +238,10 @@ function App() {
   });
   const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
   const importJson = (file: File) => void run(async () => {
-    const imported = prepareImportedDocument(JSON.parse(await file.text()));
-    await repository.saveSnapshot(imported); await openProject(imported.id); setProjects(await repository.listProjects());
-    setMessage(`项目已导入${Object.keys(imported.assets).length ? "；二进制资产需重新关联" : ""}`);
+    const prepared = prepareImportedDocument(JSON.parse(await file.text()));
+    await repository.saveSnapshot(prepared.document); await openProject(prepared.document.id); setProjects(await repository.listProjects());
+    const upgrade = prepared.migratedFrom !== undefined ? `；已从格式版本 ${prepared.migratedFrom} 升级到当前版本` : "";
+    setMessage(`项目已导入${upgrade}${Object.keys(prepared.document.assets).length ? "；二进制资产需重新关联" : ""}`);
   });
   const saveAiSettings = (next: AiSettings) => {
     writeAiSettings(next);
@@ -389,7 +397,7 @@ function App() {
   const componentSummaries = listComponents(document);
 
   return <div className={`studio${leftPanelOpen ? "" : " left-collapsed"}${rightPanelOpen ? "" : " right-collapsed"}`}>
-    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip><Tooltip label={rightPanelOpen ? "收起属性面板" : "展开属性面板"}><button className="icon-only" aria-label="属性面板" onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip><button disabled={busy} onClick={createProject}><Icon name="newProject" />新建</button><button disabled={busy} onClick={renameProject}><Icon name="rename" />重命名</button><Tooltip label="撤销 · Ctrl/Cmd+Z"><button disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" />撤销</button></Tooltip><Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" />重做</button></Tooltip><select className="export-scope" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />HTML</button><button disabled={busy} onClick={exportSvg}><Icon name="exportSvg" />SVG</button><button disabled={busy} onClick={exportPng}><Icon name="exportPng" />PNG</button><button disabled={busy} onClick={exportJson}><Icon name="exportJson" />JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" />导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}><Icon name="trash" />删除项目</button><span className="status">{message}</span></header>
+    <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip><Tooltip label={rightPanelOpen ? "收起属性面板" : "展开属性面板"}><button className="icon-only" aria-label="属性面板" onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip><button disabled={busy} onClick={createProject}><Icon name="newProject" />新建</button><button disabled={busy} onClick={renameProject}><Icon name="rename" />重命名</button><Tooltip label="撤销 · Ctrl/Cmd+Z"><button disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" />撤销</button></Tooltip><Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" />重做</button></Tooltip><select className="export-scope" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />HTML</button><button disabled={busy} onClick={exportSvg}><Icon name="exportSvg" />SVG</button><button disabled={busy} onClick={exportPng}><Icon name="exportPng" />PNG</button><button disabled={busy} onClick={exportJson}><Icon name="exportJson" />JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" />导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}><Icon name="trash" />删除项目</button><span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span><span className="status">{message}</span></header>
     <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}><Icon name="pageAdd" />新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}><Icon name="rename" />重命名</button><Tooltip label={page.childIds.length ? "请先清空页面" : "删除当前页面"}><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} onClick={deletePage}><Icon name="pageDelete" />删除</button></Tooltip></div><div className="section-heading"><h2>图层</h2><Tooltip label="全选页面顶层对象 · Ctrl/Cmd+A"><button disabled={busy || !page.childIds.length} onClick={selectAll}><Icon name="selectAll" />全选</button></Tooltip></div><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}><Icon name="addFrame" />Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}><Icon name="addRectangle" />矩形</button><button disabled={busy} onClick={() => addNode("ellipse")}><Icon name="addEllipse" />椭圆</button><button disabled={busy} onClick={() => addNode("text")}><Icon name="addText" />文本</button></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><Tooltip label="复制 · Ctrl/Cmd+C"><button disabled={busy || !selectedIds.length} onClick={copySelection}><Icon name="copy" />复制</button></Tooltip><Tooltip label="粘贴 · Ctrl/Cmd+V"><button disabled={busy || !clipboard.current} onClick={pasteSelection}><Icon name="paste" />粘贴</button></Tooltip><Tooltip label="重复 · Ctrl/Cmd+D"><button disabled={busy || !selectedIds.length} onClick={duplicateSelection}><Icon name="duplicate" />重复</button></Tooltip></div><div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><Tooltip label="置底"><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="置底" onClick={() => reorderLayer(0)}><Icon name="toBack" /></button></Tooltip><Tooltip label="下移 · Ctrl/Cmd+["><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="下移" onClick={() => reorderLayer(selectedLayerIndex - 1)}><Icon name="moveDown" /></button></Tooltip><Tooltip label="上移 · Ctrl/Cmd+]"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="上移" onClick={() => reorderLayer(selectedLayerIndex + 1)}><Icon name="moveUp" /></button></Tooltip><Tooltip label="置顶"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="置顶" onClick={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}><Icon name="toFront" /></button></Tooltip></div><LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} /></aside>    <section className="workspace"><div className={`canvas-scroller${panMode ? " pan-mode" : ""}${panning ? " panning" : ""}`} ref={setScroller} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}><ContextMenuRoot><ContextMenuTrigger onContextMenu={handleCanvasContextMenu}><div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></ContextMenuTrigger><ContextMenuContent>{contextIds.length ? <><ContextMenuItem icon="copy" shortcut="Ctrl/Cmd+C" disabled={busy} onSelect={copySelection}>复制</ContextMenuItem><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuItem icon="duplicate" shortcut="Ctrl/Cmd+D" disabled={busy} onSelect={duplicateSelection}>重复</ContextMenuItem><ContextMenuSeparator /><ContextMenuItem icon="trash" shortcut="Delete" danger disabled={busy} onSelect={deleteSelection}>删除</ContextMenuItem><ContextMenuSeparator />{contextIds.length === 1 && <ContextMenuSub label="图层顺序" icon="layerOrder"><ContextMenuItem icon="toFront" disabled={busy} onSelect={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}>置顶</ContextMenuItem><ContextMenuItem icon="toBack" disabled={busy} onSelect={() => reorderLayer(0)}>置底</ContextMenuItem><ContextMenuItem icon="moveUp" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex + 1)}>上移</ContextMenuItem><ContextMenuItem icon="moveDown" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex - 1)}>下移</ContextMenuItem></ContextMenuSub>}{contextIds.length > 1 && <ContextMenuSub label="对齐" icon="alignGroup"><ContextMenuItem icon="alignLeft" disabled={busy} onSelect={() => arrangeSelection("left")}>左对齐</ContextMenuItem><ContextMenuItem icon="alignCenterX" disabled={busy} onSelect={() => arrangeSelection("centerX")}>水平居中</ContextMenuItem><ContextMenuItem icon="alignRight" disabled={busy} onSelect={() => arrangeSelection("right")}>右对齐</ContextMenuItem><ContextMenuItem icon="alignTop" disabled={busy} onSelect={() => arrangeSelection("top")}>顶对齐</ContextMenuItem><ContextMenuItem icon="alignCenterY" disabled={busy} onSelect={() => arrangeSelection("centerY")}>垂直居中</ContextMenuItem><ContextMenuItem icon="alignBottom" disabled={busy} onSelect={() => arrangeSelection("bottom")}>底对齐</ContextMenuItem></ContextMenuSub>}{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}</> : <><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuSeparator /><ContextMenuSub label="添加" icon="addFrame"><ContextMenuItem icon="addFrame" disabled={busy} onSelect={() => addNode("frame")}>Frame</ContextMenuItem><ContextMenuItem icon="addRectangle" disabled={busy} onSelect={() => addNode("rectangle")}>矩形</ContextMenuItem><ContextMenuItem icon="addEllipse" disabled={busy} onSelect={() => addNode("ellipse")}>椭圆</ContextMenuItem><ContextMenuItem icon="addText" disabled={busy} onSelect={() => addNode("text")}>文本</ContextMenuItem></ContextMenuSub></>}</ContextMenuContent></ContextMenuRoot></div><div className="canvas-controls"><Tooltip label={panMode ? "退出抓手" : "抓手拖动画布"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setPanMode(on => !on)}><Icon name="pan" /></button></Tooltip><Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => setZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip><Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => setZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip><Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip><Tooltip label="适应内容"><button className="icon-only zoom-fit" aria-label="适应内容" onClick={fitCanvas}><Icon name="zoomFit" /></button></Tooltip></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selectedIds.length > 1 && <><h2>对齐与分布</h2><div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginBottom: 12 }}><Tooltip label="左对齐"><button className="icon-only" disabled={busy} aria-label="左对齐" onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip><Tooltip label="水平居中"><button className="icon-only" disabled={busy} aria-label="水平居中" onClick={() => arrangeSelection("centerX")}><Icon name="alignCenterX" /></button></Tooltip><Tooltip label="右对齐"><button className="icon-only" disabled={busy} aria-label="右对齐" onClick={() => arrangeSelection("right")}><Icon name="alignRight" /></button></Tooltip><Tooltip label="顶对齐"><button className="icon-only" disabled={busy} aria-label="顶对齐" onClick={() => arrangeSelection("top")}><Icon name="alignTop" /></button></Tooltip><Tooltip label="垂直居中"><button className="icon-only" disabled={busy} aria-label="垂直居中" onClick={() => arrangeSelection("centerY")}><Icon name="alignCenterY" /></button></Tooltip><Tooltip label="底对齐"><button className="icon-only" disabled={busy} aria-label="底对齐" onClick={() => arrangeSelection("bottom")}><Icon name="alignBottom" /></button></Tooltip><Tooltip label="水平分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="水平分布" onClick={() => arrangeSelection("distributeX")}><Icon name="distributeX" /></button></Tooltip><Tooltip label="垂直分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="垂直分布" onClick={() => arrangeSelection("distributeY")}><Icon name="distributeY" /></button></Tooltip></div></>}{selected && selectedIds.length === 1 ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
@@ -470,18 +478,27 @@ function Field({ label, value, type = "text", onCommit }: { label: string; value
 
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange(value: boolean): void }) { return <label>{label}<input type="checkbox" checked={checked} onChange={event => onChange(event.target.checked)} /></label>; }
 
-async function initialize(repository: DexieProjectRepository) {
+async function initialize(repository: ProjectRepository) {
   await migrateLegacySnapshot(repository, PROJECT_ID);
   const existing = await repository.listProjects();
   if (existing[0]) return StudioProject.open(repository, existing[0].id);
   return { project: await StudioProject.create(repository, PROJECT_ID, "本地设计", "page:1"), recovery: undefined };
 }
 
-async function migrateLegacySnapshot(repository: DexieProjectRepository, projectId: string): Promise<void> {
+/**
+ * 把早期 localStorage 里的快照搬进新的仓库存储。
+ *
+ * 那份数据是格式版本 1 的文档，得先升级再落盘；升级不了就原样留在 localStorage，
+ * 用户还能自己把它救回来。
+ */
+async function migrateLegacySnapshot(repository: ProjectRepository, projectId: string): Promise<void> {
   const key = `studio:${projectId}:document`, serialized = localStorage.getItem(key);
   if (!serialized) return;
-  try { await repository.saveSnapshot(JSON.parse(serialized) as DesignDocument); localStorage.removeItem(key); localStorage.removeItem(`${key}:pending`); localStorage.removeItem(`studio:${projectId}:transactions`); }
-  catch { /* Preserve invalid legacy data for manual recovery. */ }
+  try {
+    const migrated = migrateDocument(JSON.parse(serialized));
+    await repository.saveSnapshot(migrated.document);
+    localStorage.removeItem(key); localStorage.removeItem(`${key}:pending`); localStorage.removeItem(`studio:${projectId}:transactions`);
+  } catch { /* Preserve invalid legacy data for manual recovery. */ }
 }
 
 function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: string): DesignNode {
@@ -495,6 +512,20 @@ function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: st
 const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "演示规划器：创建一个蓝色卡片（未启用真实模型，需求未被理解）", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fill: "#2563eb", cornerRadius: 20 } } } }] }; } };
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+
+/** 自动保存状态在顶栏的一行提示。 */
+function autosaveLabel(status: AutosaveStatus): string {
+  if (status.state === "error") return status.quotaExceeded ? "自动保存失败：存储空间不足" : "自动保存失败";
+  if (status.state === "saving") return "自动保存中…";
+  if (status.state === "pending") return "待自动保存";
+  if (status.state === "saved" && status.lastSavedAt) return `已自动保存 ${new Date(status.lastSavedAt).toLocaleTimeString()}`;
+  return "自动保存就绪";
+}
+
+function autosaveTitle(status: AutosaveStatus): string {
+  if (status.state === "error") return status.quotaExceeded ? `${status.lastError ?? "存储空间不足"}；请导出 JSON 备份后清理旧项目` : status.lastError ?? "自动保存失败";
+  return status.state === "saved" ? `最近一次落盘：${status.lastSavedAt ?? "未知"}` : "文档改动会在停止输入后自动落盘";
+}
 
 function toggleId(ids: string[], id: string): string[] { return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]; }
 

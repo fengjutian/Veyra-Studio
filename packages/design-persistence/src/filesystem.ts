@@ -1,14 +1,38 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { validateDocument, type DesignDocument } from "@ufira/design-schema";
-import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
-import { ProjectNotFoundError, type AssetWrite, type ProjectRepository, type ProjectSnapshot } from "./types";
+import { type DesignDocument } from "@ufira/design-schema";
+import type { TransactionEntry } from "@ufira/design-runtime";
+import {
+  ProjectNotFoundError,
+  SNAPSHOT_RETENTION,
+  assertSavableDocument,
+  loadDocumentPayload,
+  normalizeAssetHash,
+  replayJournal,
+  type AssetWrite,
+  type JournalPruneOptions,
+  type ProjectRepository,
+  type ProjectSnapshot,
+  type ProjectSummary,
+} from "./contract";
+
+/**
+ * 项目存储布局的版本。
+ *
+ * 1 是最初版本：manifest 只记 projectId / latestRevision / updatedAt。
+ * 2 补上 storageVersion 与 documentSchemaVersion，让"这份数据是哪个布局、哪个
+ * 文档格式写下来的"可以被查出来。
+ */
+export const STORAGE_VERSION = 2;
 
 interface Manifest {
   projectId: string;
+  name: string;
   latestRevision: number;
   updatedAt: string;
+  storageVersion?: number;
+  documentSchemaVersion?: number;
 }
 
 export class FileSystemProjectRepository implements ProjectRepository {
@@ -19,20 +43,24 @@ export class FileSystemProjectRepository implements ProjectRepository {
   }
 
   async saveSnapshot(document: DesignDocument): Promise<void> {
-    const valid = validateDocument(document);
+    const valid = assertSavableDocument(document);
     const directory = this.projectDirectory(valid.id);
     const snapshots = join(directory, "snapshots");
     await mkdir(snapshots, { recursive: true });
     await mkdir(join(directory, "transactions"), { recursive: true });
     await mkdir(join(directory, "assets"), { recursive: true });
 
-    const snapshotPath = join(snapshots, revisionFile(valid.revision));
-    await writeExclusiveAtomic(snapshotPath, JSON.stringify(valid));
+    // 同一 revision 可能被迁移后的文档重写，所以这里用替换语义而不是独占创建。
+    await replaceAtomic(join(snapshots, revisionFile(valid.revision)), JSON.stringify(valid));
     await replaceAtomic(join(directory, "manifest.json"), JSON.stringify({
       projectId: valid.id,
+      name: valid.meta.name,
       latestRevision: valid.revision,
       updatedAt: valid.meta.updatedAt,
+      storageVersion: STORAGE_VERSION,
+      documentSchemaVersion: valid.schemaVersion,
     } satisfies Manifest));
+    await this.pruneSnapshots(directory);
   }
 
   async appendTransactions(entries: TransactionEntry[]): Promise<void> {
@@ -59,11 +87,12 @@ export class FileSystemProjectRepository implements ProjectRepository {
   }
 
   async putAsset(projectId: string, asset: AssetWrite): Promise<void> {
+    const hash = normalizeAssetHash(asset.hash);
     const actualHash = createHash("sha256").update(asset.bytes).digest("hex");
-    if (actualHash !== asset.hash) throw new Error(`Asset hash mismatch: expected ${asset.hash}, received ${actualHash}`);
+    if (actualHash !== hash) throw new Error(`Asset hash mismatch: expected ${hash}, received ${actualHash}`);
     const directory = join(this.projectDirectory(projectId), "assets");
     await mkdir(directory, { recursive: true });
-    const target = join(directory, safeHash(asset.hash));
+    const target = join(directory, hash);
     try {
       await writeExclusiveAtomic(target, asset.bytes);
     } catch (error: any) {
@@ -73,7 +102,7 @@ export class FileSystemProjectRepository implements ProjectRepository {
 
   async getAsset(projectId: string, hash: string): Promise<Uint8Array | undefined> {
     try {
-      return await readFile(join(this.projectDirectory(projectId), "assets", safeHash(hash)));
+      return await readFile(join(this.projectDirectory(projectId), "assets", normalizeAssetHash(hash)));
     } catch (error: any) {
       if (error?.code === "ENOENT") return undefined;
       throw error;
@@ -93,42 +122,77 @@ export class FileSystemProjectRepository implements ProjectRepository {
       ...files.map(parseRevision),
       ...transactionFiles.map(parseRevision),
     );
+
     for (const file of files) {
+      const raw = await readFile(join(snapshots, file), "utf8").catch(() => undefined);
+      if (raw === undefined) continue;
       try {
-        const document = validateDocument(JSON.parse(await readFile(join(snapshots, file), "utf8")));
+        const { document, migratedFrom } = loadDocumentPayload(JSON.parse(raw));
         if (document.id !== projectId) continue;
         const recoveredFromRevision = document.revision;
-        const runtime = new DesignRuntime(document);
+        // 迁移过的文档立刻按新格式落盘，原始文件留一份备份，随时可以退回。
+        if (migratedFrom !== undefined) await this.writeMigratedSnapshot(directory, document, raw);
         const transactions = await this.listTransactions(projectId, recoveredFromRevision);
-        let replayedTransactions = 0;
-        for (const entry of transactions) {
-          if (entry.revision !== runtime.snapshot().revision + 1) break;
-          try {
-            runtime.execute({
-              commandId: entry.commandId,
-              documentId: entry.documentId,
-              baseRevision: runtime.snapshot().revision,
-              actor: entry.actor,
-              commands: entry.commands,
-            }, { committedAt: entry.committedAt });
-            replayedTransactions += 1;
-          } catch {
-            break;
-          }
-        }
-        const recovered = runtime.snapshot();
+        const replay = replayJournal(document, transactions, { latestKnownRevision });
         return {
-          document: recovered,
+          document: replay.document,
           recoveredFromRevision,
-          replayedTransactions,
-          latestKnownRevision,
-          degraded: recovered.revision !== latestKnownRevision,
+          replayedTransactions: replay.replayedTransactions,
+          latestKnownRevision: replay.latestKnownRevision,
+          degraded: replay.degraded,
+          migratedFrom,
         };
       } catch {
         // Fall through to the previous valid snapshot.
       }
     }
     throw new Error(`Project ${projectId} has no valid snapshots`);
+  }
+
+  async listProjects(): Promise<ProjectSummary[]> {
+    const directories = await safeReadDirectory(this.rootDirectory);
+    const summaries: ProjectSummary[] = [];
+    for (const entry of directories) {
+      const directory = join(this.rootDirectory, entry);
+      const manifest = await readManifest(join(directory, "manifest.json"));
+      if (manifest) {
+        summaries.push({ id: manifest.projectId, name: manifest.name ?? "", revision: manifest.latestRevision, updatedAt: manifest.updatedAt });
+        continue;
+      }
+      const snapshots = join(directory, "snapshots");
+      const files = (await safeReadDirectory(snapshots)).filter(isRevisionFile).sort().reverse();
+      if (!files.length) continue;
+      const document = await readFile(join(snapshots, files[0]!), "utf8").then(raw => JSON.parse(raw) as DesignDocument).catch(() => undefined);
+      if (!document) continue;
+      summaries.push({ id: document.id, name: document.meta.name, revision: document.revision, updatedAt: document.meta.updatedAt });
+    }
+    return summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async deleteProject(projectId: string): Promise<void> {
+    await rm(this.projectDirectory(projectId), { recursive: true, force: true });
+  }
+
+  async pruneJournal(projectId: string, options: JournalPruneOptions = {}): Promise<number> {
+    const directory = join(this.projectDirectory(projectId), "transactions");
+    const files = (await safeReadDirectory(directory)).filter(isRevisionFile).sort();
+    const keep = Math.max(0, options.keep ?? SNAPSHOT_RETENTION);
+    const outdated = files.slice(0, Math.max(0, files.length - keep));
+    for (const file of outdated) await rm(join(directory, file), { force: true });
+    return outdated.length;
+  }
+
+  private async writeMigratedSnapshot(directory: string, document: DesignDocument, original: string): Promise<void> {
+    const backups = join(directory, "backups");
+    await mkdir(backups, { recursive: true });
+    await writeExclusiveAtomic(join(backups, revisionFile(document.revision)), original);
+    await this.saveSnapshot(document);
+  }
+
+  private async pruneSnapshots(directory: string): Promise<void> {
+    const snapshots = join(directory, "snapshots");
+    const files = (await safeReadDirectory(snapshots)).filter(isRevisionFile).sort().reverse();
+    for (const file of files.slice(SNAPSHOT_RETENTION)) await rm(join(snapshots, file), { force: true });
   }
 
   private projectDirectory(projectId: string): string {
@@ -147,11 +211,6 @@ function isRevisionFile(file: string): boolean {
 
 function parseRevision(file: string): number {
   return Number.parseInt(file.slice(0, 12), 10);
-}
-
-function safeHash(hash: string): string {
-  if (!/^[a-f0-9]{64}$/i.test(hash)) throw new Error("Asset hash must be a SHA-256 hex string");
-  return hash.toLowerCase();
 }
 
 async function safeReadDirectory(directory: string): Promise<string[]> {

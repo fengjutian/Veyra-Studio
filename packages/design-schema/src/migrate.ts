@@ -18,8 +18,8 @@ export interface MigrationContext {
 /**
  * 单步迁移：把 `version` 形状的文档变成 `version + 1` 形状。
  *
- * 迁移步骤必须是纯函数，不能依赖外部状态，也不能抛异常以外的失败信号——
- * 抛出的错误会被转换成迁移失败结果，原文档保持不变。
+ * 迁移步骤必须是纯函数，不能依赖外部状态；抛出的异常会被转换成
+ * {@link MigrationError}，原文档保持不变。
  */
 export type MigrationStep = (document: Record<string, unknown>, context: MigrationContext) => Record<string, unknown>;
 
@@ -43,7 +43,6 @@ export interface MigrationOptions {
 }
 
 export interface MigrationSuccess {
-  ok: true;
   document: DesignDocument;
   /** 迁移前的格式版本。 */
   fromVersion: number;
@@ -53,15 +52,19 @@ export interface MigrationSuccess {
   applied: MigrationRecord[];
 }
 
-export interface MigrationFailure {
-  ok: false;
-  error: string;
-  /** 能识别出源版本时给出；无法识别时为 undefined。 */
-  fromVersion?: number;
-  toVersion: number;
+/**
+ * 迁移失败。
+ *
+ * 用异常而不是返回值来表示失败，是为了让调用方在严格模式和宽松模式下写法
+ * 一致：{@link migrateDocument} 成功就返回文档，失败就抛这个错误，原始数据
+ * 一点都不会被动过。
+ */
+export class MigrationError extends Error {
+  constructor(message: string, public readonly fromVersion?: number) {
+    super(message);
+    this.name = "MigrationError";
+  }
 }
-
-export type MigrationResult = MigrationSuccess | MigrationFailure;
 
 /**
  * 读取文档声明的格式版本。
@@ -80,21 +83,23 @@ export function detectSchemaVersion(input: unknown): number | undefined {
  * 把任意来源的文档升级到当前格式版本。
  *
  * 这是唯一允许把旧文档变成新文档的入口：仓库恢复、JSON 导入都必须先调用它。
- * 迁移失败时不会产生副作用，调用方拿到的原始数据仍然可以退回给用户。
- */export function migrateDocument(input: unknown, options: MigrationOptions = {}): MigrationResult {
+ * 迁移失败时抛出 {@link MigrationError}，原始数据保持不变，调用方可以把它
+ * 退回给用户或者继续用旧版本打开。
+ */
+export function migrateDocument(input: unknown, options: MigrationOptions = {}): MigrationSuccess {
   const toVersion = CURRENT_SCHEMA_VERSION;
   const fromVersion = detectSchemaVersion(input);
   if (fromVersion === undefined) {
-    return { ok: false, error: "文档缺少可识别的 schemaVersion，无法确定格式版本", toVersion };
+    throw new MigrationError("文档缺少可识别的 schemaVersion，无法确定格式版本");
   }
   if (fromVersion > toVersion) {
-    return { ok: false, error: `文档版本 ${fromVersion} 高于当前支持的版本 ${toVersion}，请先升级 Studio`, fromVersion, toVersion };
+    throw new MigrationError(`文档版本 ${fromVersion} 高于当前支持的版本 ${toVersion}，请先升级 Studio`, fromVersion);
   }
   if (fromVersion === toVersion) {
     try {
-      return { ok: true, document: validateDocument(input), fromVersion, toVersion, applied: [] };
+      return { document: validateDocument(input), fromVersion, toVersion, applied: [] };
     } catch (error) {
-      return { ok: false, error: errorMessage(error), fromVersion, toVersion };
+      throw new MigrationError(errorMessage(error), fromVersion);
     }
   }
 
@@ -104,29 +109,23 @@ export function detectSchemaVersion(input: unknown): number | undefined {
   for (let version = fromVersion; version < toVersion; version++) {
     const step = MIGRATIONS[version];
     if (!step) {
-      return { ok: false, error: `缺少 ${version} → ${version + 1} 的迁移步骤`, fromVersion, toVersion };
+      throw new MigrationError(`缺少 ${version} → ${version + 1} 的迁移步骤`, fromVersion);
     }
     try {
       payload = step(payload, { now });
     } catch (error) {
-      return { ok: false, error: `迁移 ${version} → ${version + 1} 失败：${errorMessage(error)}`, fromVersion, toVersion };
+      throw new MigrationError(`迁移 ${version} → ${version + 1} 失败：${errorMessage(error)}`, fromVersion);
     }
     applied.push({ from: version, to: version + 1, at: now });
   }
 
   try {
-    return { ok: true, document: validateDocument(payload), fromVersion, toVersion, applied };
+    return { document: validateDocument(payload), fromVersion, toVersion, applied };
   } catch (error) {
-    return { ok: false, error: errorMessage(error), fromVersion, toVersion };
+    throw new MigrationError(errorMessage(error), fromVersion);
   }
 }
 
-/**
- * 校验文档是否是当前格式的合法设计文档。
- *
- * 这是给"已经是当前版本"的调用方用的快速通道：老文档请走
- * {@link migrateDocument}。
- */
 function isMigrationRecord(entry: unknown): entry is MigrationRecord {
   if (!entry || typeof entry !== "object") return false;
   const record = entry as Partial<MigrationRecord>;

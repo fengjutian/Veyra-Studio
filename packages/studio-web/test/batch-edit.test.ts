@@ -97,7 +97,7 @@ function buildDocument(): DesignDocument {
   const parent = frame("frame:a");
   const child = { ...frame("frame:b"), parentId: "frame:a" };
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "doc:1",
     revision: 1,
     meta: { name: "文档", createdAt: "2026-11-06T00:00:00.000Z", updatedAt: "2026-11-06T00:00:00.000Z" },

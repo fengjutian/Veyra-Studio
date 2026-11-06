@@ -29,14 +29,30 @@ This repository contains **one active product direction and one legacy codebase*
   independent Studio packages, not to Vibma commands.
 
 The target architecture in `docs/ai-design-studio-architecture-analysis.md` is a
-**draft roadmap, not a description of implemented functionality**. In particular,
-there is currently no standalone Studio UI, production renderer, layout/text engine,
-AI orchestration loop, or HTML/PNG export pipeline.
+**draft roadmap, not a description of implemented functionality**. The Studio already
+has a runnable web workbench, a host-independent layout and text-measurement engine,
+a safe AI editing loop, and HTML/SVG/PNG export prototypes, but none of them are
+production-grade yet: the canvas renders through the DOM, text measurement depends on
+browser font metrics, and the AI path is still limited to a single OpenAI-compatible
+provider.
 
 Before planning or changing the project, read
 `docs/current-project-status.md`. Do not infer that a package or feature exists merely
 because it appears in the target directory tree or a future phase in the architecture
 document. Verify the filesystem, tests, and exported APIs first.
+
+### Studio Package Constraints
+
+- `packages/studio-web` inherits the root tsconfig (`strict: false`), so discriminated-union
+  narrowing on a literal discriminant (`ok: true | false`) does **not** apply there. Keep
+  cross-package APIs narrow-friendly: return a value on success and throw a typed error on
+  failure (for example `migrateDocument()` throws `MigrationError`).
+- The root entry of `packages/design-persistence` must stay browser-safe (no `node:` builtins).
+  The filesystem implementation is published as `@ufira/design-persistence/filesystem`.
+- The document format version lives in `packages/design-schema/src/migrate.ts`
+  (`CURRENT_SCHEMA_VERSION` plus the `MIGRATIONS` step table). Every read path for older
+  documents — repository recovery and JSON import — must call `migrateDocument()` before
+  validation.
 
 ## Legacy Vibma Reference
 

@@ -17,9 +17,22 @@
   联合，字段级错误不再被吞成一句 "Invalid input"（例如 `textAlign: "justify"` 会直接
   报出 `nodes.<id>.textAlign`）；文本节点新增可选的 `fontWeight`（100–900）、`fontStyle`、
   `textAlign`、`letterSpacing`，缺省值统一由 `TEXT_DEFAULTS` 兜底，旧文档无需迁移；
+  文档格式版本升到 **2**，并提供迁移引擎：`CURRENT_SCHEMA_VERSION` 声明当前版本，
+  `MIGRATIONS` 是 `旧版本 → 新版本` 的步骤表（当前登记 v1 → v2），`migrateDocument()`
+  把任意来源的数据升级到当前版本，失败抛 `MigrationError` 并带上原始版本号，
+  成功则把迁移记录写进文档自带的 `migrations` 历史；`detectSchemaVersion()` 负责判断
+  版本，高于当前版本或缺少版本的文档一律拒绝，不猜版本；
 - `packages/design-runtime`：早期命令和运行时原型；`text.patch` 接受并校验上述文本样式字段；
 - `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
-  连续重放已提交事务的崩溃恢复原型；
+  连续重放已提交事务的崩溃恢复原型；仓库契约收敛为单一入口 `contract.ts`：
+  `ProjectRepository` 接口、`ProjectNotFoundError`、快照与事务语义都由它定义，
+  文件系统实现与浏览器实现共用 `loadDocumentPayload()`（迁移 + 校验）、
+  `replayJournal()`（统一的重放与降级判定）、`assertSavableDocument()`、
+  `normalizeAssetHash()`，两边的行为因此不会因为换了存储而改变；两个后端跑同一套
+  契约测试（`contract-suite.ts`：快照往返、重放、断档降级、项目列表、删除、日志裁剪、
+  资产去重、旧版本迁移）；保留策略统一为最近 3 份快照与 200 条事务，另有
+  `pruneJournal()` 主动裁剪；包入口拆成浏览器安全的根入口与
+  `@ufira/design-persistence/filesystem` 子入口，node 内置模块不再进浏览器包；
 - `packages/design-layout`：宿主无关的 absolute/stack 布局原型，支持 fixed、fill、hug、
   padding、gap、对齐、文本测量接口和结构化布局警告；文本测量提供确定性的字符宽度估算器
   与宿主可注入的测量契约（`createHostTextMeasurer`），修复了 hug 文本高度不随可用宽度换行
@@ -50,6 +63,17 @@
   模型和密钥设置入口，但尚未完成真实 Provider 的生产级端到端验证、流式体验和支持矩阵；
   工作台顶部支持项目列表、新建、切换、通过领域命令重命名，以及原子清理项目快照、
   事务和资产的删除操作；
+- 工作台支持自动保存：事务日志即时写入（恢复的依据），快照合并写入（停止输入
+  800ms 后落盘，连续几次编辑只写一份），顶栏实时显示「待自动保存 / 自动保存中 /
+  已自动保存 / 自动保存失败」，页面关闭或切到后台时立即冲刷待写快照；存储配额
+  耗尽会被识别并单独提示（提示导出 JSON 备份），不会被当成普通异常吞掉；
+- 浏览器存储升到格式版本 2：新增 `snapshotHistory` 表保存历史快照（IndexedDB 不允许
+  在升级时改表主键，因此用新表而不是改主键），当前快照加上历史快照共保留最近 3 份，
+  迁移升级前的原始快照不会被覆盖；旧版本数据库直接开库即升级，无需人工操作；
+  打开项目时若存储里的文档是旧格式，会先迁移再回放事务，并在恢复报告里给出
+  `migratedFrom`；文件系统仓库在迁移落盘前把原始文件备份到 `backups/`；
+- JSON 导入带版本检查：旧格式文件会被升级后导入并提示来源版本，更高版本的文件
+  明确拒绝而不是给一句看不懂的校验错误；
 - 画布几何改由 `design-layout` 解析，不再直接读取节点的 `layout` 原始值，因此 hug、fill、
   stack 在编辑器内与导出结果一致；文本测量通过宿主契约注入浏览器 Canvas 字体度量；
 - 图层面板为嵌套树，支持折叠展开、节点类型图标、层级缩进，以及基于 dnd-kit 的拖拽排序
@@ -132,7 +156,13 @@
 - 生产级 AI Provider 体验、流式响应、凭据安全、Reviewer 和完整结构审查闭环；当前已有
   OpenAI-compatible Planner、安全计划、dry-run、可视化确认与提交原型；
 - 独立 Studio 的 MCP adapter；
-- 不依赖 Figma 的端到端设计工作流。
+- 不依赖 Figma 的端到端设计工作流；
+- 导入冲突策略：导入的项目与已有项目同名或同 id 时，还没有"覆盖 / 换 id / 跳过"的
+  选择界面，当前一律分配新 id；
+- 存储配额策略目前只有"识别并提示"，还没有配额监控、占用视图与清理引导；
+- 备份与恢复报告目前只在消息里给出一句话，还没有可导出的恢复报告；
+- 迁移只覆盖了文档格式这一条链路，存储布局版本（文件系统 manifest、浏览器
+  IndexedDB）虽有版本号，但旧布局的迁移步骤尚未成体系。
 
 ## 文档阅读优先级
 

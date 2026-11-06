@@ -9,6 +9,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./filesystem": {
+      "types": "./dist/filesystem.d.ts",
+      "import": "./dist/filesystem.js"
+    },
+    "./contract-suite": {
+      "types": "./dist/contract-suite.d.ts",
+      "import": "./dist/contract-suite.js"
     }
   },
   "scripts": {

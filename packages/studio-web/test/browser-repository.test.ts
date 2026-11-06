@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Dexie from "dexie";
 import { IDBKeyRange, indexedDB } from "fake-indexeddb";
 import { createDocument, defaultAppearance, defaultLayout, type DesignNode } from "@ufira/design-schema";
+import { legacyDocumentPayload, repositoryContractTests } from "@ufira/design-persistence/contract-suite";
 import { DexieProjectRepository } from "../src/browser-repository";
+
+repositoryContractTests("浏览器仓库", async () => {
+  const repository = createRepository();
+  return {
+    repository,
+    seed: async (projectId: string, payload: unknown) => {
+      await repository.storage.snapshots.put({ projectId, revision: 0, document: payload as never });
+    },
+    cleanup: async () => { await repository.deleteDatabase(); },
+  };
+});
 
 test("saves and opens an IndexedDB snapshot", async t => {
   const repository = createRepository(); t.after(() => repository.deleteDatabase());
@@ -65,6 +78,52 @@ test("lists and deletes complete projects", async t => {
   await assert.rejects(repository.open(first.id), /does not exist/);
 });
 
-function createRepository(): DexieProjectRepository { return new DexieProjectRepository({ databaseName: `test-${crypto.randomUUID()}`, indexedDB, IDBKeyRange }); }
+test("migrates a legacy snapshot and keeps the upgraded copy", async t => {
+  const repository = createRepository(); t.after(() => repository.deleteDatabase());
+  await repository.storage.snapshots.put({ projectId: "project:1", revision: 0, document: legacyDocumentPayload() as never });
+
+  const recovered = await repository.open("project:1");
+  assert.equal(recovered.migratedFrom, 1);
+  assert.equal(recovered.document.schemaVersion, 2);
+  const stored = await repository.storage.snapshots.where("projectId").equals("project:1").toArray();
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0]?.document.schemaVersion, 2);
+});
+
+test("keeps only the newest snapshots for a project", async t => {
+  const repository = createRepository(); t.after(() => repository.deleteDatabase());
+  const document = createDocument("project:1", "Demo", "page:1");
+  for (let revision = 0; revision < 5; revision++) {
+    document.revision = revision;
+    await repository.saveSnapshot(document);
+  }
+  const current = await repository.storage.snapshots.get("project:1");
+  assert.equal(current?.revision, 4);
+  const history = await repository.storage.snapshotHistory.where("projectId").equals("project:1").toArray();
+  assert.deepEqual(history.map(item => item.revision).sort(), [2, 3]);
+});
+
+test("upgrades a version 1 database to the version 2 storage layout", async t => {
+  const databaseName = `legacy-${crypto.randomUUID()}`;
+  const legacy = new Dexie(databaseName, { indexedDB, IDBKeyRange });
+  legacy.version(1).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash" });
+  await legacy.open();
+  const document = createDocument("project:1", "Legacy", "page:1");
+  await legacy.table("snapshots").put({ projectId: "project:1", revision: 0, document });
+  await legacy.table("projects").put({ id: "project:1", revision: 0, updatedAt: document.meta.updatedAt });
+  legacy.close();
+
+  const repository = createRepository(databaseName);
+  t.after(() => repository.deleteDatabase());
+  const opened = await repository.open("project:1");
+  assert.equal(opened.document.id, "project:1");
+  assert.equal(opened.document.meta.name, "Legacy");
+
+  const current = await repository.storage.snapshots.get("project:1");
+  assert.equal(current?.revision, 0);
+  assert.deepEqual((await repository.listProjects()).map(item => item.id), ["project:1"]);
+});
+
+function createRepository(databaseName = `test-${crypto.randomUUID()}`): DexieProjectRepository { return new DexieProjectRepository({ databaseName, indexedDB, IDBKeyRange }); }
 function entry(documentId: string, revision: number) { return { commandId: `cmd:${revision}`, documentId, revision, committedAt: new Date(0).toISOString(), actor: { type: "human" as const, id: "test" }, commands: [], warnings: [] }; }
 function frame(id: string): DesignNode { return { id, type: "frame", name: id, parentId: "page:1", childIds: [], visible: true, locked: false, layout: defaultLayout(), appearance: defaultAppearance() }; }

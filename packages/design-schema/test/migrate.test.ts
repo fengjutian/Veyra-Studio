@@ -35,8 +35,6 @@ test("migrates a version 1 document to the current version", () => {
   const legacy = legacyDocument();
   const result = migrateDocument(legacy, { now: "2026-11-06T00:00:00.000Z" });
 
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
   assert.equal(result.fromVersion, 1);
   assert.equal(result.toVersion, CURRENT_SCHEMA_VERSION);
   assert.equal(result.document.schemaVersion, 2);
@@ -48,8 +46,6 @@ test("keeps the node tree intact across a migration", () => {
   const legacy = legacyDocument();
   const result = migrateDocument(legacy);
 
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
   assert.deepEqual(result.document.nodes["node:1"], legacy.nodes["node:1"]);
   assert.deepEqual(result.document.pages["page:1"].childIds, ["node:1"]);
   assert.deepEqual(validateDocument(result.document), result.document);
@@ -69,42 +65,28 @@ test("treats a current version document as already migrated", () => {
   const document = createDocument("doc:1", "Current");
   const result = migrateDocument(document);
 
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
   assert.deepEqual(result.applied, []);
   assert.equal(result.document.schemaVersion, CURRENT_SCHEMA_VERSION);
 });
 
 test("is idempotent", () => {
   const once = migrateDocument(legacyDocument());
-  assert.equal(once.ok, true);
-  if (!once.ok) return;
-
   const twice = migrateDocument(once.document);
-  assert.equal(twice.ok, true);
-  if (!twice.ok) return;
+
   assert.deepEqual(twice.applied, []);
   assert.deepEqual(twice.document.migrations, once.document.migrations);
 });
 
 test("refuses a document from a newer version", () => {
   const future = { ...createDocument("doc:1", "Future"), schemaVersion: CURRENT_SCHEMA_VERSION + 1 };
-  const result = migrateDocument(future);
-
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.error, /高于当前支持的版本/);
-  assert.equal(result.fromVersion, CURRENT_SCHEMA_VERSION + 1);
+  assert.throws(() => migrateDocument(future), /高于当前支持的版本/);
 });
 
 test("refuses a document without a recognisable version", () => {
   const anonymous = { ...createDocument("doc:1", "Anonymous") } as Record<string, unknown>;
   delete anonymous.schemaVersion;
 
-  const result = migrateDocument(anonymous);
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.error, /schemaVersion/);
+  assert.throws(() => migrateDocument(anonymous), /schemaVersion/);
 });
 
 test("reports validation failures of a migrated document", () => {
@@ -112,10 +94,7 @@ test("reports validation failures of a migrated document", () => {
   const broken = { ...legacy, schemaVersion: 1 } as unknown as Record<string, unknown>;
   broken.nodes = { "node:1": { id: "node:1", type: "frame" } };
 
-  const result = migrateDocument(broken);
-  assert.equal(result.ok, false);
-  if (result.ok) return;
-  assert.match(result.error, /Invalid design document/);
+  assert.throws(() => migrateDocument(broken), /Invalid design document/);
 });
 
 test("detects the declared schema version", () => {

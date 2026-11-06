@@ -1,73 +1,30 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createDocument } from "@ufira/design-schema";
 import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
-import { FileSystemProjectRepository, ProjectNotFoundError } from "../src/index";
-
+import { FileSystemProjectRepository } from "../src/filesystem";
+import { legacyDocumentPayload, repositoryContractTests } from "../src/contract-suite";
 async function fixture(t: test.TestContext) {
   const directory = await mkdtemp(join(tmpdir(), "design-persistence-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   return { directory, repository: new FileSystemProjectRepository(directory) };
 }
 
-test("atomically saves and opens a validated snapshot", async t => {
-  const { repository } = await fixture(t);
-  const document = createDocument("project:1", "Demo");
-  await repository.saveSnapshot(document);
-  const opened = await repository.open(document.id);
-  assert.deepEqual(opened.document, document);
-  assert.equal(opened.replayedTransactions, 0);
-  assert.equal(opened.degraded, false);
-});
-
-test("replays committed transactions after the latest valid snapshot", async t => {
-  const { repository } = await fixture(t);
-  const document = createDocument("project:1", "Demo");
-  await repository.saveSnapshot(document);
-
-  const runtime = new DesignRuntime(document);
-  runtime.execute({
-    commandId: "cmd:1",
-    documentId: document.id,
-    baseRevision: 0,
-    actor: { type: "human", id: "user:1" },
-    commands: [{ type: "token.upsert", payload: { name: "color.brand", token: { type: "color", value: "#3366ff" } } }],
-  }, { committedAt: "2026-11-05T08:00:00.000Z" });
-  await repository.appendTransactions(runtime.transactionLog());
-
-  const recovered = await repository.recover(document.id);
-  assert.equal(recovered.document.revision, 1);
-  assert.equal(recovered.document.meta.updatedAt, "2026-11-05T08:00:00.000Z");
-  assert.deepEqual(recovered.document.tokens["color.brand"], { type: "color", value: "#3366ff" });
-  assert.equal(recovered.recoveredFromRevision, 0);
-  assert.equal(recovered.replayedTransactions, 1);
-  assert.equal(recovered.latestKnownRevision, 1);
-  assert.equal(recovered.degraded, false);
-});
-
-test("reports degraded recovery when the transaction journal has a revision gap", async t => {
-  const { repository } = await fixture(t);
-  const document = createDocument("project:1", "Demo");
-  await repository.saveSnapshot(document);
-  await repository.appendTransactions([{
-    commandId: "cmd:2",
-    documentId: document.id,
-    revision: 2,
-    committedAt: "2026-11-05T08:00:00.000Z",
-    actor: { type: "human", id: "user:1" },
-    commands: [{ type: "token.upsert", payload: { name: "color.brand", token: { type: "color", value: "#3366ff" } } }],
-    warnings: [],
-  }]);
-
-  const recovered = await repository.recover(document.id);
-  assert.equal(recovered.document.revision, 0);
-  assert.equal(recovered.replayedTransactions, 0);
-  assert.equal(recovered.latestKnownRevision, 2);
-  assert.equal(recovered.degraded, true);
+repositoryContractTests("文件系统仓库", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "design-persistence-contract-"));
+  return {
+    repository: new FileSystemProjectRepository(directory),
+    seed: async (projectId: string, payload: unknown) => {
+      const snapshots = join(directory, encodeURIComponent(projectId), "snapshots");
+      await mkdir(snapshots, { recursive: true });
+      await writeFile(join(snapshots, "000000000000.json"), JSON.stringify(payload));
+    },
+    cleanup: async () => { await rm(directory, { recursive: true, force: true }); },
+  };
 });
 
 test("falls back to the previous snapshot when the latest is corrupt", async t => {
@@ -82,6 +39,22 @@ test("falls back to the previous snapshot when the latest is corrupt", async t =
   assert.equal(recovered.document.revision, 0);
   assert.equal(recovered.latestKnownRevision, 1);
   assert.equal(recovered.degraded, true);
+});
+
+test("keeps the original file as a backup when a legacy document is migrated", async t => {
+  const { directory, repository } = await fixture(t);
+  const snapshots = join(directory, encodeURIComponent("project:1"), "snapshots");
+  await mkdir(snapshots, { recursive: true });
+  await writeFile(join(snapshots, "000000000000.json"), JSON.stringify(legacyDocumentPayload()));
+
+  const recovered = await repository.open("project:1");
+  assert.equal(recovered.migratedFrom, 1);
+  assert.equal(recovered.document.schemaVersion, 2);
+
+  const backup = await readFile(join(directory, encodeURIComponent("project:1"), "backups", "000000000000.json"), "utf8");
+  assert.equal(JSON.parse(backup).schemaVersion, 1);
+  const migrated = await readFile(join(snapshots, "000000000000.json"), "utf8");
+  assert.equal(JSON.parse(migrated).schemaVersion, 2);
 });
 
 test("stores transaction records in revision order", async t => {
@@ -110,7 +83,12 @@ test("deduplicates assets by verified SHA-256 hash", async t => {
   await assert.rejects(repository.putAsset("project:1", { hash: "0".repeat(64), bytes }), /hash mismatch/);
 });
 
-test("reports missing projects", async t => {
-  const { repository } = await fixture(t);
-  await assert.rejects(repository.open("missing"), ProjectNotFoundError);
+test("records the storage layout version in the manifest", async t => {
+  const { directory, repository } = await fixture(t);
+  const document = createDocument("project:1", "Demo");
+  await repository.saveSnapshot(document);
+  const manifest = JSON.parse(await readFile(join(directory, encodeURIComponent(document.id), "manifest.json"), "utf8"));
+  assert.equal(manifest.storageVersion, 2);
+  assert.equal(manifest.documentSchemaVersion, 2);
+  assert.equal(manifest.name, "Demo");
 });
