@@ -1,4 +1,4 @@
-import { validateDocument, type DesignDocument, type DesignNode, type NodeId, type TextNode } from "@ufira/design-schema";
+import { resolveGap, validateDocument, type DesignDocument, type DesignNode, type NodeId, type TextNode } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
 
@@ -49,7 +49,7 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     }
     if (node.layout.mode === "stack") {
       const horizontal = node.layout.direction === "horizontal";
-      const gap = node.layout.gap ?? 0;
+      const gap = resolveGap(document, node);
       const main = children.reduce((sum, child) => sum + (horizontal ? child.size.width : child.size.height), 0)
         + Math.max(0, children.length - 1) * gap;
       const cross = children.reduce((max, child) => Math.max(max, horizontal ? child.size.height : child.size.width), 0);
@@ -107,7 +107,7 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     const horizontal = node.layout.direction === "horizontal";
     const mainAvailable = horizontal ? contentWidth : contentHeight;
     const crossAvailable = horizontal ? contentHeight : contentWidth;
-    const gap = node.layout.gap ?? 0;
+    const gap = resolveGap(document, node);
     const children = node.childIds.map(id => document.nodes[id]);
     const fillChildren = children.filter(child => (horizontal ? child.layout.widthMode : child.layout.heightMode) === "fill");
     const fixedMain = children

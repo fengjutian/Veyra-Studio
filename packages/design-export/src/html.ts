@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, resolveRadius, resolveStroke, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -49,7 +49,7 @@ function renderNode(
   keep?: Set<string>,
 ): string {
   const node = document.nodes[nodeId];
-  const style = nodeStyle(node, parent, tokenVariables, options.origin);
+  const style = nodeStyle(document, node, parent, tokenVariables, options.origin);
   const common = `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
 
   if (node.type === "text") return `<p ${common}>${escapeHtml(node.text)}</p>`;
@@ -77,7 +77,7 @@ function renderNode(
   return `<div ${common}>${children ? `\n${indent(children)}\n` : ""}</div>`;
 }
 
-function nodeStyle(node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
+function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
   const declarations: string[] = [];
   const inStack = parent?.layout.mode === "stack";
   if (!inStack) {
@@ -94,8 +94,10 @@ function nodeStyle(node: DesignNode, parent: DesignNode | undefined, tokenVariab
   declarations.push(`opacity:${node.appearance.opacity}`);
   if (!node.visible) declarations.push("display:none");
   if (node.appearance.fill) declarations.push(`background:${boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables)}`);
-  if (node.appearance.stroke) declarations.push(`border:1px solid ${boundValue(node.bindings?.stroke, node.appearance.stroke, tokenVariables)}`);
-  if (node.appearance.cornerRadius !== undefined) declarations.push(`border-radius:${px(node.appearance.cornerRadius)}`);
+  // 描边和圆角都可以由 token 驱动；绑定存在但节点没写 fallback 时同样要输出。
+  if (resolveStroke(document, node) || node.bindings?.stroke) declarations.push(`border:1px solid ${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
+  const radius = resolveRadius(document, node);
+  if (radius !== undefined) declarations.push(`border-radius:${px(radius)}`);
 
   if (node.type === "text") {
     declarations.push(`font-family:${cssString(node.fontFamily)}`, `font-size:${px(node.fontSize)}`, `line-height:${px(node.lineHeight)}`, "white-space:pre-wrap", "margin:0");

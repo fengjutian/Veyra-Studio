@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, resolveRadius, resolveStroke, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -92,7 +92,7 @@ function renderNode(
   // 布局引擎给出的坐标是页面绝对坐标，所以导出原点对所有节点统一平移。
   const raw = boxes[nodeId] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
   const box = shiftBox(raw, options.origin);
-  const style = nodeStyle(node, tokenVariables);
+  const style = nodeStyle(document, node, tokenVariables);
   const common = `data-node-id="${escapeXml(node.id)}" style="${escapeXml(style)}"`;
 
   if (node.type === "text") {
@@ -122,7 +122,7 @@ function renderNode(
   }
 
   const children = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep);
-  const radius = node.appearance.cornerRadius ?? 0;
+  const radius = resolveRadius(document, node) ?? 0;
 
   if (node.type === "ellipse") {
     return `<ellipse ${common} cx="${num(box.x + box.width / 2)}" cy="${num(box.y + box.height / 2)}" rx="${num(box.width / 2)}" ry="${num(box.height / 2)}" />${children ? `\n${indent(children, 2)}\n` : ""}`;
@@ -153,12 +153,12 @@ function shiftBox(box: ComputedBox, origin?: { x: number; y: number }): Computed
   return { ...box, x: box.x - origin.x, y: box.y - origin.y };
 }
 
-function nodeStyle(node: DesignNode, tokenVariables: Record<string, string>): string {
+function nodeStyle(document: DesignDocument, node: DesignNode, tokenVariables: Record<string, string>): string {
   const declarations: string[] = [];
   declarations.push(`opacity:${num(node.appearance.opacity)}`);
   declarations.push(`fill:${node.appearance.fill ? boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables) : "none"}`);
-  if (node.appearance.stroke) {
-    declarations.push(`stroke:${boundValue(node.bindings?.stroke, node.appearance.stroke, tokenVariables)}`);
+  if (resolveStroke(document, node) || node.bindings?.stroke) {
+    declarations.push(`stroke:${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
     declarations.push("stroke-width:1");
   }
   if (node.type === "text") {

@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExt
 import { createRoot } from "react-dom/client";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, migrateDocument, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
+import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, migrateDocument, resolveRadius, resolveStroke, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -921,10 +921,10 @@ function CanvasNode({ projectId, document, node, selectedIds, layout, onSelect, 
     width: box.width,
     height: box.height,
     background: resolveFill(document, node),
-    borderRadius: node.type === "ellipse" ? "50%" : node.appearance.cornerRadius,
+    borderRadius: node.type === "ellipse" ? "50%" : resolveRadius(document, node),
     opacity: node.appearance.opacity,
   };
-  if (node.appearance.stroke) style.border = `1px solid ${node.appearance.stroke}`;
+  const stroke = resolveStroke(document, node);`n  if (stroke || node.bindings?.stroke) style.border = `1px solid ${stroke ?? "transparent"}`;
   // 锁定节点在画布上不接收指针事件：点击穿透到它下面/父级，只能从图层面板选中。
   if (node.locked) style.pointerEvents = "none";
   if (node.type === "image") {
