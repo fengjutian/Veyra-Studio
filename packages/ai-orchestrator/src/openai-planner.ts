@@ -2,10 +2,16 @@ import { parsePlanResponse } from "./plan-parser";
 import { buildPlannerPrompt } from "./prompt";
 import type { AbortSignalLike, AiCommandPlan, AiPlanRequest, AiPlanner } from "./safe-ai-editor";
 
+export interface StreamReaderLike {
+  read(): Promise<{ done: boolean; value?: Uint8Array }>;
+}
+
 export interface FetchResponseLike {
   ok: boolean;
   status: number;
   text(): Promise<string>;
+  /** 流式响应体；网关支持 SSE 时会给出。 */
+  body?: { getReader(): StreamReaderLike } | null;
 }
 
 export interface FetchInitLike {
@@ -54,6 +60,8 @@ export interface OpenAiCompatiblePlannerOptions {
   maxTokens?: number;
   /** 打开后请求会带 response_format: json_object，部分兼容服务不支持 */
   jsonMode?: boolean;
+  /** 用 SSE 流式接收回复；每段增量通过 `request.onDelta` 回调。 */
+  stream?: boolean;
   timeoutMs?: number;
   /** 失败后最多再试几次（只对网络错误、408/429/5xx 生效）。默认 2。 */
   retries?: number;
@@ -97,16 +105,23 @@ export function createOpenAiCompatiblePlanner(options: OpenAiCompatiblePlannerOp
       if (options.temperature !== undefined) body.temperature = options.temperature;
       if (options.maxTokens !== undefined) body.max_tokens = options.maxTokens;
       if (options.jsonMode) body.response_format = { type: "json_object" };
+      if (options.stream) body.stream = true;
 
       const headers: Record<string, string> = { "Content-Type": "application/json", ...options.headers };
       if (options.apiKey?.trim()) headers.Authorization = `Bearer ${options.apiKey.trim()}`;
 
       const signal = request.signal ?? options.signal;
-      const raw = await post(endpoint, headers, body, options, retries, retryDelayMs, signal);
-      const content = extractContent(raw);
-      return parsePlanResponse(content);
+      const { raw, content } = await post(endpoint, headers, body, options, retries, retryDelayMs, signal, request.onDelta);
+      return parsePlanResponse(content ?? extractContent(raw));
     },
   };
+}
+
+interface PostResult {
+  /** 非流式响应的原始 JSON。 */
+  raw: string;
+  /** 流式响应累积出来的回复文本。 */
+  content?: string;
 }
 
 async function post(
@@ -117,15 +132,19 @@ async function post(
   retries: number,
   retryDelayMs: number,
   signal: AbortSignalLike | undefined,
-): Promise<string> {
+  onDelta: ((delta: string, fullText: string) => void) | undefined,
+): Promise<PostResult> {
   const fetchImpl = options.fetch ?? resolveGlobalFetch();
   if (!fetchImpl) throw new AiProviderError("当前环境没有可用的 fetch，无法调用模型服务");
+  // 已经吐出增量的请求不能重试：重试会让用户看到重复的半截内容。
+  const state = { emitted: false };
+  const handleDelta = onDelta ? (delta: string, fullText: string) => { state.emitted = true; onDelta(delta, fullText); } : undefined;
 
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await postOnce(fetchImpl, endpoint, headers, body, options, signal);
+      return await postOnce(fetchImpl, endpoint, headers, body, options, signal, handleDelta, state);
     } catch (error) {
-      const canRetry = error instanceof AiProviderError && error.retryable && attempt < retries;
+      const canRetry = error instanceof AiProviderError && error.retryable && attempt < retries && !state.emitted;
       if (!canRetry) throw error;
       await wait(retryDelayMs * 2 ** attempt, signal);
     }
@@ -139,7 +158,9 @@ async function postOnce(
   body: Record<string, unknown>,
   options: OpenAiCompatiblePlannerOptions,
   signal: AbortSignalLike | undefined,
-): Promise<string> {
+  onDelta: ((delta: string, fullText: string) => void) | undefined,
+  state: { emitted: boolean },
+): Promise<PostResult> {
   if (signal?.aborted) throw new AiCancelledError();
   const controller = resolveAbortController();
   const timeoutMs = options.timeoutMs ?? 60000;
@@ -166,6 +187,22 @@ async function postOnce(
     signal?.removeEventListener?.("abort", onAbort);
   }
 
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    throw new AiProviderError(`模型服务返回 ${response.status}：${raw.slice(0, 300)}`, response.status, isRetryableStatus(response.status));
+  }
+
+  if (options.stream && response.body) {
+    try {
+      const content = await readSse(response.body, onDelta);
+      return { raw: "", content };
+    } catch (error) {
+      if (signal?.aborted) throw new AiCancelledError();
+      if (timedOut) throw new AiTimeoutError(timeoutMs);
+      throw new AiProviderError(`读取模型响应失败：${describeError(error)}`, response.status, !state.emitted);
+    }
+  }
+
   let raw: string;
   try {
     raw = await response.text();
@@ -174,10 +211,72 @@ async function postOnce(
     if (timedOut) throw new AiTimeoutError(timeoutMs);
     throw new AiProviderError(`读取模型响应失败：${describeError(error)}`, response.status, true);
   }
-  if (!response.ok) {
-    throw new AiProviderError(`模型服务返回 ${response.status}：${raw.slice(0, 300)}`, response.status, isRetryableStatus(response.status));
+  return { raw };
+}
+
+/**
+ * 读取 SSE 流并拼出完整回复。
+ *
+ * 只认 `data:` 行；`[DONE]` 之后的内容一律忽略。无法解析的行跳过而不是报错——
+ * 不同网关会插入自己的事件（注释、心跳），一条不认识的事件不该毁掉整次生成。
+ */
+async function readSse(body: { getReader(): StreamReaderLike }, onDelta: ((delta: string, fullText: string) => void) | undefined): Promise<string> {
+  const Decoder = (globalThis as { TextDecoder?: new () => { decode(input?: Uint8Array, options?: { stream?: boolean }): string } }).TextDecoder;
+  if (!Decoder) throw new AiProviderError("当前环境不支持流式解码（缺少 TextDecoder）");
+  const decoder = new Decoder();
+  const reader = body.getReader();
+  let buffer = "";
+  let content = "";
+  let done = false;
+
+  const consume = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const payload = trimmed.slice(5).trim();
+    if (!payload || payload === "[DONE]") return;
+    const delta = deltaContent(payload);
+    if (!delta) return;
+    content += delta;
+    onDelta?.(delta, content);
+  };
+
+  while (!done) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: true });
+    let index = buffer.indexOf("\n");
+    while (index >= 0) {
+      consume(buffer.slice(0, index));
+      buffer = buffer.slice(index + 1);
+      index = buffer.indexOf("\n");
+    }
   }
-  return raw;
+  buffer += decoder.decode();
+  if (buffer) consume(buffer);
+  return content;
+}
+
+/** 从一条 SSE 事件的 JSON 里取出增量文本。 */
+function deltaContent(payload: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const choice = (parsed as { choices?: unknown }).choices;
+  if (!Array.isArray(choice) || !choice.length) return undefined;
+  const first = choice[0] as { delta?: { content?: unknown }; message?: { content?: unknown }; text?: unknown };
+  const content = first.delta?.content ?? first.message?.content ?? first.text;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map(part => (typeof part === "object" && part !== null ? (part as { text?: unknown }).text : undefined))
+      .filter((part): part is string => typeof part === "string")
+      .join("");
+  }
+  return undefined;
 }
 
 /** 只有这些状态码值得重试：限流、超时和上游故障。4xx 是请求本身的问题，重试没用。 */

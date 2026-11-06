@@ -16,10 +16,18 @@ export interface AiPlanRequest {
   selectedNodeIds: NodeId[];
   /** 取消信号：规划过程中用户点「取消」时透传给 Planner。 */
   signal?: AbortSignalLike;
+  /**
+   * 流式增量回调。
+   *
+   * Planner 支持流式时会边收边调；参数是本次增量与累计文本，界面可以只做
+   * "追加显示"，不必自己拼。不支持流式的 Planner 不会调用它。
+   */
+  onDelta?(delta: string, fullText: string): void;
 }
 
 export interface CreatePlanOptions {
   signal?: AbortSignalLike;
+  onDelta?(delta: string, fullText: string): void;
 }
 
 export interface AiCommandPlan {
@@ -90,6 +98,7 @@ export class SafeAiEditor {
       document: structuredClone(document),
       selectedNodeIds: [...selectedNodeIds],
       ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.onDelta ? { onDelta: options.onDelta } : {}),
     });
     if (!planned.summary.trim()) throw new Error("AI plan summary cannot be empty");
     if (planned.commands.length === 0) throw new Error("AI plan must contain at least one command");
