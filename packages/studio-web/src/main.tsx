@@ -900,8 +900,10 @@ function App() {
       </div>
       <Tabs.Root className="inspector-tabs-root" value={inspectorTab} onValueChange={value => setInspectorTab(value as InspectorTabId)}>
         <Tabs.List className="inspector-tabs" aria-label="右侧面板分段">
+          {/* Radix 的 roving focus 只在值变化后才把选中项设成 tabIndex=0，
+              首次挂载时整排都是 -1，键盘 Tab 进不了分段栏；这里按当前值显式补上。 */}
           {inspectorTabRows.map(tab => (
-            <Tabs.Trigger key={tab.id} value={tab.id} className="inspector-tab">
+            <Tabs.Trigger key={tab.id} value={tab.id} className="inspector-tab" tabIndex={inspectorTab === tab.id ? 0 : -1}>
               {tab.label}
               {tab.badge ? <span className="inspector-tab-badge">{tab.badge}</span> : null}
             </Tabs.Trigger>

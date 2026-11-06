@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { componentDependencies, componentReachability, createDocument, findOwningComponentId, overridableFields, wouldCreateComponentCycle, type DesignDocument, type DesignNode } from "../src/index";
+import { componentDependencies, componentReachability, createDocument, exposedOverrideTargets, findOwningComponentId, overridableFields, wouldCreateComponentCycle, type DesignDocument, type DesignNode } from "../src/index";
 
 function frame(id: string, parentId: string): DesignNode {
   return {
@@ -83,4 +83,38 @@ test("override field contract depends on the node type", () => {
   assert.deepEqual(overridableFields(text), ["text", "name", "visible", "appearance"]);
   assert.deepEqual(overridableFields(frame("f", "page:1")), ["name", "visible", "appearance"]);
   assert.deepEqual(overridableFields(instance("i", "page:1", "component:x")), ["name", "visible", "appearance"]);
+});
+
+test("lists the override targets exposed by an instance", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  const instance = instance("instance:1", "page:1", "component:card");
+  const labelCopy = { ...frame("instance:1--label", "instance:1"), type: "text", text: "副本", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
+  const boxCopy = frame("instance:1--box", "instance:1");
+  const slotCopy = { ...frame("instance:1--slot--x", "instance:1"), type: "text", text: "插槽", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
+  (instance as { childIds: string[] }).childIds = [labelCopy.id, boxCopy.id, slotCopy.id];
+  const labelSource = { ...frame("label", "card"), type: "text", text: "标题", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
+  const boxSource = frame("box", "card");
+  const card = componentRoot("card");
+  card.childIds = ["label", "box"];
+  document.nodes = {
+    "page:1": undefined as never,
+    ...{},
+  } as never;
+  document.nodes = { "card": card, "label": labelSource, "box": boxSource, "instance:1": instance, "instance:1--label": labelCopy, "instance:1--box": boxCopy, "instance:1--slot--x": slotCopy } as never;
+  document.pages["page:1"].childIds = ["card", "instance:1"];
+  document.components = { "component:card": { id: "component:card", name: "Card", rootNodeId: "card" } };
+
+  const targets = exposedOverrideTargets(document, "instance:1");
+  assert.deepEqual(targets.map(target => target.sourceNodeId), ["box", "label"]);
+  assert.deepEqual(targets.find(target => target.sourceNodeId === "label")?.fields, ["text", "name", "visible", "appearance"]);
+  assert.equal(targets.find(target => target.sourceNodeId === "label")?.defaultText, "标题");
+  assert.deepEqual(targets.find(target => target.sourceNodeId === "box")?.fields, ["name", "visible", "appearance"]);
+  // 插槽内容不是组件参数。
+  assert.equal(targets.some(target => target.sourceNodeId.includes("slot")), false);
+});
+
+test("exposed targets are empty for non-instances", () => {
+  const document = documentWithNesting();
+  assert.deepEqual(exposedOverrideTargets(document, "a-root"), []);
+  assert.deepEqual(exposedOverrideTargets(document, "missing"), []);
 });

@@ -1,4 +1,4 @@
-import type { DesignDocument, DesignNode, NodeId } from "./types";
+import type { DesignDocument, DesignNode, NodeId, NodeType } from "./types";
 
 /**
  * 组件依赖图。
@@ -78,4 +78,56 @@ export type OverrideField = "text" | "name" | "visible" | "appearance";
 
 export function overridableFields(node: DesignNode): OverrideField[] {
   return node.type === "text" ? ["text", "name", "visible", "appearance"] : ["name", "visible", "appearance"];
+}
+
+/** 一个实例对外暴露的可覆盖目标（组件定义里的源节点）。 */
+export interface ExposedPropertyTarget {
+  sourceNodeId: NodeId;
+  nodeType: NodeType;
+  /** 组件定义里的节点名，作为界面标签。 */
+  name: string;
+  /** 这个节点允许覆盖的字段。 */
+  fields: OverrideField[];
+  /** 组件定义里的默认文本；非文本节点没有。 */
+  defaultText?: string;
+}
+
+/**
+ * 列出实例可覆盖的属性目标。
+ *
+ * 只包含组件定义物化出来的节点（`instanceId--sourceId`），插槽内容不算——
+ * 那是用户填进去的，不是组件的参数。返回顺序按源节点 id 排序，保证稳定。
+ * 这份清单就是 UI、AI 和外部集成共同使用的"属性暴露"契约。
+ */
+export function exposedOverrideTargets(document: DesignDocument, instanceId: NodeId): ExposedPropertyTarget[] {
+  const instance = document.nodes[instanceId];
+  if (!instance || instance.type !== "instance") return [];
+  const definition = document.components[instance.componentId];
+  if (!definition) return [];
+
+  const prefix = `${instanceId}--`;
+  const targets: ExposedPropertyTarget[] = [];
+  const visited = new Set<NodeId>();
+  const walk = (id: NodeId): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = document.nodes[id];
+    if (!node) return;
+    if (id.startsWith(prefix) && !id.includes("--slot--")) {
+      const sourceNodeId = id.slice(prefix.length);
+      const source = document.nodes[sourceNodeId];
+      if (source) {
+        targets.push({
+          sourceNodeId,
+          nodeType: source.type,
+          name: source.name,
+          fields: overridableFields(source),
+          ...(source.type === "text" ? { defaultText: source.text } : {}),
+        });
+      }
+    }
+    for (const childId of node.childIds) walk(childId);
+  };
+  walk(instanceId);
+  return targets.sort((left, right) => left.sourceNodeId.localeCompare(right.sourceNodeId));
 }

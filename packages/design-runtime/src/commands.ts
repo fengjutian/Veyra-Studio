@@ -206,7 +206,8 @@ export type DesignCommand =
   | FillSlotCommand
   | ComponentOverrideCommand
   | ResetComponentOverrideCommand
-  | ResetAllComponentOverridesCommand;
+  | ResetAllComponentOverridesCommand
+  | DetachManyComponentsCommand;
 
 export interface CommandEnvelope {
   commandId: string;
@@ -247,4 +248,10 @@ export interface TransactionEntry {
 export interface ResetAllComponentOverridesCommand {
   type: "component.resetOverrides";
   payload: { instanceId: NodeId; sourceNodeIds?: NodeId[] };
+}
+
+/** 一次把多个实例脱离成普通 frame（同一个事务，任一失败整批回滚）。 */
+export interface DetachManyComponentsCommand {
+  type: "component.detachMany";
+  payload: { ids: NodeId[] };
 }

@@ -194,6 +194,7 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.remove": return removeComponent(document, command.payload.id);
     case "component.instantiate": return instantiateComponent(document, command.payload.node, command.payload.index);
     case "component.detach": return detachComponent(document, command.payload.id);
+    case "component.detachMany": return detachComponents(document, command.payload.ids);
     case "slot.fill": return fillSlot(document, command.payload);
     case "component.override": return overrideInstanceNode(document, command.payload);
     case "component.resetOverride": return resetInstanceOverride(document, command.payload);
@@ -284,12 +285,25 @@ function createComponent(document: DesignDocument, componentId: string, nodeId: 
  * 也不会产生新的节点 id（画布选中、布局结果和撤销历史都保持稳定）。
  */
 function detachComponent(document: DesignDocument, id: NodeId): void {
-  const node = requireNode(document, id);
-  if (node.type !== "instance") throw new CommandError(`Node ${id} is not a component instance`);
+  detachOne(document, requireNode(document, id));
+}
+
+/** 批量脱离：先全部校验再改，任何一个不是实例都整批失败（事务本身也会回滚）。 */
+function detachComponents(document: DesignDocument, ids: NodeId[]): void {
+  if (!ids.length) throw new CommandError("component.detachMany requires at least one id");
+  const unique = [...new Set(ids)];
+  for (const node of unique.map(id => requireNode(document, id))) {
+    if (node.type !== "instance") throw new CommandError(`Node ${node.id} is not a component instance`);
+  }
+  for (const id of unique) detachOne(document, requireNode(document, id));
+}
+
+function detachOne(document: DesignDocument, node: DesignNode): void {
+  if (node.type !== "instance") throw new CommandError(`Node ${node.id} is not a component instance`);
   const detached = { ...structuredClone(node), type: "frame" as const };
   delete (detached as { componentId?: string }).componentId;
   delete (detached as { overrides?: Record<string, unknown> }).overrides;
-  document.nodes[id] = detached;
+  document.nodes[node.id] = detached;
 }
 
 /**
