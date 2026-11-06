@@ -33,6 +33,23 @@ export function nudgeNodes(nodes: DesignNode[], dx: number, dy: number): LayoutC
   }));
 }
 
+/**
+ * 自动布局子节点的键盘微移。
+ *
+ * stack 容器里子节点的 x/y 由布局引擎算，改 layout 是无效的。方向键在这种
+ * 容器里改为调整顺序：向左/上移到前一个位置，向右/下移到后一个位置。
+ * 到达边界时返回 undefined（已经是第一个/最后一个）。
+ */
+export function nudgeReorder(ownerChildIds: readonly string[], id: string, dx: number, dy: number): number | undefined {
+  const index = ownerChildIds.indexOf(id);
+  if (index < 0) return undefined;
+  const direction = Math.sign(dx) || Math.sign(dy);
+  if (direction === 0) return undefined;
+  const next = index + direction;
+  if (next < 0 || next >= ownerChildIds.length || next === index) return undefined;
+  return next;
+}
+
 function distribute(nodes: DesignNode[], axis: "x" | "y"): LayoutChange[] {
   if (nodes.length < 3) return [];
   const size = axis === "x" ? "width" : "height";

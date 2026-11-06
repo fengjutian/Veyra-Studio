@@ -46,6 +46,8 @@ export function pasteNodeTrees(
     if (isRoot) {
       node.name = `${node.name} 副本`;
       node.layout = { ...node.layout, x: node.layout.x + offset, y: node.layout.y + offset };
+      // 副本是一份新对象，用户接下来就要动它；沿用锁定会让它刚粘出来就动不了。
+      node.locked = false;
     }
     commands.push({ type: "node.create", payload: { node } });
     source.childIds.forEach(childId => visit(childId, id, false));

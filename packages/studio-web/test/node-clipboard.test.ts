@@ -35,8 +35,21 @@ test("preserves the order of multiple selected roots", () => {
   assert.deepEqual(pasted.rootIds, ["new:second", "new:first"]);
 });
 
-function envelope(baseRevision: number, commands: Parameters<DesignRuntime["execute"]>[0]["commands"]) {
-  return { commandId: crypto.randomUUID(), documentId: "doc:1", baseRevision, actor: { type: "human" as const, id: "test" }, commands };
+test("粘贴出来的根节点会被解锁，副本可以直接继续编辑", () => {
+  const document = createDocument("doc:1", "Demo");
+  const locked = { ...frame("locked", "page:1", 10, 10), locked: true, name: "锁定对象" };
+  document.nodes.locked = locked;
+  document.pages["page:1"]!.childIds = ["locked"];
+
+  const clipboard = copyNodeTrees(document, ["locked"]);
+  const pasted = pasteNodeTrees(clipboard, "page:1");
+  const created = pasted.commands.find(command => command.type === "node.create");
+  assert.equal(created?.type, "node.create");
+  assert.equal(created.type === "node.create" ? created.payload.node.locked : undefined, false);
+  assert.equal(created.type === "node.create" ? created.payload.node.name : undefined, "锁定对象 副本");
+});
+
+function envelope(baseRevision: number, commands: Parameters<DesignRuntime["execute"]>[0]["commands"]) {  return { commandId: crypto.randomUUID(), documentId: "doc:1", baseRevision, actor: { type: "human" as const, id: "test" }, commands };
 }
 
 function frame(id: string, parentId: string, x: number, y: number): DesignNode {

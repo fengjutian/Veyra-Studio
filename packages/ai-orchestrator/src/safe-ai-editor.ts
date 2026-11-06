@@ -1,4 +1,4 @@
-import type { DesignCommand, CommandEnvelope, CommandResult } from "@ufira/design-runtime";
+import type { DesignCommand, CommandEnvelope } from "@ufira/design-runtime";
 import type { DesignDocument, NodeId } from "@ufira/design-schema";
 import type { StudioExecuteResult, StudioProject } from "@ufira/studio-application";
 
