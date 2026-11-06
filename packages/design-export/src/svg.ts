@@ -1,5 +1,6 @@
 import { computePageLayout, type ComputedBox, type TextMeasurer } from "@ufira/design-layout";
 import { TEXT_DEFAULTS, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
 /**
@@ -18,7 +19,10 @@ export function exportPageToSvg(documentInput: DesignDocument, options: SvgExpor
   const diagnostics: ExportDiagnostic[] = [];
   const tokenVariables = createTokenVariables(document);
   const boxes = resolveBoxes(document, options, diagnostics);
-  const body = page.childIds.map(id => renderNode(document, id, boxes, options, tokenVariables, diagnostics)).join("\n");
+  const keep = options.nodeIds ? exportNodeSet(document, options.nodeIds) : undefined;
+  const body = exportRootIds(document, options.pageId, keep)
+    .map(id => renderNode(document, id, boxes, options, tokenVariables, diagnostics, keep))
+    .join("\n");
   const title = escapeXml(options.title ?? `${document.meta.name} — ${page.name}`);
 
   const svg = [
@@ -74,6 +78,7 @@ function renderNode(
   options: SvgExportOptions,
   tokenVariables: Record<string, string>,
   diagnostics: ExportDiagnostic[],
+  keep?: Set<string>,
 ): string {
   const node = document.nodes[nodeId];
   if (!node) return "";
@@ -82,7 +87,9 @@ function renderNode(
     return "";
   }
 
-  const box = boxes[nodeId] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
+  // 布局引擎给出的坐标是页面绝对坐标，所以导出原点对所有节点统一平移。
+  const raw = boxes[nodeId] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
+  const box = shiftBox(raw, options.origin);
   const style = nodeStyle(node, tokenVariables);
   const common = `data-node-id="${escapeXml(node.id)}" style="${escapeXml(style)}"`;
 
@@ -112,7 +119,7 @@ function renderNode(
     diagnostics.push({ nodeId, feature: "component-instance", support: "approximated", message: "Instance export uses the materialized instance children" });
   }
 
-  const children = renderChildren(document, node, boxes, options, tokenVariables, diagnostics);
+  const children = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep);
   const radius = node.appearance.cornerRadius ?? 0;
 
   if (node.type === "ellipse") {
@@ -129,11 +136,19 @@ function renderChildren(
   options: SvgExportOptions,
   tokenVariables: Record<string, string>,
   diagnostics: ExportDiagnostic[],
+  keep?: Set<string>,
 ): string {
   return node.childIds
-    .map(childId => renderNode(document, childId, boxes, options, tokenVariables, diagnostics))
+    .filter(id => !keep || keep.has(id))
+    .map(childId => renderNode(document, childId, boxes, options, tokenVariables, diagnostics, keep))
     .filter(Boolean)
     .join("\n");
+}
+
+/** 把页面绝对坐标平移到导出视口的坐标系。 */
+function shiftBox(box: ComputedBox, origin?: { x: number; y: number }): ComputedBox {
+  if (!origin) return box;
+  return { ...box, x: box.x - origin.x, y: box.y - origin.y };
 }
 
 function nodeStyle(node: DesignNode, tokenVariables: Record<string, string>): string {

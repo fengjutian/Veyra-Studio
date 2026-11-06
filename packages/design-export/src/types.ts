@@ -15,6 +15,10 @@ export interface HtmlExportOptions {
   viewport: { width: number; height: number };
   title?: string;
   resolveAsset?: (asset: AssetMetadata) => string | undefined;
+  /** 只导出包含这些节点的分支；不传则导出整页。 */
+  nodeIds?: string[];
+  /** 视口原点：导出坐标会减去该偏移，用来把选区裁剪到画布左上角。 */
+  origin?: { x: number; y: number };
 }
 
 export interface HtmlExportResult {
@@ -31,6 +35,10 @@ export interface SvgExportOptions {
   title?: string;
   resolveAsset?: (asset: AssetMetadata) => string | undefined;
   textMeasurer?: TextMeasurer;
+  /** 只导出包含这些节点的分支；不传则导出整页。 */
+  nodeIds?: string[];
+  /** 视口原点：导出坐标会减去该偏移，用来把选区裁剪到画布左上角。 */
+  origin?: { x: number; y: number };
 }
 
 export interface SvgExportResult {

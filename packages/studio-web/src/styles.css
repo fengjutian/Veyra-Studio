@@ -79,3 +79,4 @@ button.icon-only{padding:5px;min-width:26px}
 .canvas-scroller.panning{cursor:grabbing}
 .canvas.pan-mode{pointer-events:none}
 .canvas-controls .icon-only.active{border-color:#8b5cf6;background:#4c1d95;color:#c4b5fd}
+.export-scope{min-width:104px;border:1px solid #363d4b;border-radius:7px;background:#242936;color:#e7e9ee;padding:6px 8px;font-size:12px}

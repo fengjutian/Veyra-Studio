@@ -87,3 +87,24 @@ export function contentBounds(boxes: Record<string, ComputedBox>): { x: number; 
   if (!Number.isFinite(minX)) return undefined;
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
+
+/**
+ * Returns the bounding box of a selection.
+ *
+ * The layout engine reports absolute page coordinates, so the box can be used
+ * directly as the viewport and origin of a selection export. Nodes without a
+ * resolved box are ignored; when nothing is left the caller exports the page.
+ */
+export function selectionBounds(boxes: Record<string, ComputedBox>, nodeIds: readonly string[]): { x: number; y: number; width: number; height: number } | undefined {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const id of nodeIds) {
+    const box = boxes[id];
+    if (!box || box.width <= 0 || box.height <= 0) continue;
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
+  }
+  if (!Number.isFinite(minX)) return undefined;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}

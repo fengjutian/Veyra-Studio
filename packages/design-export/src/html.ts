@@ -1,4 +1,5 @@
 import { TEXT_DEFAULTS, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
 const ZERO_PADDING = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -12,7 +13,10 @@ export function exportPageToHtml(documentInput: DesignDocument, options: HtmlExp
   const diagnostics: ExportDiagnostic[] = [];
   const tokenVariables = createTokenVariables(document);
   const css = buildCss(document, options, tokenVariables);
-  const body = page.childIds.map(id => renderNode(document, id, undefined, options, tokenVariables, diagnostics)).join("\n");
+  const keep = options.nodeIds ? exportNodeSet(document, options.nodeIds) : undefined;
+  const body = exportRootIds(document, options.pageId, keep)
+    .map(id => renderNode(document, id, undefined, options, tokenVariables, diagnostics, keep))
+    .join("\n");
   const title = escapeHtml(options.title ?? `${document.meta.name} — ${page.name}`);
   const html = `<main class="design-page" data-page-id="${escapeAttribute(page.id)}">${body ? `\n${indent(body)}\n` : ""}</main>`;
   const output = [
@@ -42,9 +46,10 @@ function renderNode(
   options: HtmlExportOptions,
   tokenVariables: Record<string, string>,
   diagnostics: ExportDiagnostic[],
+  keep?: Set<string>,
 ): string {
   const node = document.nodes[nodeId];
-  const style = nodeStyle(node, parent, tokenVariables);
+  const style = nodeStyle(node, parent, tokenVariables, options.origin);
   const common = `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
 
   if (node.type === "text") return `<p ${common}>${escapeHtml(node.text)}</p>`;
@@ -65,15 +70,22 @@ function renderNode(
     diagnostics.push({ nodeId, feature: "component-instance", support: "approximated", message: "Instance export currently uses only materialized instance children" });
   }
 
-  const children = node.childIds.map(id => renderNode(document, id, node, options, tokenVariables, diagnostics)).join("\n");
+  const children = node.childIds
+    .filter(id => !keep || keep.has(id))
+    .map(id => renderNode(document, id, node, options, tokenVariables, diagnostics, keep))
+    .join("\n");
   return `<div ${common}>${children ? `\n${indent(children)}\n` : ""}</div>`;
 }
 
-function nodeStyle(node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>): string {
+function nodeStyle(node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
   const declarations: string[] = [];
   const inStack = parent?.layout.mode === "stack";
   if (!inStack) {
-    declarations.push("position:absolute", `left:${px(node.layout.x)}`, `top:${px(node.layout.y)}`);
+    // 只有页面直属的节点用页面坐标定位，导出原点只影响它们；
+    // 嵌套节点的坐标相对父节点，会跟着父节点一起平移。
+    const offsetX = parent === undefined && origin ? origin.x : 0;
+    const offsetY = parent === undefined && origin ? origin.y : 0;
+    declarations.push("position:absolute", `left:${px(node.layout.x - offsetX)}`, `top:${px(node.layout.y - offsetY)}`);
   } else {
     declarations.push("position:relative");
   }
