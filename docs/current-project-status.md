@@ -18,11 +18,14 @@
 - `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
   连续重放已提交事务的崩溃恢复原型；
 - `packages/design-layout`：宿主无关的 absolute/stack 布局原型，支持 fixed、fill、hug、
-  padding、gap、对齐、文本测量接口和结构化布局警告；
+  padding、gap、对齐、文本测量接口和结构化布局警告；文本测量提供确定性的字符宽度估算器
+  与宿主可注入的测量契约（`createHostTextMeasurer`），修复了 hug 文本高度不随可用宽度换行
+  的缺陷；
 - `packages/design-export`：独立 HTML/CSS 导出原型，保留布局与 CSS Token 语义，并对
-  不支持或降级的特性输出诊断；
+  不支持或降级的特性输出诊断；新增独立 SVG 导出，SVG 几何由布局引擎解析，stack、fill、
+  hug 语义与画布一致；
 - `packages/studio-application`：串联项目创建、命令事务、日志与快照、恢复、布局和
-  HTML 导出的应用服务原型，并提供不修改真实项目的命令预演入口，作为未来工作台与
+  HTML/SVG 导出的应用服务原型，并提供不修改真实项目的命令预演入口，作为未来工作台与
   AI Orchestrator 的共同入口；
 - `packages/ai-orchestrator`：AI 安全编辑闭环的第一阶段原型，包含可替换 Planner
   契约、临时运行时 dry-run、before/after 预览、影响节点、warnings、取消、显式确认
@@ -35,11 +38,19 @@
   revision 缺口降级报告、资产哈希校验和旧 localStorage 快照迁移；尚未接入真实 AI Provider；
   工作台顶部支持项目列表、新建、切换、通过领域命令重命名，以及原子清理项目快照、
   事务和资产的删除操作；
+- 画布几何改由 `design-layout` 解析，不再直接读取节点的 `layout` 原始值，因此 hug、fill、
+  stack 在编辑器内与导出结果一致；文本测量通过宿主契约注入浏览器 Canvas 字体度量；
+- 图层面板为嵌套树，支持折叠展开、节点类型图标、层级缩进，以及基于 dnd-kit 的拖拽排序
+  （同级重排与拖入容器两种落点）；重排通过 `node.reparent` 命令提交，可撤销；
+- 组件系统已接入 UI：可将选中节点提升为组件根（`component.create`），按需实例化
+  （`component.instantiate`，实例会物化组件子树并支持 overrides），并在组件面板列出
+  组件与实例计数；实例可正常参与布局、画布渲染与导出；
 - 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
   以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
 - 属性面板支持文本内容、字体、字号、行高、节点显隐和锁定；文本修改通过独立
   `text.patch` 命令校验类型和数值，不扩张通用节点 patch；
-- 工作台可下载当前页面的独立 HTML 交付物和当前项目 JSON 备份，并报告 HTML 导出诊断数量；
+- 工作台可下载当前页面的独立 HTML、SVG 交付物和当前项目 JSON 备份，并报告导出诊断数量；
+  PNG 交付物由 SVG 经浏览器 Canvas 光栅化生成；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
   `test:studio-core` 脚本覆盖。
 
@@ -58,9 +69,10 @@
 ## 尚未实现或尚未达到可用状态
 
 - 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
-- 完整可交互画布、树形图层面板和属性面板；当前只支持顶层节点和基础属性；
-- 生产可用的布局、文本测量和渲染系统；
-- 生产可用的 HTML/CSS，以及 PNG、SVG 的完整独立导出链路；
+- 生产可用的渲染系统；画布为 DOM 渲染，尚未引入 Canvas/SVG 渲染器与性能基线；
+- 生产可用的文本测量；浏览器端测量依赖 Canvas 字体度量，未做跨平台字体基线与缓存策略；
+- PNG 导出的独立交付链路；当前由 SVG 经浏览器 Canvas 光栅化生成，外部图片会污染画布；
+- React、PDF 等后续导出格式；
 - AI Provider、真实 Planner、可视化审批、Reviewer 的完整编辑闭环；当前仅有安全计划、
   dry-run 与确认提交的应用层原型；
 - 独立 Studio 的 MCP adapter；

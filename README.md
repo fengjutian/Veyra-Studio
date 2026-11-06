@@ -40,4 +40,4 @@ depend on Vibma/Figma runtime code.
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](./LICENSE) · 第三方组件许可见 [THIRD-PARTY-NOTICES.md](./THIRD-PARTY-NOTICES.md)

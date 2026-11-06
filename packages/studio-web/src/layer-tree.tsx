@@ -19,6 +19,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { arrayMove, resolveDropPosition } from "./layer-reorder";
 import type { DesignDocument, DesignNode } from "@ufira/design-schema";
+import { Icon, type IconName } from "./icons";
 
 export interface LayerTreeProps {
   document: DesignDocument;
@@ -180,25 +181,26 @@ function LayerRow({
             }
           }}
         >
-          {row.hasChildren ? (collapsed ? "▸" : "▾") : ""}
+          {row.hasChildren ? <Icon name={collapsed ? "chevronRight" : "chevronDown"} size={12} /> : null}
         </span>
-        <span className={`layer-type layer-type-${node.type}`}>{typeGlyph(node)}</span>
+        <span className={`layer-type layer-type-${node.type}`}><Icon name={nodeTypeIcon(node)} size={12} /></span>
         <span className="layer-name">{node.name}</span>
       </button>
     </div>
   );
 }
 
-function typeGlyph(node: DesignNode): string {
+/** 节点类型 → 图层树里的图标。统一用 Lucide 线性图标，不再使用字符字形。 */
+function nodeTypeIcon(node: DesignNode): IconName {
   switch (node.type) {
-    case "text": return "T";
-    case "image": return "▣";
-    case "rectangle": return "▢";
-    case "ellipse": return "◯";
-    case "component": return "◈";
-    case "instance": return "◇";
-    case "vector": return "⌁";
-    default: return "▣";
+    case "text": return "nodeText";
+    case "image": return "nodeImage";
+    case "rectangle": return "nodeRectangle";
+    case "ellipse": return "nodeEllipse";
+    case "component": return "nodeComponent";
+    case "instance": return "nodeInstance";
+    case "vector": return "nodeVector";
+    default: return "nodeFrame";
   }
 }
 
