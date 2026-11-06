@@ -1,4 +1,4 @@
-import { exportPageToHtml, type HtmlExportOptions, type HtmlExportResult } from "@ufira/design-export";
+import { exportPageToHtml, exportPageToSvg, type HtmlExportOptions, type HtmlExportResult, type SvgExportOptions, type SvgExportResult } from "@ufira/design-export";
 import { computePageLayout, type LayoutOptions, type LayoutResult } from "@ufira/design-layout";
 import type { ProjectRepository, ProjectSnapshot } from "@ufira/design-persistence";
 import { DesignRuntime, type CommandEnvelope, type CommandResult, type TransactionEntry } from "@ufira/design-runtime";
@@ -95,6 +95,10 @@ export class StudioProject {
 
   exportHtml(options: HtmlExportOptions): HtmlExportResult {
     return exportPageToHtml(this.runtime.snapshot(), options);
+  }
+
+  exportSvg(options: SvgExportOptions): SvgExportResult {
+    return exportPageToSvg(this.runtime.snapshot(), options);
   }
 
   private lastTransaction(): TransactionEntry {

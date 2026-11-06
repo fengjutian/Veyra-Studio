@@ -80,6 +80,11 @@ export interface DefineComponentCommand {
   payload: { component: ComponentDefinition };
 }
 
+export interface CreateComponentCommand {
+  type: "component.create";
+  payload: { id: string; nodeId: NodeId; name: string };
+}
+
 export interface RemoveComponentCommand {
   type: "component.remove";
   payload: { id: string };
@@ -104,6 +109,7 @@ export type DesignCommand =
   | RenamePageCommand
   | DeletePageCommand
   | DefineComponentCommand
+  | CreateComponentCommand
   | RemoveComponentCommand
   | InstantiateComponentCommand;
 

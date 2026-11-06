@@ -1,4 +1,4 @@
-import { validateDocument, type DesignDocument, type DesignNode, type NodeId } from "@ufira/design-schema";
+import { validateDocument, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
 export class RevisionConflictError extends Error {
@@ -163,8 +163,9 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     }
     case "page.delete": return deletePage(document, command.payload.id);
     case "component.define": return defineComponent(document, command.payload.component);
+    case "component.create": return createComponent(document, command.payload.id, command.payload.nodeId, command.payload.name);
     case "component.remove": return removeComponent(document, command.payload.id);
-    case "component.instantiate": return createNode(document, command.payload.node, command.payload.index);
+    case "component.instantiate": return instantiateComponent(document, command.payload.node, command.payload.index);
   }
 }
 
@@ -206,6 +207,89 @@ function removeComponent(document: DesignDocument, id: string): void {
   const instance = Object.values(document.nodes).find(node => node.type === "instance" && node.componentId === id);
   if (instance) throw new CommandError(`Component ${id} is still used by instance ${instance.id}`);
   delete document.components[id];
+}
+
+/**
+ * Promotes an existing node into a component root and registers the definition.
+ *
+ * The node keeps its identity so references from the canvas stay valid; only its
+ * type and the component registry change.
+ */
+function createComponent(document: DesignDocument, componentId: string, nodeId: NodeId, name: string): void {
+  if (!componentId.trim()) throw new CommandError("Component id cannot be empty");
+  if (!name.trim()) throw new CommandError("Component name cannot be empty");
+  if (document.components[componentId]) throw new CommandError(`Component ${componentId} already exists`);
+  const node = requireNode(document, nodeId);
+  if (node.type === "component") throw new CommandError(`Node ${nodeId} is already a component root`);
+  if (node.type === "instance") throw new CommandError(`Node ${nodeId} is an instance and cannot become a component root`);
+  const duplicate = Object.values(document.components).find(existing => existing.rootNodeId === nodeId);
+  if (duplicate) throw new CommandError(`Node ${nodeId} already defines component ${duplicate.id}`);
+  node.type = "component";
+  document.components[componentId] = { id: componentId, name: name.trim(), rootNodeId: nodeId };
+}
+
+/**
+ * Creates an instance of a component with its subtree materialized.
+ *
+ * The instance owns real child nodes so the canvas, layout engine and exporters
+ * can render it without special-casing component definitions. Instance ids are
+ * derived from the source node ids so a repeated instantiation stays deterministic
+ * for a given instance id.
+ */
+function instantiateComponent(document: DesignDocument, node: InstanceNode, index?: number): void {
+  const definition = document.components[node.componentId];
+  if (!definition) throw new CommandError(`Component ${node.componentId} does not exist`);
+  const root = requireNode(document, definition.rootNodeId);
+  const owner = requireContainer(document, node.parentId);
+
+  const copies = new Map<NodeId, NodeId>();
+  const materialize = (sourceId: NodeId, parentId: NodeId): NodeId => {
+    const source = requireNode(document, sourceId);
+    const copyId = `${node.id}--${sourceId}`;
+    if (document.nodes[copyId]) throw new CommandError(`Instance ${node.id} already materializes ${sourceId}`);
+    copies.set(sourceId, copyId);
+    const copy = structuredClone(source) as DesignNode;
+    copy.id = copyId;
+    copy.parentId = parentId;
+    copy.childIds = [];
+    document.nodes[copyId] = copy;
+    for (const childId of source.childIds) {
+      const childCopyId = materialize(childId, copyId);
+      copy.childIds.push(childCopyId);
+    }
+    return copyId;
+  };
+
+  const materializedChildIds = root.childIds.map(childId => materialize(childId, node.id));
+  const instance = structuredClone(node) as InstanceNode;
+  instance.childIds = materializedChildIds;
+
+  applyOverrides(instance, node.overrides, copies, document);
+
+  document.nodes[node.id] = instance;
+  insertAt(owner.childIds, node.id, index);
+}
+
+/**
+ * Applies instance overrides onto the materialized copies.
+ *
+ * Overrides are keyed by the source node id inside the component and may set
+ * text content or visual properties on the matching copy.
+ */
+function applyOverrides(instance: InstanceNode, overrides: Record<string, unknown>, copies: Map<NodeId, NodeId>, document: DesignDocument): void {
+  for (const [sourceId, value] of Object.entries(overrides ?? {})) {
+    const copyId = copies.get(sourceId);
+    if (!copyId) throw new CommandError(`Override target ${sourceId} is not part of component ${instance.componentId}`);
+    const copy = document.nodes[copyId];
+    if (!copy) throw new CommandError(`Override target ${copyId} does not exist`);
+    if (typeof value !== "object" || value === null) throw new CommandError(`Override for ${sourceId} must be an object`);
+    const patch = value as Record<string, unknown>;
+    if (copy.type === "text" && typeof patch.text === "string") copy.text = patch.text;
+    if (typeof patch.name === "string") copy.name = patch.name;
+    if (patch.appearance && typeof patch.appearance === "object") copy.appearance = { ...copy.appearance, ...(patch.appearance as object) };
+    if (patch.layout && typeof patch.layout === "object") copy.layout = { ...copy.layout, ...(patch.layout as object) };
+    if (patch.bindings && typeof patch.bindings === "object") copy.bindings = { ...copy.bindings, ...(patch.bindings as object) };
+  }
 }
 
 function createNode(document: DesignDocument, node: DesignNode, index?: number): void {
@@ -251,7 +335,7 @@ function requireNode(document: DesignDocument, id: NodeId): DesignNode {
 function requireContainer(document: DesignDocument, id: string): { childIds: NodeId[] } {
   const container = document.nodes[id] ?? document.pages[id];
   if (!container) throw new CommandError(`Parent ${id} does not exist`);
-  if ("type" in container && !["frame", "component"].includes(container.type)) throw new CommandError(`Node ${id} cannot contain children`);
+  if ("type" in container && !["frame", "component", "instance"].includes(container.type)) throw new CommandError(`Node ${id} cannot contain children`);
   return container;
 }
 

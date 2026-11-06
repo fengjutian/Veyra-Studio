@@ -1,18 +1,10 @@
 import { validateDocument, type DesignDocument, type DesignNode, type NodeId, type TextNode } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
+import { createEstimateTextMeasurer } from "./text-measurement";
 
 const ZERO_PADDING = { top: 0, right: 0, bottom: 0, left: 0 };
 
-const defaultTextMeasurer: TextMeasurer = {
-  measure(node: TextNode, availableWidth?: number): Size {
-    const rawWidth = Math.max(1, node.text.length) * node.fontSize * 0.6;
-    if (!availableWidth || availableWidth <= 0 || rawWidth <= availableWidth) {
-      return { width: rawWidth, height: node.lineHeight };
-    }
-    const lines = Math.ceil(rawWidth / availableWidth);
-    return { width: availableWidth, height: lines * node.lineHeight };
-  },
-};
+const defaultTextMeasurer: TextMeasurer = createEstimateTextMeasurer();
 
 export function computePageLayout(documentInput: DesignDocument, pageId: string, options: LayoutOptions): LayoutResult {
   const document = validateDocument(documentInput);
@@ -33,8 +25,11 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     const node = document.nodes[nodeId];
     if (!node) return { width: 0, height: 0 };
     let content: Size;
-    if (node.type === "text") content = measurer.measure(node);
-    else if (node.childIds.length) content = intrinsicContainer(node);
+    if (node.type === "text") {
+      // A fixed width constrains wrapping, so the height must be measured against it.
+      const constraint = node.layout.widthMode === "fixed" ? node.layout.width : undefined;
+      content = measurer.measure(node, constraint);
+    } else if (node.childIds.length) content = intrinsicContainer(node);
     else content = { width: node.layout.width, height: node.layout.height };
     const result = {
       width: node.layout.widthMode === "hug" ? content.width : node.layout.width,
@@ -77,7 +72,11 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
   const layoutNode = (nodeId: NodeId, x: number, y: number, availableWidth: number, availableHeight: number, forced?: Partial<Size>): void => {
     const node = document.nodes[nodeId];
     const width = forced?.width ?? resolveDimension(node, "width", availableWidth);
-    const height = forced?.height ?? resolveDimension(node, "height", availableHeight);
+    // A hugging text height depends on the width it actually got, which is only
+    // known here — so measure against the resolved width instead of the cached intrinsic.
+    const height = forced?.height ?? (node.type === "text" && node.layout.heightMode === "hug"
+      ? measurer.measure(node, width).height
+      : resolveDimension(node, "height", availableHeight));
     boxes[nodeId] = { x, y, width, height };
     if (!node.childIds.length) return;
 

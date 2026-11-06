@@ -17,6 +17,7 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
+    "@ufira/design-layout": "*",
     "@ufira/design-schema": "*"
   },
   "devDependencies": {

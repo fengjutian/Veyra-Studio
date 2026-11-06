@@ -9,6 +9,11 @@ import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipbo
 import { arrangeNodes, nudgeNodes, type Arrangement } from "./node-arrangement";
 import { flattenNodeTrees } from "./node-tree";
 import { prepareImportedDocument } from "./project-import";
+import { LayerTree } from "./layer-tree";
+import { planReparent, type DropPosition } from "./layer-reorder";
+import { resolveBox, useCanvasLayout } from "./canvas-layout";
+import { listComponents, makeInstanceNode } from "./components";
+import { exportPageToPng, downloadDataUrl } from "./png-export";
 import "./styles.css";
 
 const PROJECT_ID = "studio:local";
@@ -136,6 +141,16 @@ function App() {
     downloadFile(`${safeFilename(document.meta.name)}.html`, result.document, "text/html");
     setMessage(`HTML 已导出 · ${result.diagnostics.length} 条诊断`);
   };
+  const exportSvg = () => {
+    const result = project.exportSvg({ pageId: page.id, viewport: { width: 960, height: 680 }, title: document.meta.name });
+    downloadFile(`${safeFilename(document.meta.name)}.svg`, result.svg, "image/svg+xml");
+    setMessage(`SVG 已导出 · ${result.diagnostics.length} 条诊断`);
+  };
+  const exportPng = () => void run(async () => {
+    const result = await exportPageToPng(project.snapshot(), { pageId: page.id, viewport: { width: 960, height: 680 }, title: document.meta.name, scale: 2 });
+    downloadDataUrl(`${safeFilename(document.meta.name)}.png`, result.dataUrl);
+    setMessage(`PNG 已导出 · ${result.width}×${result.height}`);
+  });
   const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
   const importJson = (file: File) => void run(async () => {
     const imported = prepareImportedDocument(JSON.parse(await file.text()));
@@ -185,6 +200,35 @@ function App() {
     void run(() => execute([{ type: "node.reparent", payload: { id, parentId: selected!.parentId, index: targetIndex } }]));
   };
   const arrangeSelection = (arrangement: Arrangement) => { if (!selectionLocked && selectionSameParent) patchLayouts(arrangeNodes(selectedNodes, arrangement)); };
+  const reorderFromTree = (draggedId: string, targetId: string, position: DropPosition) => {
+    const plan = planReparent(document, draggedId, targetId, position);
+    if (!plan) { setMessage("该位置无法放置此图层"); return; }
+    void run(async () => { await execute([{ type: "node.reparent", payload: { id: draggedId, parentId: plan.parentId, index: plan.index } }]); setSelectedIds([draggedId]); });
+  };
+  const createComponentFromSelection = () => void run(async () => {
+    if (!selected || selectedIds.length !== 1) return;
+    const name = window.prompt("组件名称", selected.name)?.trim();
+    if (!name) return;
+    const componentId = `component:${crypto.randomUUID().slice(0, 8)}`;
+    await execute([{ type: "component.create", payload: { id: componentId, nodeId: selected.id, name } }]);
+    setMessage(`组件「${name}」已创建`);
+  });
+  const instantiateComponent = (componentId: string) => void run(async () => {
+    const definition = document.components[componentId];
+    if (!definition) return;
+    const instanceId = `instance:${crypto.randomUUID().slice(0, 8)}`;
+    const node = makeInstanceNode(componentId, page.id, { id: instanceId, name: definition.name, x: 96, y: 96, width: definition.rootNodeId ? 200 : 200, height: 120 });
+    await execute([{ type: "component.instantiate", payload: { node } }]);
+    setSelectedIds([instanceId]);
+    setMessage(`已实例化「${definition.name}」`);
+  });
+  const removeComponent = (componentId: string) => void run(async () => {
+    const definition = document.components[componentId];
+    if (!definition) return;
+    if (!window.confirm(`删除组件「${definition.name}」？`)) return;
+    await execute([{ type: "component.remove", payload: { id: componentId } }]);
+    setMessage(`组件「${definition.name}」已删除`);
+  });
   nudgeAction.current = (dx, dy) => {
     if (!busy && selectedNodes.length && !selectionLocked) patchLayouts(nudgeNodes(selectedNodes, dx, dy));
   };
@@ -201,8 +245,7 @@ function App() {
 
   return <div className="studio">
     <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><button disabled={busy} onClick={createProject}>新建</button><button disabled={busy} onClick={renameProject}>重命名</button><button disabled={busy || !project.canUndo()} title="Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("undo"))}>撤销</button><button disabled={busy || !project.canRedo()} title="Shift+Ctrl/Cmd+Z" onClick={() => void run(() => applyHistory("redo"))}>重做</button><button disabled={busy} onClick={exportHtml}>HTML</button><button disabled={busy} onClick={exportJson}>JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}>导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}>删除项目</button><span className="status">{message}</span></header>
-    <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}>新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}>重命名</button><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} title={page.childIds.length ? "请先清空页面" : "删除当前页面"} onClick={deletePage}>删除</button></div><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+C" onClick={copySelection}>复制</button><button disabled={busy || !clipboard.current} title="Ctrl/Cmd+V" onClick={pasteSelection}>粘贴</button><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+D" onClick={duplicateSelection}>重复</button></div><div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><button disabled={busy || selectedLayerIndex <= 0} onClick={() => reorderLayer(0)}>置底</button><button disabled={busy || selectedLayerIndex <= 0} title="Ctrl/Cmd+[" onClick={() => reorderLayer(selectedLayerIndex - 1)}>下移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} title="Ctrl/Cmd+]" onClick={() => reorderLayer(selectedLayerIndex + 1)}>上移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} onClick={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}>置顶</button></div>{page.childIds.map(id => <LayerBranch key={id} document={document} id={id} depth={0} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} />)}</aside>
-    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
+    <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}>新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}>重命名</button><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} title={page.childIds.length ? "请先清空页面" : "删除当前页面"} onClick={deletePage}>删除</button></div><h2>图层</h2><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}>Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}>矩形</button><button disabled={busy} onClick={() => addNode("text")}>文本</button></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+C" onClick={copySelection}>复制</button><button disabled={busy || !clipboard.current} title="Ctrl/Cmd+V" onClick={pasteSelection}>粘贴</button><button disabled={busy || !selectedIds.length} title="Ctrl/Cmd+D" onClick={duplicateSelection}>重复</button></div><div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><button disabled={busy || selectedLayerIndex <= 0} onClick={() => reorderLayer(0)}>置底</button><button disabled={busy || selectedLayerIndex <= 0} title="Ctrl/Cmd+[" onClick={() => reorderLayer(selectedLayerIndex - 1)}>下移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} title="Ctrl/Cmd+]" onClick={() => reorderLayer(selectedLayerIndex + 1)}>上移</button><button disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} onClick={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}>置顶</button></div><LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} /></aside>    <section className="workspace"><div ref={setCanvas} className="canvas" onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selectedIds.length > 1 && <><h2>对齐与分布</h2><div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginBottom: 12 }}><button disabled={busy} onClick={() => arrangeSelection("left")}>左</button><button disabled={busy} onClick={() => arrangeSelection("centerX")}>水平中</button><button disabled={busy} onClick={() => arrangeSelection("right")}>右</button><button disabled={busy} onClick={() => arrangeSelection("top")}>上</button><button disabled={busy} onClick={() => arrangeSelection("centerY")}>垂直中</button><button disabled={busy} onClick={() => arrangeSelection("bottom")}>下</button><button disabled={busy || selectedIds.length < 3} onClick={() => arrangeSelection("distributeX")}>水平分布</button><button disabled={busy || selectedIds.length < 3} onClick={() => arrangeSelection("distributeY")}>垂直分布</button></div></>}{selected && selectedIds.length === 1 ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
       {(["x", "y", "width", "height"] as const).map(key => <Field key={key} label={key} type="number" value={selected.layout[key]} onCommit={value => patch({ layout: { ...selected.layout, [key]: Number(value) } })} />)}

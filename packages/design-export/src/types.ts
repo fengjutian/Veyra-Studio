@@ -1,3 +1,4 @@
+import type { TextMeasurer } from "@ufira/design-layout";
 import type { AssetMetadata } from "@ufira/design-schema";
 
 export type ExportSupport = "exact" | "approximated" | "rasterized" | "unsupported";
@@ -20,6 +21,20 @@ export interface HtmlExportResult {
   html: string;
   css: string;
   document: string;
+  diagnostics: ExportDiagnostic[];
+  tokenVariables: Record<string, string>;
+}
+
+export interface SvgExportOptions {
+  pageId: string;
+  viewport: { width: number; height: number };
+  title?: string;
+  resolveAsset?: (asset: AssetMetadata) => string | undefined;
+  textMeasurer?: TextMeasurer;
+}
+
+export interface SvgExportResult {
+  svg: string;
   diagnostics: ExportDiagnostic[];
   tokenVariables: Record<string, string>;
 }

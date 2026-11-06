@@ -10,7 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@ufira/ai-orchestrator": "*",
+    "@ufira/design-export": "^0.1.0",
+    "@ufira/design-layout": "^0.1.0",
     "@ufira/design-persistence": "*",
     "@ufira/design-runtime": "*",
     "@ufira/design-schema": "*",

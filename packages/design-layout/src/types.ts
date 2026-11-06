@@ -10,13 +10,21 @@ export interface ComputedBox extends Size {
   y: number;
 }
 
+export interface TextMeasurementRequest {
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  availableWidth?: number;
+}
+
 export interface TextMeasurer {
   measure(node: TextNode, availableWidth?: number): Size;
 }
 
 export interface LayoutWarning {
   nodeId: NodeId;
-  code: "fill-in-hug" | "overflow";
+  code: "fill-in-hug" | "overflow" | "text-overflow";
   message: string;
 }
 
