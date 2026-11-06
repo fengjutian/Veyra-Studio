@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import type { DesignNode, LayoutSpec, SizeMode } from "@ufira/design-schema";
 import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
@@ -146,20 +147,21 @@ function Segmented({
   return (
     <label className="field">
       <span className="field-label">{label}</span>
-      <div className="segmented" role="group" aria-label={label}>
+      <ToggleGroup.Root
+        type="single"
+        className="segmented"
+        aria-label={label}
+        value={value}
+        disabled={disabled}
+        // Radix reports "" when the active item is re-pressed; keep the current value instead.
+        onValueChange={next => { if (next) onChange(next); }}
+      >
         {options.map(option => (
-          <button
-            key={option.value}
-            type="button"
-            className={value === option.value ? "segment active" : "segment"}
-            disabled={disabled}
-            aria-pressed={value === option.value}
-            onClick={() => onChange(option.value)}
-          >
+          <ToggleGroup.Item key={option.value} value={option.value} className="segment">
             {option.label}
-          </button>
+          </ToggleGroup.Item>
         ))}
-      </div>
+      </ToggleGroup.Root>
     </label>
   );
 }

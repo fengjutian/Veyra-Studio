@@ -35,6 +35,8 @@ import {
   Image as ImageIcon,
   Layers as LayersIcon,
   Link2,
+  Lock,
+  LockOpen,
   Pencil,
   Plus,
   Redo2,
@@ -90,6 +92,11 @@ export const ICONS = {
   moveDown: ChevronDown,
   moveUp: ChevronUp,
   toFront: BringToFront,
+  layerOrder: LayersIcon,
+
+  // 锁定状态
+  lock: Lock,
+  unlock: LockOpen,
 
   // 对齐与分布
   alignLeft: AlignStartHorizontal,
@@ -100,6 +107,7 @@ export const ICONS = {
   alignBottom: AlignEndVertical,
   distributeX: AlignHorizontalSpaceAround,
   distributeY: AlignVerticalSpaceAround,
+  alignGroup: AlignCenterHorizontal,
 
   // 颜色 Token
   tokenAdd: Plus,
