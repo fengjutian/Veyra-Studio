@@ -69,14 +69,15 @@ export interface UpsertAssetCommand {
 }
 
 /**
- * 改图片节点的显示方式。
+ * 改图片节点的显示内容或显示方式。
  *
- * 和 `text.patch` 一样单独开一条命令，而不是扩张通用的 `node.patch`：`fit`
- * 只对图片有意义，混进通用 patch 会让其他节点也能收到这个字段。
+ * 和 `text.patch` 一样单独开一条命令，而不是扩张通用的 `node.patch`：`fit` 和
+ * `assetId` 只对图片有意义，混进通用 patch 会让其他节点也能收到这些字段。
+ * 换图（`assetId`）要求新资源已经在同一个事务里登记过。
  */
 export interface PatchImageCommand {
   type: "image.patch";
-  payload: { id: NodeId; patch: { fit?: ImageFit } };
+  payload: { id: NodeId; patch: { fit?: ImageFit; assetId?: string } };
 }
 
 /**

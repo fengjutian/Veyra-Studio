@@ -372,10 +372,11 @@ function App() {
     const raw = JSON.parse(await file.text());
     const existing = await repository.listProjects();
     const probe = prepareImportedDocument(raw);
-    // 冲突按导入文件**原本的 id** 判定：copy 模式下的新 id 谁也不匹配。
-    const conflict = detectImportConflict({ id: probe.sourceId, name: probe.sourceName }, existing);
+    // 冲突按导入文件**原本的 id** 判定：copy 模式下的新 id 谁也不匹配；
+    // 名字比较用导入后会落到的名字，否则会漏掉"上次导入的副本也叫这个名字"。
+    const conflict = detectImportConflict({ id: probe.sourceId, name: probe.document.meta.name }, existing);
     let prepared = probe;
-    if (conflict) {
+    if (conflict?.kind === "id") {
       // 同一个项目 id：要么覆盖它，要么另存一份，由用户决定。
       const choice = await askChoice({
         title: "已存在同一个项目",
@@ -389,6 +390,16 @@ function App() {
       prepared = choice === "replace"
         ? prepareImportedDocument(raw, { mode: "replace", id: conflict.projectId })
         : prepareImportedDocument(raw, { mode: "copy" });
+    } else if (conflict?.kind === "name") {
+      // 只是重名：内容是另一个项目，导入安全，但要让用户确认改后的名字。
+      const name = conflict.suggestedName ?? probe.document.meta.name;
+      const choice = await askChoice({
+        title: "项目名称已被占用",
+        description: `本地已有项目「${conflict.projectName}」。导入的文件会以「${name}」存成一个新项目，原有项目不受影响。`,
+        options: [{ value: "rename", label: `以「${name}」导入` }],
+      });
+      if (choice === null) { setMessage("已取消导入"); return; }
+      prepared = prepareImportedDocument(raw, { mode: "copy", name });
     }
     if (prepared.mode === "replace") await repository.replaceProject(prepared.document.id, prepared.document);
     else await repository.saveSnapshot(prepared.document);

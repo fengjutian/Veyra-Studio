@@ -166,8 +166,9 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "image.patch": {
       const node = requireNode(document, command.payload.id);
       if (node.type !== "image") throw new CommandError(`Node ${node.id} is not an image node`);
-      const { fit } = command.payload.patch;
+      const { fit, assetId } = command.payload.patch;
       if (fit !== undefined && fit !== "cover" && fit !== "contain" && fit !== "fill") throw new CommandError("Image fit must be cover, contain or fill");
+      if (assetId !== undefined && !document.assets[assetId]) throw new CommandError(`Asset ${assetId} does not exist`);
       Object.assign(node, structuredClone(command.payload.patch));
       return;
     }
