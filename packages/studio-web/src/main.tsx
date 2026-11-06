@@ -27,6 +27,9 @@ import { exportPageToPng, downloadDataUrl } from "./png-export";
 import { assetIdForHash, fitImageBox, imageBackgroundStyle, imageFileError, readImageSize, sha256Hex } from "./assets";
 import { assetLabel, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
 import { AssetPanel } from "./asset-panel";
+import { backupRestoreConfirmation, backupRows, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
+import { readStorageEstimate, type StorageEstimate } from "./storage-estimate";
+import { StoragePanel } from "./storage-panel";
 import { assetUrlCacheVersion, forgetAssetUrl, loadAssetUrl } from "./asset-url";
 import { Icon } from "./icons";
 import { DialogProvider, useChoice, useConfirm, usePrompt } from "./ui/dialogs";
@@ -85,6 +88,9 @@ function App() {
   const [recovery, setRecovery] = useState<RecoveryReport>();
   // 存储里保留的历史版本，用于回滚。
   const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
+  // 自动备份列表与浏览器存储用量。
+  const [backups, setBackups] = useState<BackupSummary[]>([]);
+  const [storage, setStorage] = useState<StorageEstimate>();
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
   const planner = useMemo(() => aiSettingsComplete(aiSettings)
     ? createOpenAiCompatiblePlanner({ baseUrl: aiSettings.baseUrl, model: aiSettings.model, apiKey: aiSettings.apiKey || undefined })
@@ -98,7 +104,7 @@ function App() {
     setDocument(snapshot); setProjects(await repository.listProjects()); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setMessage(`${direction === "undo" ? "撤销" : "重做"}完成 · revision ${committed.result.revision}`);
   };
 
-  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSnapshots(await repository.listSnapshots(snapshot.id)); setMissingAssets(await findMissingAssets(repository, snapshot)); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSnapshots(await repository.listSnapshots(snapshot.id)); setMissingAssets(await findMissingAssets(repository, snapshot)); setBackups(await backupStore.list(snapshot.id)); setStorage(await readStorageEstimate()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
   // 页面被关闭或切到后台时立刻把待写快照落盘，避免最后几次编辑留在内存里。
   useEffect(() => installAutosaveFlush(), []);
   // 历史版本列表：等自动保存真正落盘之后再刷新，否则看到的还是上一版。
@@ -109,6 +115,19 @@ function App() {
     void repository.listSnapshots(snapshotProjectId).then(list => { if (!cancelled) setSnapshots(list); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [autosave.state, autosave.lastSavedAt, snapshotProjectId]);
+  // 自动备份：同样等落盘之后再写，但按最小间隔节流，避免轮转表里全是一分钟内的副本。
+  useEffect(() => {
+    if (autosave.state !== "saved" || !project || !snapshotProjectId) return;
+    let cancelled = false;
+    void (async () => {
+      const existing = await backupStore.list(snapshotProjectId);
+      if (cancelled || !shouldWriteBackup(existing[0], new Date())) return;
+      await backupStore.write(project.snapshot());
+      const next = await backupStore.list(snapshotProjectId);
+      if (!cancelled) setBackups(next);
+    })().catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [autosave.state, autosave.lastSavedAt, snapshotProjectId, project]);
   useEffect(() => {
     if (!project) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -190,7 +209,7 @@ function App() {
     const snapshot = opened.project.snapshot();
     setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined);
     setSnapshots(await repository.listSnapshots(id));
-    // 资源字节不在文档里，只能对着仓库逐份核对；导入别人的项目时这里会查出缺失。
+    setBackups(await backupStore.list(id));
     const missing = await refreshMissingAssets(snapshot);
     setRecovery(buildRecoveryReport({
       projectId: snapshot.id,
