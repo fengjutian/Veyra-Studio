@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { SafeAiEditor, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
+import { SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, TEXT_DEFAULTS, type DesignDocument, type DesignNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
@@ -23,6 +23,8 @@ import { Icon } from "./icons";
 import { DialogProvider, useConfirm, usePrompt } from "./ui/dialogs";
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger, resolveContextNodeId } from "./ui/context-menu";
+import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
+import { AiSettingsPanel } from "./ai-settings-panel";
 import "./styles.css";
 
 const PROJECT_ID = "studio:local";
@@ -50,9 +52,15 @@ function App() {
   const importInput = useRef<HTMLInputElement>(null);
   const [componentName, setComponentName] = useState("");
   const [contextIds, setContextIds] = useState<string[]>([]);
+  // AI 模型设置只存在浏览器 localStorage，不进文档也不进事务日志。
+  const [aiSettings, setAiSettings] = useState<AiSettings>(() => readAiSettings());
   const askText = usePrompt();
   const askConfirm = useConfirm();
-  const editor = useMemo(() => project ? new SafeAiEditor(project, demoPlanner) : undefined, [project]);
+  // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
+  const planner = useMemo(() => aiSettingsComplete(aiSettings)
+    ? createOpenAiCompatiblePlanner({ baseUrl: aiSettings.baseUrl, model: aiSettings.model, apiKey: aiSettings.apiKey || undefined })
+    : demoPlanner, [aiSettings]);
+  const editor = useMemo(() => project ? new SafeAiEditor(project, planner) : undefined, [project, planner]);
 
   const applyHistory = async (direction: "undo" | "redo") => {
     if (!project) return;
@@ -199,6 +207,16 @@ function App() {
     await repository.saveSnapshot(imported); await openProject(imported.id); setProjects(await repository.listProjects());
     setMessage(`项目已导入${Object.keys(imported.assets).length ? "；二进制资产需重新关联" : ""}`);
   });
+  const saveAiSettings = (next: AiSettings) => {
+    writeAiSettings(next);
+    setAiSettings(next);
+    setMessage(aiSettingsComplete(next) ? `AI 模型已保存：${next.model} @ ${next.baseUrl}` : "AI 设置已保存；未启用真实模型，继续使用演示规划器");
+  };
+  const resetAiSettings = () => {
+    clearAiSettings();
+    setAiSettings({ ...DEFAULT_AI_SETTINGS });
+    setMessage("AI 模型设置已清除，已回退到演示规划器");
+  };
   const createColorToken = () => void run(async () => {
     const name = (await askText({ title: "Token 名称", defaultValue: "color.primary" }))?.trim(); if (!name) return;
     const value = (await askText({ title: "颜色值", defaultValue: "#6366f1", validate: validateColor }))?.trim(); if (!value) return;
@@ -339,6 +357,7 @@ function App() {
     <div className="component-list">{componentSummaries.length
       ? componentSummaries.map(component => <div className="component-row" key={component.id}><span className="component-glyph"><Icon name="nodeComponent" size={12} /></span><span className="component-name" title={component.name}>{component.name}</span><span className="component-count">{component.instanceCount}</span><Tooltip label="创建实例"><button className="icon-only" aria-label="创建实例" disabled={busy} onClick={() => instantiateComponent(component.id)}><Icon name="componentInstantiate" /></button></Tooltip><Tooltip label="删除组件"><button className="icon-only" aria-label="删除组件" disabled={busy} onClick={() => removeComponent(component.id)}><Icon name="componentRemove" /></button></Tooltip></div>)
       : <p className="empty-hint">还没有组件。选中一个节点，输入名称后点击「创建」。</p>}</div>
+    <hr/><AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
     <hr/><h2>AI 安全编辑</h2><textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
       <button disabled={busy || !prompt.trim()} onClick={() => editor && void run(async () => { setPreview(await editor.createPlan(prompt, selectedIds)); setMessage("AI 计划已完成 dry-run，等待确认"); })}><Icon name="aiPlan" />生成变更预览</button>
       {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p>{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
@@ -423,7 +442,7 @@ function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: st
   return { ...common, type };
 }
 
-const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "创建一个经过安全预演的蓝色卡片", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fill: "#2563eb", cornerRadius: 20 } } } }] }; } };
+const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "演示规划器：创建一个蓝色卡片（未启用真实模型，需求未被理解）", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fill: "#2563eb", cornerRadius: 20 } } } }] }; } };
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
