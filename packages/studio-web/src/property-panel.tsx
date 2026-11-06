@@ -131,7 +131,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Segmented({
+export function Segmented({
   label,
   value,
   options,
@@ -166,9 +166,18 @@ function Segmented({
   );
 }
 
-function NumberField({ label, value, min, disabled, onCommit }: { label: string; value: number; min?: number; disabled?: boolean; onCommit(value: number): void }) {
-  const [draft, setDraft] = useState(String(value));
-  useEffect(() => setDraft(String(value)), [value]);
+/**
+ * A numeric input.
+ *
+ * `mixed` marks a field whose value differs across a selection: the input stays
+ * blank so it does not pretend that one of the values is the truth, and the user
+ * can still type a new value to apply to every selected node. Only a field the
+ * user actually typed into is committed — tabbing through it changes nothing.
+ */
+export function NumberField({ label, value, min, disabled, mixed, onCommit }: { label: string; value: number; min?: number; disabled?: boolean; mixed?: boolean; onCommit(value: number): void }) {
+  const [draft, setDraft] = useState(mixed ? "" : String(value));
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { setDraft(mixed ? "" : String(value)); setDirty(false); }, [value, mixed]);
   return (
     <label className="field field-inline">
       <span className="field-label">{label}</span>
@@ -176,12 +185,16 @@ function NumberField({ label, value, min, disabled, onCommit }: { label: string;
         type="number"
         disabled={disabled}
         value={draft}
-        onChange={event => setDraft(event.target.value)}
+        placeholder={mixed ? "混合" : undefined}
+        onChange={event => { setDraft(event.target.value); setDirty(true); }}
         onBlur={() => {
           const parsed = Number(draft);
-          if (!Number.isFinite(parsed)) { setDraft(String(value)); return; }
+          if (!dirty || draft.trim() === "" || !Number.isFinite(parsed)) { setDraft(mixed ? "" : String(value)); setDirty(false); return; }
           const next = min === undefined ? parsed : Math.max(min, parsed);
-          if (next !== value) onCommit(next);
+          setDirty(false);
+          // In a mixed field the typed value may equal the first node's value and
+          // still be a real change for the other nodes.
+          if (mixed || next !== value) onCommit(next);
           else setDraft(String(value));
         }}
         onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
@@ -190,9 +203,11 @@ function NumberField({ label, value, min, disabled, onCommit }: { label: string;
   );
 }
 
-function TextField({ label, value, disabled, onCommit }: { label: string; value: string; disabled?: boolean; onCommit(value: string): void }) {
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
+/** A text input. `mixed` behaves like in {@link NumberField}. */
+export function TextField({ label, value, disabled, mixed, onCommit }: { label: string; value: string; disabled?: boolean; mixed?: boolean; onCommit(value: string): void }) {
+  const [draft, setDraft] = useState(mixed ? "" : value);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { setDraft(mixed ? "" : value); setDirty(false); }, [value, mixed]);
   return (
     <label className="field field-inline">
       <span className="field-label">{label}</span>
@@ -200,8 +215,14 @@ function TextField({ label, value, disabled, onCommit }: { label: string; value:
         type="text"
         disabled={disabled}
         value={draft}
-        onChange={event => setDraft(event.target.value)}
-        onBlur={() => { if (draft !== value) onCommit(draft); }}
+        placeholder={mixed ? "混合" : undefined}
+        onChange={event => { setDraft(event.target.value); setDirty(true); }}
+        onBlur={() => {
+          if (!dirty) return;
+          setDirty(false);
+          // An emptied mixed field clears the value on every selected node.
+          if (mixed || draft !== value) onCommit(draft);
+        }}
         onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
       />
     </label>

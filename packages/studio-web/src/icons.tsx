@@ -20,6 +20,7 @@ import {
   BringToFront,
   Boxes,
   Check,
+  CheckCheck,
   ChevronDown,
   ChevronRight,
   ChevronUp,
@@ -86,6 +87,9 @@ export const ICONS = {
   copy: Copy,
   paste: ClipboardPaste,
   duplicate: CopyPlus,
+
+  // 选区
+  selectAll: CheckCheck,
 
   // 图层顺序
   toBack: SendToBack,

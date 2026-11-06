@@ -1,0 +1,146 @@
+import type { AppearanceSpec, DesignDocument, DesignNode, LayoutSpec, PropertyBindings, SizeMode } from "@ufira/design-schema";
+
+/** 批量面板里一个字段的取值状态：值一致时 `value` 有效，值不一致时 `mixed` 为 true。 */
+export interface BatchField<T> {
+  value: T;
+  mixed: boolean;
+}
+
+/** 批量外观改动。只列出要改的字段，未列出的字段保持节点自己的值。 */
+export interface BatchAppearanceChanges {
+  fill?: string;
+  stroke?: string;
+  cornerRadius?: number;
+  opacity?: number;
+}
+
+/** 批量布局改动。只列出要改的字段，未列出的字段保持节点自己的值。 */
+export interface BatchLayoutChanges {
+  widthMode?: SizeMode;
+  heightMode?: SizeMode;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Reads the value a field has across a selection.
+ *
+ * When the selected nodes disagree the field reports `mixed`, so the inspector can
+ * leave it blank instead of pretending that one of the values is the truth.
+ */
+export function sharedField<T>(nodes: readonly DesignNode[], pick: (node: DesignNode) => T): BatchField<T> {
+  if (!nodes.length) return { value: undefined as unknown as T, mixed: false };
+  const first = pick(nodes[0]!);
+  return { value: first, mixed: nodes.some(node => !Object.is(pick(node), first)) };
+}
+
+/**
+ * Merges appearance changes into one node's appearance.
+ *
+ * The runtime replaces the whole appearance block on a patch, so every field the
+ * user did not touch has to be carried over from the node itself.
+ */
+export function mergedAppearance(node: DesignNode, changes: BatchAppearanceChanges): AppearanceSpec {
+  const appearance: AppearanceSpec = { ...node.appearance };
+  if (changes.fill !== undefined) appearance.fill = changes.fill || undefined;
+  if (changes.stroke !== undefined) appearance.stroke = changes.stroke || undefined;
+  if (changes.cornerRadius !== undefined) appearance.cornerRadius = changes.cornerRadius;
+  if (changes.opacity !== undefined) appearance.opacity = changes.opacity;
+  return appearance;
+}
+
+/**
+ * Merges layout changes into one node's layout.
+ *
+ * Setting a width or a height also switches that axis to `fixed`: the layout engine
+ * only reads the stored size when the size mode is `fixed`, so typing a size would
+ * otherwise be silently ignored on `hug` and `fill` nodes.
+ */
+export function mergedLayout(node: DesignNode, changes: BatchLayoutChanges): LayoutSpec {
+  const layout: LayoutSpec = { ...node.layout };
+  if (changes.widthMode !== undefined) layout.widthMode = changes.widthMode;
+  if (changes.heightMode !== undefined) layout.heightMode = changes.heightMode;
+  if (changes.width !== undefined) { layout.width = changes.width; layout.widthMode = "fixed"; }
+  if (changes.height !== undefined) { layout.height = changes.height; layout.heightMode = "fixed"; }
+  return layout;
+}
+
+/** 一个节点的外观批量改动。`bindings` 只在需要解除 token 绑定时出现。 */
+export interface AppearancePatch {
+  id: string;
+  appearance: AppearanceSpec;
+  bindings?: PropertyBindings;
+}
+
+/**
+ * Plans the appearance patches for a selection.
+ *
+ * Nodes whose appearance would not change are skipped so the edit does not bump the
+ * document revision for nothing.
+ */
+export function planAppearancePatches(nodes: readonly DesignNode[], changes: BatchAppearanceChanges): AppearancePatch[] {
+  return nodes.flatMap(node => {
+    const appearance = mergedAppearance(node, changes);
+    // A new fill only shows up when the node is not driven by a fill token.
+    const releasesFill = changes.fill !== undefined && Boolean(node.bindings?.fill);
+    if (sameAppearance(node.appearance, appearance) && !releasesFill) return [];
+    return [{ id: node.id, appearance, bindings: releasesFill ? withoutFillBinding(node.bindings!) : undefined }];
+  });
+}
+
+/** 一个节点的布局批量改动。 */
+export interface LayoutPatch {
+  id: string;
+  layout: LayoutSpec;
+}
+
+/**
+ * Plans the layout patches for a selection, skipping the nodes that would not change.
+ */
+export function planLayoutPatches(nodes: readonly DesignNode[], changes: BatchLayoutChanges): LayoutPatch[] {
+  return nodes.flatMap(node => {
+    const layout = mergedLayout(node, changes);
+    return sameLayout(node.layout, layout) ? [] : [{ id: node.id, layout }];
+  });
+}
+
+/**
+ * Collects the ids of the objects that "select all" picks on a page.
+ *
+ * Only the top level objects are returned: selecting a parent already covers its
+ * children, which is the same rule the clipboard follows to avoid handling a child twice.
+ */
+export function selectAllIds(document: DesignDocument, pageId: string): string[] {
+  const page = document.pages[pageId];
+  if (!page) return [];
+  return page.childIds.filter(id => Boolean(document.nodes[id]));
+}
+
+function withoutFillBinding(bindings: PropertyBindings): PropertyBindings {
+  const next = { ...bindings };
+  delete next.fill;
+  return next;
+}
+
+function sameAppearance(left: AppearanceSpec, right: AppearanceSpec): boolean {
+  return left.opacity === right.opacity && left.fill === right.fill && left.stroke === right.stroke && left.cornerRadius === right.cornerRadius;
+}
+
+function sameLayout(left: LayoutSpec, right: LayoutSpec): boolean {
+  return left.mode === right.mode
+    && left.direction === right.direction
+    && left.x === right.x
+    && left.y === right.y
+    && left.width === right.width
+    && left.height === right.height
+    && left.widthMode === right.widthMode
+    && left.heightMode === right.heightMode
+    && left.gap === right.gap
+    && left.align === right.align
+    && samePadding(left.padding, right.padding);
+}
+
+function samePadding(left: LayoutSpec["padding"], right: LayoutSpec["padding"]): boolean {
+  if (!left || !right) return left === right;
+  return left.top === right.top && left.right === right.right && left.bottom === right.bottom && left.left === right.left;
+}
