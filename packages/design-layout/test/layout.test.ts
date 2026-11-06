@@ -131,3 +131,18 @@ test("does not report text overflow when the height hugs the content", () => {
   // "AAAAA" at 20px needs 11px per glyph, so 40px of width fits two lines.
   assert.equal(result.boxes.text.height, 48);
 });
+test("spacing token overrides the stack gap", () => {
+  const root = node("root", "page:1");
+  root.layout = { ...defaultLayout(), mode: "stack", direction: "vertical", width: 200, height: 160, gap: 4 };
+  const first = node("first", "root");
+  first.layout = { ...defaultLayout(), width: 50, height: 30 };
+  const second = node("second", "root");
+  second.layout = { ...defaultLayout(), width: 60, height: 40 };
+  const document = documentWith(root, [first, second]);
+  document.tokens = { "space.md": { type: "number", value: 24 } };
+  root.bindings = { spacing: "space.md" };
+
+  const result = computePageLayout(document, "page:1", { viewport: { width: 800, height: 600 } });
+  // gap 4 被 token 的 24 覆盖：第二个子节点从 y=54 开始，而不是 34。
+  assert.equal(result.boxes.second?.y, 54);
+});

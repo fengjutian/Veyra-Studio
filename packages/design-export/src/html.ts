@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, resolveRadius, resolveStroke, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, resolveGap, resolveRadius, resolveStroke, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -119,7 +119,7 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
     declarations.push(
       "display:flex",
       `flex-direction:${node.layout.direction === "horizontal" ? "row" : "column"}`,
-      `gap:${px(node.layout.gap ?? 0)}`,
+      `gap:${px(resolveGap(document, node))}`,
       `padding:${px(padding.top)} ${px(padding.right)} ${px(padding.bottom)} ${px(padding.left)}`,
       `align-items:${alignItems(node.layout.align ?? "start")}`,
     );

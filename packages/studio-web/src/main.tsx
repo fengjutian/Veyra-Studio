@@ -24,6 +24,7 @@ import { CANVAS_HEIGHT, CANVAS_PADDING, CANVAS_WIDTH, clampZoom, contentBounds, 
 import { clampScroll, panScroll } from "./canvas-pan";
 import { listComponents, makeInstanceNode } from "./components";
 import { PropertyPanel } from "./property-panel";
+import { TokenPanel } from "./token-panel";
 import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
 import { commitText, textEditAction } from "./text-edit";
@@ -632,19 +633,41 @@ function App() {
       setPlanning(false); setBusy(false); setStreamText("");
     }
   };
-  const createColorToken = () => void run(async () => {
-    const name = (await askText({ title: "Token 名称", defaultValue: "color.primary" }))?.trim(); if (!name) return;
-    const value = (await askText({ title: "颜色值", defaultValue: "#6366f1", validate: validateColor }))?.trim(); if (!value) return;
-    await execute([{ type: "token.upsert", payload: { name, token: { type: "color", value } } }]);
+  const createToken = () => void run(async () => {
+    const type = await askChoice({
+      title: "新增 Token",
+      description: "颜色 token 可以绑定填充/描边；数值 token 可以绑定圆角/自动布局间距。",
+      options: [{ value: "color", label: "颜色" }, { value: "number", label: "数值" }],
+    });
+    if (!type) return;
+    const name = (await askText({ title: "Token 名称", defaultValue: type === "color" ? "color.primary" : "space.md" }))?.trim();
+    if (!name) return;
+    if (type === "color") {
+      const value = (await askText({ title: "颜色值", defaultValue: "#6366f1", validate: validateColor }))?.trim();
+      if (!value) return;
+      await execute([{ type: "token.upsert", payload: { name, token: { type: "color", value } } }]);
+      return;
+    }
+    const value = (await askText({ title: "数值", defaultValue: "16", validate: validateNumber }))?.trim();
+    if (!value) return;
+    await execute([{ type: "token.upsert", payload: { name, token: { type: "number", value: Number(value) } } }]);
   });
-  const updateColorToken = (name: string, currentValue: unknown) => void run(async () => {
-    const value = (await askText({ title: "颜色值", defaultValue: String(currentValue), validate: validateColor }))?.trim(); if (!value || value === currentValue) return;
-    await execute([{ type: "token.upsert", payload: { name, token: { type: "color", value } } }]);
+  const updateToken = (name: string, token: { type: "color" | "number"; value: string | number }) => void run(async () => {
+    const current = String(token.value);
+    const value = token.type === "color"
+      ? (await askText({ title: "颜色值", defaultValue: current, validate: validateColor }))?.trim()
+      : (await askText({ title: "数值", defaultValue: current, validate: validateNumber }))?.trim();
+    if (!value || value === current) return;
+    await execute([{ type: "token.upsert", payload: { name, token: { type: token.type, value: token.type === "color" ? value : Number(value) } } }]);
   });
-  const unbindFill = () => {
+  const bindToken = (property: "fill" | "stroke" | "typography" | "spacing" | "radius", name: string) => {
+    if (!selected) return;
+    patchNode(selected.id, { bindings: { ...selected.bindings, [property]: name } });
+  };
+  const unbindToken = (property: "fill" | "stroke" | "typography" | "spacing" | "radius") => {
     if (!selected) return;
     const remaining = { ...selected.bindings };
-    delete remaining.fill;
+    delete remaining[property];
     patchNode(selected.id, { bindings: Object.keys(remaining).length ? remaining : undefined });
   };
   const copySelection = () => {
@@ -857,9 +880,7 @@ function App() {
     <div className="backup-list">{backups.length
       ? backups.map(row => <div className="backup-row" key={row.createdAt}><span className="backup-time">{formatSnapshotTime(row.createdAt)}</span><span className="backup-meta">r{row.revision} · {formatBytes(row.byteLength)}</span><Tooltip label="把这份备份下载成 JSON"><button className="icon-only" aria-label="下载备份" disabled={busy} onClick={() => downloadBackup(row)}><Icon name="exportJson" /></button></Tooltip><Tooltip label="还原到这份备份"><button className="icon-only" aria-label="还原备份" disabled={busy} onClick={() => restoreBackup(row)}><Icon name="versionRestore" /></button></Tooltip></div>)
       : <p className="empty-hint">还没有自动备份。每次落盘后最多每 10 分钟保存一份，保留最近 3 份。</p>}</div>
-    <hr/><div className="section-heading"><h2>颜色 Tokens</h2><button disabled={busy} onClick={createColorToken}><Icon name="tokenAdd" />新增</button></div>
-    <div className="token-list">{Object.entries(document.tokens).map(([name, token]) => <div className="token-row" style={{ gridTemplateColumns: "18px minmax(0,1fr) auto auto auto" }} key={name}><span className="token-swatch" style={{ background: String(token.value) }} /><span title={`${name}: ${String(token.value)}`}>{name}</span>{token.type === "color" && <Tooltip label="修改颜色值"><button className="icon-only" aria-label="修改颜色值" disabled={busy} onClick={() => updateColorToken(name, token.value)}><Icon name="tokenEdit" /></button></Tooltip>}{token.type === "color" && selected && <Tooltip label="绑定为选中节点的填充"><button className="icon-only" aria-label="绑定填充" disabled={busy} onClick={() => patchNode(selected.id, { bindings: { ...selected.bindings, fill: name } })}><Icon name="tokenBind" /></button></Tooltip>}<Tooltip label="删除 Token"><button className="icon-only" aria-label="删除 Token" disabled={busy} onClick={() => void run(() => execute([{ type: "token.delete", payload: { name } }]))}><Icon name="tokenRemove" /></button></Tooltip></div>)}</div>
-    {selected?.bindings?.fill && <button className="unbind" disabled={busy} onClick={unbindFill}><Icon name="tokenUnbind" />解绑填充：{selected.bindings.fill}</button>}
+    <hr/><TokenPanel tokens={document.tokens} bindings={selected?.bindings} disabled={busy} canBind={Boolean(selected)} onCreate={createToken} onUpdate={updateToken} onBind={bindToken} onUnbind={unbindToken} onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))} />
     <hr/><div className="section-heading"><h2>图片资源</h2></div>
     <AssetPanel usage={assetUsage} missingIds={missingIds} disabled={busy} onRelink={startRelink} onDelete={deleteAsset} />
     <input ref={relinkInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) relinkAssetFile(file); }} />
@@ -924,7 +945,8 @@ function CanvasNode({ projectId, document, node, selectedIds, layout, onSelect, 
     borderRadius: node.type === "ellipse" ? "50%" : resolveRadius(document, node),
     opacity: node.appearance.opacity,
   };
-  const stroke = resolveStroke(document, node);`n  if (stroke || node.bindings?.stroke) style.border = `1px solid ${stroke ?? "transparent"}`;
+  const stroke = resolveStroke(document, node);
+  if (stroke || node.bindings?.stroke) style.border = `1px solid ${stroke ?? "transparent"}`;
   // 锁定节点在画布上不接收指针事件：点击穿透到它下面/父级，只能从图层面板选中。
   if (node.locked) style.pointerEvents = "none";
   if (node.type === "image") {
@@ -1046,6 +1068,11 @@ function autosaveTitle(status: AutosaveStatus): string {
 function toggleId(ids: string[], id: string): string[] { return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]; }
 
 function resolveFill(document: DesignDocument, node: DesignNode): string { const token = node.bindings?.fill ? document.tokens[node.bindings.fill] : undefined; return token?.type === "color" ? String(token.value) : node.appearance.fill ?? "transparent"; }
+
+function validateNumber(value: string): string | undefined {
+  const parsed = Number(value.trim());
+  return Number.isFinite(parsed) && parsed >= 0 ? undefined : "请输入不小于 0 的数字";
+}
 
 function validateColor(value: string): string | undefined {
   return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value.trim())

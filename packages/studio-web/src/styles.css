@@ -116,6 +116,11 @@ button.icon-only{padding:5px;min-width:26px}
 .diagnostic-list{display:grid;gap:4px}
 .diagnostic-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#c8ccd6}
 .diagnostic-badge{flex:none;font-size:10px;border-radius:999px;padding:1px 6px;border:1px solid #2b303b;color:#98a2b3}
+.token-panel-list{display:grid;gap:6px}
+.token-panel-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#c8ccd6}
+.token-panel-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.token-bind-select{flex:none;max-width:92px;border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;font-size:11px;padding:3px 4px}
+.token-swatch-value{width:auto;min-width:18px;padding:0 3px;display:flex;align-items:center;justify-content:center;border:0;background:none;color:#98a2b3;font-size:9px}
 .diagnostic-badge-unsupported{color:#ff9b9b;border-color:#5a2b2b}
 .diagnostic-badge-approximated,.diagnostic-badge-rasterized{color:#d8c26a;border-color:#4a4327}
 .diagnostic-badge-exact{color:#7dd3a0;border-color:#244d36}
