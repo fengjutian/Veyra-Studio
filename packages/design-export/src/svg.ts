@@ -65,8 +65,10 @@ function resolveBoxes(
 function renderTokenStyles(document: DesignDocument, tokenVariables: Record<string, string>): string {
   const entries = Object.entries(document.tokens);
   if (!entries.length) return "";
+  // tokenVariables 里已经带 `--` 前缀（和 HTML 导出共用同一套命名），这里不能再补一次，
+  // 否则会写出 `----color-primary` 这种声明，`var(--color-primary)` 就取不到值了。
   const declarations = entries
-    .map(([name, token]) => `    --${tokenVariables[name]}: ${escapeXml(cssTokenValue(token.value))};`)
+    .map(([name, token]) => `    ${tokenVariables[name]}: ${escapeXml(cssTokenValue(token.value))};`)
     .join("\n");
   return `  <style>\n  :root {\n${declarations}\n  }\n  </style>`;
 }

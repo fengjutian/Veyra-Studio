@@ -25,6 +25,11 @@ import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
 import { commitText, textEditAction } from "./text-edit";
 import { exportPageToPng, downloadDataUrl } from "./png-export";
+import type { ExportDiagnostic } from "@ufira/design-export";
+import { ExportDiagnosticsPanel } from "./export-panel";
+import type { ExportFormat } from "./export-report";
+import { ExportPreviewDialog } from "./export-preview-dialog";
+import { fitPreviewSize, previewTitle, svgPreviewDataUrl, type ExportPreview } from "./export-preview";
 import { assetIdForHash, fitImageBox, imageBackgroundStyle, imageFileError, readImageSize, sha256Hex } from "./assets";
 import { assetLabel, formatBytes, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
 import { AssetPanel } from "./asset-panel";
@@ -95,6 +100,11 @@ function App() {
   // 自动备份列表与浏览器存储用量。
   const [backups, setBackups] = useState<BackupSummary[]>([]);
   const [storage, setStorage] = useState<StorageEstimate>();
+  // 最近一次导出的诊断与格式，面板据此列出可定位的问题。
+  const [exportReport, setExportReport] = useState<{ format: ExportFormat; diagnostics: ExportDiagnostic[] }>();
+  // 隔离预览：弹窗里渲染导出器真实产物。
+  const [exportPreview, setExportPreview] = useState<ExportPreview>();
+  const [previewOpen, setPreviewOpen] = useState(false);
   // 已提交事务：操作历史面板据此列出每一条可回退的步骤。
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
@@ -465,11 +475,13 @@ function App() {
     // 带资源的导出：图片节点在 HTML 里要落成 data URL，否则只会剩一个空框。
     const result = await project.exportHtmlWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds });
     downloadFile(`${exportFilename}.html`, result.document, "text/html");
+    setExportReport({ format: "html", diagnostics: result.diagnostics });
     setMessage(`HTML 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
   });
   const exportSvg = () => void run(async () => {
     const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds });
     downloadFile(`${exportFilename}.svg`, result.svg, "image/svg+xml");
+    setExportReport({ format: "svg", diagnostics: result.diagnostics });
     setMessage(`SVG 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
   });
   const exportPng = () => void run(async () => {
@@ -478,7 +490,32 @@ function App() {
     const resolveAsset = await createAssetResolver(repository, snapshot, page.id, exportTarget.nodeIds);
     const result = await exportPageToPng(snapshot, { pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, scale: 2, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, resolveAsset });
     downloadDataUrl(`${exportFilename}.png`, result.dataUrl);
+    setExportReport({ format: "png", diagnostics: result.diagnostics });
     setMessage(`PNG 已导出${exportScopeLabel} · ${result.width}×${result.height}`);
+  });
+  // 预览和下载走同一个导出入口，看到的就是交付物本身。
+  const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds });
+  const previewHtml = () => void run(async () => {
+    const result = await project.exportHtmlWithAssets(exportOptions());
+    setExportReport({ format: "html", diagnostics: result.diagnostics });
+    setExportPreview({ format: "html", title: previewTitle("html", exportScopeLabel), content: { kind: "html", html: result.document } });
+    setPreviewOpen(true);
+  });
+  const previewSvg = () => void run(async () => {
+    const result = await project.exportSvgWithAssets(exportOptions());
+    setExportReport({ format: "svg", diagnostics: result.diagnostics });
+    const size = fitPreviewSize(exportTarget.viewport);
+    setExportPreview({ format: "svg", title: previewTitle("svg", exportScopeLabel), content: { kind: "image", dataUrl: svgPreviewDataUrl(result.svg), ...size } });
+    setPreviewOpen(true);
+  });
+  const previewPng = () => void run(async () => {
+    const snapshot = project.snapshot();
+    const resolveAsset = await createAssetResolver(repository, snapshot, page.id, exportTarget.nodeIds);
+    const result = await exportPageToPng(snapshot, { ...exportOptions(), scale: 2, resolveAsset });
+    setExportReport({ format: "png", diagnostics: result.diagnostics });
+    const size = fitPreviewSize(result);
+    setExportPreview({ format: "png", title: previewTitle("png", exportScopeLabel), content: { kind: "image", dataUrl: result.dataUrl, ...size } });
+    setPreviewOpen(true);
   });
   const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
   const importJson = (file: File) => void run(async () => {
@@ -705,6 +742,13 @@ function App() {
       <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
     </> : selectedIds.length > 1 ? <><BatchPanel nodes={selectedNodes} disabled={busy} onPatchAppearance={patchBatchAppearance} onPatchLayout={patchBatchLayout} onPatchText={patchBatchText} /><button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除 {selectedIds.length} 个节点</button></> : <p>选择画布中的节点</p>}
     {canvasLayout.warnings.length > 0 && <><h2>布局警告</h2><div className="warning-list">{canvasLayout.warnings.map((warning, index) => <button key={`${warning.nodeId}:${warning.code}:${index}`} className="warning-row" onClick={() => warning.nodeId && setSelectedIds([warning.nodeId])} title={warning.nodeId ? `选中 ${warning.nodeId}` : warning.message}><span className={`warning-code warning-code-${warning.code}`}>{warning.code}</span><span className="warning-message">{warning.message}</span></button>)}</div></>}
+    <hr/><h2>导出诊断</h2>
+    <div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}>
+      <Tooltip label="在隔离沙箱里预览 HTML 交付物"><button disabled={busy} onClick={previewHtml}><Icon name="exportHtml" />预览 HTML</button></Tooltip>
+      <Tooltip label="预览 SVG 交付物"><button disabled={busy} onClick={previewSvg}><Icon name="exportSvg" />预览 SVG</button></Tooltip>
+      <Tooltip label="预览 PNG 交付物（会先光栅化）"><button disabled={busy} onClick={previewPng}><Icon name="exportPng" />预览 PNG</button></Tooltip>
+    </div>
+    <ExportDiagnosticsPanel format={exportReport?.format} diagnostics={exportReport?.diagnostics ?? []} onSelect={nodeId => { if (document.nodes[nodeId]) setSelectedIds([nodeId]); }} />
     {recovery && <><h2>恢复报告</h2><div className="recovery-report">{recoveryReportRows({ ...recovery, missingAssets }).map(row => <div className="recovery-row" key={row.label}><span className="recovery-label">{row.label}</span><span className={row.tone === "warning" ? "recovery-value recovery-warning" : "recovery-value"}>{row.value}</span></div>)}</div><button disabled={busy} onClick={() => { downloadFile(recoveryReportFileName(recovery.projectName), JSON.stringify({ ...recovery, missingAssets }, null, 2), "application/json"); setMessage("恢复报告已导出"); }}><Icon name="exportJson" />导出报告</button></>}
     <hr/><div className="section-heading"><h2>历史版本</h2></div>
     <div className="snapshot-list">{versionRows.length
@@ -736,6 +780,7 @@ function App() {
       <button disabled={busy || !prompt.trim()} onClick={() => editor && void run(async () => { setPreview(await editor.createPlan(prompt, selectedIds)); setMessage("AI 计划已完成 dry-run，等待确认"); })}><Icon name="aiPlan" />生成变更预览</button>
       {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p>{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
     </aside>
+    <ExportPreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} preview={exportPreview} />
   </div>;
 }
 
