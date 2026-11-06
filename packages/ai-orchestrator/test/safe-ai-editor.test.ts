@@ -153,6 +153,31 @@ test("reports image.patch targets in the preview", async () => {
   assert.deepEqual(preview.affectedNodeIds, ["image:1"]);
 });
 
+test("blocks confirming a plan that deletes a locked node", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  await project.execute({
+    commandId: "human:1",
+    documentId: "project:1",
+    baseRevision: 0,
+    actor: { type: "human", id: "user:1" },
+    commands: [{ type: "node.create", payload: { node: { ...frame("locked"), locked: true } } }],
+  });
+
+  const editor = new SafeAiEditor(project, {
+    async plan() {
+      return { summary: "删除锁定节点", commands: [{ type: "node.delete", payload: { id: "locked" } }] };
+    },
+  });
+  const preview = await editor.createPlan("清理");
+  assert.equal(preview.review.blocking, true);
+  assert.equal(preview.review.findings[0]?.code, "locked-node-deleted");
+
+  await assert.rejects(editor.confirm(preview.planId), /未通过结构审查/);
+  assert.ok(project.snapshot().nodes.locked);
+  assert.equal(project.snapshot().revision, 1);
+});
+
 class MemoryRepository implements ProjectRepository {
   document?: DesignDocument;
   transactions: TransactionEntry[] = [];

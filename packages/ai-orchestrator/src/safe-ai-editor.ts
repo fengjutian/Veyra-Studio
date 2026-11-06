@@ -1,6 +1,7 @@
 import type { DesignCommand, CommandEnvelope } from "@ufira/design-runtime";
 import type { DesignDocument, NodeId } from "@ufira/design-schema";
 import type { StudioExecuteResult, StudioProject } from "@ufira/studio-application";
+import { reviewAiPlan, type ReviewFinding, type ReviewResult } from "./review";
 
 /** 取消信号的形状。用结构化类型，避免依赖 DOM 的 AbortSignal 声明。 */
 export interface AbortSignalLike {
@@ -42,12 +43,22 @@ export interface AiPlanPreview {
   before: DesignDocument;
   after: DesignDocument;
   warnings: string[];
+  /** 结构审查结论；blocking 时必须先改计划才能提交。 */
+  review: ReviewResult;
 }
 
 export class AiPlanNotFoundError extends Error {
   constructor(planId: string) {
     super(`AI plan ${planId} does not exist or is no longer pending`);
     this.name = "AiPlanNotFoundError";
+  }
+}
+
+/** 计划被结构审查拦下：不属于"运行失败"，而是"这次改动不该提交"。 */
+export class AiReviewBlockedError extends Error {
+  constructor(readonly findings: ReviewFinding[]) {
+    super(`AI 计划未通过结构审查：${findings.filter(finding => finding.severity === "blocking").map(finding => finding.message).join("；")}`);
+    this.name = "AiReviewBlockedError";
   }
 }
 
@@ -86,6 +97,8 @@ export class SafeAiEditor {
     const planId = crypto.randomUUID();
     const envelope = this.envelope(planId, document, planned.commands);
     const preview = this.project.preview(envelope);
+    // dry-run 证明"能跑"，审查证明"该不该跑"。
+    const review = reviewAiPlan({ before: preview.before, after: preview.after, commands: planned.commands });
     const result: AiPlanPreview = {
       planId,
       prompt,
@@ -97,6 +110,7 @@ export class SafeAiEditor {
       before: preview.before,
       after: preview.after,
       warnings: [...preview.result.warnings],
+      review,
     };
     this.pending.set(planId, structuredClone(result));
     return structuredClone(result);
@@ -104,6 +118,7 @@ export class SafeAiEditor {
 
   async confirm(planId: string): Promise<StudioExecuteResult> {
     const plan = this.requirePending(planId);
+    if (plan.review.blocking) throw new AiReviewBlockedError(plan.review.findings);
     const current = this.project.snapshot();
     const envelope = this.envelope(planId, current, plan.commands, plan.baseRevision);
     const committed = await this.project.execute(envelope);
