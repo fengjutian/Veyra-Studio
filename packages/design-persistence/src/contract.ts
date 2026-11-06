@@ -130,8 +130,14 @@ export class DocumentLoadError extends Error {
 /** 事务日志默认保留条数：够覆盖一次长会话，又不至于让存储无限膨胀。 */
 export const JOURNAL_RETENTION = 200;
 
-/** 快照默认保留份数：最新一份加上可回滚的前几份。 */
-export const SNAPSHOT_RETENTION = 3;
+/**
+ * 快照默认保留份数：最新一份加上可回滚的前几份。
+ *
+ * 事务级回退需要一份"不晚于目标版本"的快照作为起点，只留 3 份的话，能回退的
+ * 范围只有最近几次编辑。文档本身不含二进制（图片按哈希存在别处），每份快照
+ * 都很小，所以放宽到 10 份，让操作历史真正可用。
+ */
+export const SNAPSHOT_RETENTION = 10;
 
 /**
  * 校验一份即将落盘的文档。

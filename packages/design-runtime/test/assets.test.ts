@@ -77,6 +77,37 @@ test("patches only the fit of an image node", () => {
   assert.equal(node?.type === "image" ? node.fit : undefined, "contain");
 });
 
+test("swaps the asset of an image node without touching its layout", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  const replacement = { ...asset, id: "asset:two", hash: "b".repeat(64), name: "replacement.png" };
+  runtime.execute(envelope(0, [
+    { type: "asset.upsert", payload: { asset } },
+    { type: "node.create", payload: { node: imageNode("image:1", "asset:one") } },
+  ]));
+  const before = runtime.snapshot().nodes["image:1"]!;
+
+  runtime.execute(envelope(1, [
+    { type: "asset.upsert", payload: { asset: replacement } },
+    { type: "image.patch", payload: { id: "image:1", patch: { assetId: replacement.id } } },
+  ]));
+
+  const after = runtime.snapshot().nodes["image:1"]!;
+  assert.equal(after.type === "image" ? after.assetId : undefined, replacement.id);
+  assert.deepEqual(after.layout, before.layout);
+  assert.deepEqual(after.appearance, before.appearance);
+});
+
+test("refuses to point an image at an unregistered asset", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [
+    { type: "asset.upsert", payload: { asset } },
+    { type: "node.create", payload: { node: imageNode("image:1", "asset:one") } },
+  ]));
+  assert.throws(() => runtime.execute(envelope(1, [{ type: "image.patch", payload: { id: "image:1", patch: { assetId: "asset:missing" } } }])), CommandError);
+  const node = runtime.snapshot().nodes["image:1"];
+  assert.equal(node?.type === "image" ? node.assetId : undefined, "asset:one");
+});
+
 test("refuses image patches on non-image nodes and unknown fits", () => {
   const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   runtime.execute(envelope(0, [{ type: "node.create", payload: { node: { ...imageNode("frame:1", "asset:one"), type: "frame", assetId: undefined, fit: undefined } } }]));
@@ -89,8 +120,7 @@ test("refuses image patches on non-image nodes and unknown fits", () => {
   assert.throws(() => runtime.execute(envelope(2, [{ type: "image.patch", payload: { id: "image:1", patch: { fit: "stretch" } } }])), CommandError);
 });
 
-test("deletes an unused asset and keeps one that is still referenced", () => {
-  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+test("deletes an unused asset and keeps one that is still referenced", () => {  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   runtime.execute(envelope(0, [
     { type: "asset.upsert", payload: { asset } },
     { type: "node.create", payload: { node: imageNode("image:1", "asset:one") } },

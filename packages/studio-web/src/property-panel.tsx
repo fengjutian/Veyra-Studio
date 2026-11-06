@@ -9,6 +9,8 @@ export interface PropertyPanelProps {
   onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance">>): void;
   onPatchText(patch: TextPatch): void;
   onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
+  /** 换一张图：只改节点引用的资源，节点本身不重建。 */
+  onReplaceImage?(): void;
 }
 
 /**
@@ -18,7 +20,7 @@ export interface PropertyPanelProps {
  * absolute and stack modes, fixed/fill/hug sizing, gap, padding and alignment —
  * so the editor can drive the same semantics the exporters use.
  */
-export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchImage }: PropertyPanelProps) {
+export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";
   const padding = resolvePadding(layout);
@@ -115,6 +117,7 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
             onChange={fit => onPatchImage({ fit: fit as ImageNode["fit"] })}
           />
           <p className="field-hint">资源 {node.assetId}</p>
+          {onReplaceImage && <button type="button" disabled={disabled} onClick={onReplaceImage}>替换图片…</button>}
         </Section>
       )}
 

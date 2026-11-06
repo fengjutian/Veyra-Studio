@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createDocument, type DesignDocument } from "@ufira/design-schema";
 import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
-import { ProjectNotFoundError, SnapshotNotFoundError, type ProjectRepository } from "./contract";
+import { ProjectNotFoundError, SNAPSHOT_RETENTION, SnapshotNotFoundError, type ProjectRepository } from "./contract";
 
 /**
  * 仓库契约测试套件（node 环境专用）。
@@ -227,9 +227,13 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
 
   test(`${name}: 历史版本按保留份数裁剪`, async () => {
     await withRepository(async ({ repository }) => {
-      for (const revision of [0, 1, 2, 3, 4]) await repository.saveSnapshot(snapshotAt("project:1", revision, `v${revision}`));
+      for (let revision = 0; revision <= SNAPSHOT_RETENTION + 1; revision += 1) {
+        await repository.saveSnapshot(snapshotAt("project:1", revision, `v${revision}`));
+      }
       const snapshots = await repository.listSnapshots("project:1");
-      assert.deepEqual(snapshots.map(item => item.revision), [4, 3, 2]);
+      assert.equal(snapshots.length, SNAPSHOT_RETENTION);
+      assert.equal(snapshots[0]?.revision, SNAPSHOT_RETENTION + 1);
+      assert.equal(snapshots.at(-1)?.revision, 2);
     });
   });
 

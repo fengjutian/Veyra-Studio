@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDocument } from "@ufira/design-schema";
-import { detectImportConflict, prepareImportedDocument } from "../src/project-import";
+import { detectImportConflict, prepareImportedDocument, uniqueProjectName } from "../src/project-import";
 
 test("validates and isolates imported documents as new projects", () => {
   const source = createDocument("project:source", "Source", "page:1");
@@ -69,22 +69,56 @@ test("detects a conflict when the imported file is the same project", () => {
     { id: "project:2", name: "其他" },
   ]);
 
-  assert.deepEqual(conflict, { projectId: "project:1", projectName: "首页" });
+  assert.deepEqual(conflict, { kind: "id", projectId: "project:1", projectName: "首页" });
 });
 
-test("does not report a conflict for a different project with the same name", () => {
-  const source = createDocument("project:1", "首页", "page:1");
-  const conflict = detectImportConflict({ id: source.id, name: source.meta.name }, [{ id: "project:2", name: "首页" }]);
+test("reports a name-only conflict for a different project and suggests a free name", () => {
+  const source = createDocument("project:1", "首页（导入）", "page:1");
+  const conflict = detectImportConflict({ id: source.id, name: source.meta.name }, [
+    { id: "project:2", name: "首页（导入）" },
+  ]);
 
+  assert.equal(conflict?.kind, "name");
+  assert.equal(conflict?.projectId, "project:2");
+  assert.equal(conflict?.suggestedName, "首页（导入）（2）");
+});
+
+test("no conflict when both id and name are new", () => {
+  const conflict = detectImportConflict({ id: "project:9", name: "全新" }, [{ id: "project:1", name: "首页" }]);
   assert.equal(conflict, undefined);
+});
+
+test("uniqueProjectName counts up until the name is free", () => {
+  assert.equal(uniqueProjectName("首页", []), "首页");
+  assert.equal(uniqueProjectName("首页", ["首页"]), "首页（2）");
+  assert.equal(uniqueProjectName("首页", ["首页", "首页（2）"]), "首页（3）");
+  assert.equal(uniqueProjectName("   ", []), "未命名设计");
+});
+
+test("an explicit name overrides the copy-mode suffix", () => {
+  const source = createDocument("project:source", "Source", "page:1");
+  const prepared = prepareImportedDocument(source, { mode: "copy", name: "Source（2）" });
+  assert.equal(prepared.document.meta.name, "Source（2）");
 });
 
 test("the conflict check uses the imported file's own id, not the rewritten one", () => {
   const source = createDocument("project:1", "首页", "page:1");
   const prepared = prepareImportedDocument(source);
-  const conflict = detectImportConflict({ id: prepared.sourceId, name: prepared.sourceName }, [{ id: "project:1", name: "首页" }]);
+  const conflict = detectImportConflict({ id: prepared.sourceId, name: prepared.document.meta.name }, [{ id: "project:1", name: "首页" }]);
 
   assert.notEqual(prepared.document.id, "project:1");
   assert.equal(prepared.sourceId, "project:1");
+  assert.equal(conflict?.kind, "id");
   assert.equal(conflict?.projectId, "project:1");
+});
+
+test("a previously imported copy collides by its stored name, not the source name", () => {
+  const source = createDocument("project:1", "首页", "page:1");
+  const prepared = prepareImportedDocument(source);
+  // 上一次导入存下来的名字是「首页（导入）」，再用原名导入会直接撞上它。
+  const conflict = detectImportConflict({ id: prepared.sourceId, name: prepared.document.meta.name }, [
+    { id: "project:2", name: "首页（导入）" },
+  ]);
+  assert.equal(conflict?.kind, "name");
+  assert.equal(conflict?.suggestedName, "首页（导入）（2）");
 });

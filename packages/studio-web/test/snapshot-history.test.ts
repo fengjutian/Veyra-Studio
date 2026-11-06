@@ -73,7 +73,7 @@ test("还原历史版本会把内容退回旧版，修订号继续往前走", as
 
   // 还原之后，它自己成了新的当前版本。
   const after = await repository.listSnapshots("project:1");
-  assert.deepEqual(after.map(item => item.revision), [3, 2, 1]);
+  assert.deepEqual(after.map(item => item.revision), [3, 2, 1, 0]);
   assert.equal(after[0]?.current, true);
 });
 

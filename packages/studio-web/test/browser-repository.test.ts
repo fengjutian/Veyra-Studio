@@ -93,14 +93,15 @@ test("migrates a legacy snapshot and keeps the upgraded copy", async t => {
 test("keeps only the newest snapshots for a project", async t => {
   const repository = createRepository(); t.after(() => repository.deleteDatabase());
   const document = createDocument("project:1", "Demo", "page:1");
-  for (let revision = 0; revision < 5; revision++) {
+  for (let revision = 0; revision < 12; revision++) {
     document.revision = revision;
     await repository.saveSnapshot(document);
   }
   const current = await repository.storage.snapshots.get("project:1");
-  assert.equal(current?.revision, 4);
+  assert.equal(current?.revision, 11);
   const history = await repository.storage.snapshotHistory.where("projectId").equals("project:1").toArray();
-  assert.deepEqual(history.map(item => item.revision).sort(), [2, 3]);
+  // 保留 10 份快照：当前一份 + 历史九份，最早的 0、1 被裁掉。
+  assert.deepEqual(history.map(item => item.revision).sort((left, right) => left - right), [2, 3, 4, 5, 6, 7, 8, 9, 10]);
 });
 
 test("upgrades a version 1 database to the version 2 storage layout", async t => {

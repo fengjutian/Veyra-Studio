@@ -1,12 +1,13 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
-import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
+import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, migrateDocument, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
-import { StudioProject, collectAssetUsage, createAssetResolver, findMissingAssets } from "@ufira/studio-application";
+import { StudioProject, collectAssetUsage, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
+import { planGroup, planUngroup } from "./grouping";
 import { arrangeNodes, nudgeNodes, type Arrangement } from "./node-arrangement";
 import { flattenNodeTrees } from "./node-tree";
 import { detectImportConflict, prepareImportedDocument } from "./project-import";
@@ -25,9 +26,11 @@ import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds
 import { commitText, textEditAction } from "./text-edit";
 import { exportPageToPng, downloadDataUrl } from "./png-export";
 import { assetIdForHash, fitImageBox, imageBackgroundStyle, imageFileError, readImageSize, sha256Hex } from "./assets";
-import { assetLabel, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
+import { assetLabel, formatBytes, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
 import { AssetPanel } from "./asset-panel";
-import { backupRestoreConfirmation, backupRows, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
+import { backupRestoreConfirmation, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
+import { historyRows, type HistoryRow } from "./history-rows";
+import { HistoryPanel } from "./history-panel";
 import { readStorageEstimate, type StorageEstimate } from "./storage-estimate";
 import { StoragePanel } from "./storage-panel";
 import { assetUrlCacheVersion, forgetAssetUrl, loadAssetUrl } from "./asset-url";
@@ -66,10 +69,11 @@ function App() {
   const panPointer = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const operationInFlight = useRef(false);
   const clipboard = useRef<NodeClipboard | undefined>(undefined);
-  const keyboardAction = useRef<(action: "copy" | "paste" | "duplicate" | "delete" | "layerUp" | "layerDown" | "selectAll") => void>(() => undefined);
+  const keyboardAction = useRef<(action: "copy" | "paste" | "duplicate" | "delete" | "layerUp" | "layerDown" | "selectAll" | "group" | "ungroup") => void>(() => undefined);
   const nudgeAction = useRef<(dx: number, dy: number) => void>(() => undefined);
   const importInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
+  const replaceImageInput = useRef<HTMLInputElement>(null);
   const relinkInput = useRef<HTMLInputElement>(null);
   // 重新关联需要知道"这次要补哪份资源"，文件选择框本身不带这个信息。
   const relinkTarget = useRef<AssetMetadata | undefined>(undefined);
@@ -91,6 +95,8 @@ function App() {
   // 自动备份列表与浏览器存储用量。
   const [backups, setBackups] = useState<BackupSummary[]>([]);
   const [storage, setStorage] = useState<StorageEstimate>();
+  // 已提交事务：操作历史面板据此列出每一条可回退的步骤。
+  const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
   const planner = useMemo(() => aiSettingsComplete(aiSettings)
     ? createOpenAiCompatiblePlanner({ baseUrl: aiSettings.baseUrl, model: aiSettings.model, apiKey: aiSettings.apiKey || undefined })
@@ -128,13 +134,20 @@ function App() {
     })().catch(() => undefined);
     return () => { cancelled = true; };
   }, [autosave.state, autosave.lastSavedAt, snapshotProjectId, project]);
+  // 操作历史：每次落盘后重新读一遍事务日志，回退之后列表也要跟着变。
+  useEffect(() => {
+    if (!snapshotProjectId) return;
+    let cancelled = false;
+    void repository.listTransactions(snapshotProjectId).then(entries => { if (!cancelled) setTransactions(entries); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [snapshotProjectId, autosave.lastSavedAt]);
   useEffect(() => {
     if (!project) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
       const modifier = event.ctrlKey || event.metaKey, key = event.key.toLowerCase();
-      const action = modifier && key === "c" ? "copy" : modifier && key === "v" ? "paste" : modifier && key === "d" ? "duplicate" : modifier && key === "a" ? "selectAll" : modifier && key === "]" ? "layerUp" : modifier && key === "[" ? "layerDown" : key === "delete" || key === "backspace" ? "delete" : undefined;
+      const action = modifier && key === "c" ? "copy" : modifier && key === "v" ? "paste" : modifier && key === "d" ? "duplicate" : modifier && key === "a" ? "selectAll" : modifier && key === "]" ? "layerUp" : modifier && key === "[" ? "layerDown" : modifier && key === "g" ? (event.shiftKey ? "ungroup" : "group") : key === "delete" || key === "backspace" ? "delete" : undefined;
       if (action) { event.preventDefault(); keyboardAction.current(action); return; }
       const arrow = !modifier ? ({ arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] } as const)[key as "arrowleft"] : undefined;
       if (arrow) { event.preventDefault(); const step = event.shiftKey ? 10 : 1; nudgeAction.current(arrow[0] * step, arrow[1] * step); return; }
@@ -174,6 +187,10 @@ function App() {
   // 资源面板和画布共用同一份使用情况与缺失集合。
   const assetUsage = useMemo(() => document ? collectAssetUsage(document) : [], [document]);
   const missingIds = useMemo(() => missingAssetIds(missingAssets), [missingAssets]);
+  const transactionRows = useMemo(() => {
+    const oldestSnapshotRevision = snapshots.length ? Math.min(...snapshots.map(item => item.revision)) : undefined;
+    return historyRows(transactions, document?.revision ?? 0, { oldestSnapshotRevision });
+  }, [transactions, document?.revision, snapshots]);
 
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[activePageId!]!;
@@ -252,9 +269,61 @@ function App() {
     setSnapshots(await repository.listSnapshots(document.id));
     setMessage(`已还原到 ${row.label}`);
   });
+  /** 重新读一遍浏览器存储用量；估算失败时显示"无法获取"，不阻塞编辑。 */
+  const refreshStorage = () => void readStorageEstimate().then(setStorage).catch(() => setStorage(undefined));
+  const downloadBackup = (row: BackupSummary) => void run(async () => {
+    const snapshot = await backupStore.read(document.id, row.createdAt);
+    downloadFile(`${safeFilename(snapshot.meta.name)}-备份-r${row.revision}.json`, JSON.stringify(snapshot, null, 2), "application/json");
+    setMessage(`备份 r${row.revision} 已下载`);
+  });
+  const restoreBackup = (row: BackupSummary) => void run(async () => {
+    const confirmation = backupRestoreConfirmation(row);
+    if (!await askConfirm({ ...confirmation, confirmLabel: "还原", destructive: true })) return;
+    const snapshot = await backupStore.read(document.id, row.createdAt);
+    // 和还原历史版本同一条路径：revision 继续往前走，这次还原本身也能撤销。
+    await project.execute(restoreSnapshotEnvelope(project.snapshot(), snapshot));
+    await flushAutosave();
+    const restored = project.snapshot();
+    setDocument(restored);
+    setSelectedIds(current => current.filter(id => Boolean(restored.nodes[id])));
+    setProjects(await repository.listProjects());
+    setSnapshots(await repository.listSnapshots(document.id));
+    setMessage(`已从备份还原到 r${row.revision}`);
+  });
+  /**
+   * 回退到某一次事务之后的状态。
+   *
+   * 目标版本可能没有快照，所以先按"最近快照 + 重放事务"重建文档，再走
+   * `history.restore`——回退本身也是可撤销的一次事务。
+   */
+  const restoreTransaction = (row: HistoryRow) => void run(async () => {
+    const confirmed = await askConfirm({
+      title: `回退到 ${row.label}`,
+      description: `把项目退回到 ${row.label} 之后的状态（${row.summary}）。之后的改动会作为一次还原记入历史，可以再撤销。`,
+      confirmLabel: "回退",
+      destructive: true,
+    });
+    if (!confirmed) return;
+    try {
+      const reconstructed = await reconstructDocumentAt(repository, document.id, row.revision);
+      await project.execute(restoreSnapshotEnvelope(project.snapshot(), reconstructed.document));
+      await flushAutosave();
+      const restored = project.snapshot();
+      setDocument(restored);
+      setSelectedIds(current => current.filter(id => Boolean(restored.nodes[id])));
+      setProjects(await repository.listProjects());
+      setSnapshots(await repository.listSnapshots(document.id));
+      setMessage(`已回退到 ${row.label}（重放 ${reconstructed.replayedTransactions} 条事务）`);
+    } catch (error) {
+      // 日志被裁剪、起点快照被清理时给出人话，而不是一句内部错误。
+      setMessage(error instanceof HistoryReconstructionError ? error.message : errorMessage(error));
+    }
+  });
   const deleteCurrentProject = () => void run(async () => {
     if (!await askConfirm({ title: "删除项目", description: `删除项目“${document.meta.name}”？此操作不可撤销。`, confirmLabel: "删除", destructive: true })) return;
     await repository.deleteProject(document.id);
+    // 备份不随项目删除自动消失，会占着存储且无法再打开，所以一起清掉。
+    await backupStore.deleteProject(document.id);
     const remaining = await repository.listProjects();
     if (remaining[0]) await openProject(remaining[0].id);
     else {
@@ -313,8 +382,33 @@ function App() {
     const restored = collectAssetUsage(document).find(entry => entry.asset.id === asset.id)?.nodeIds.length ?? 0;
     setMessage(`${relinkSuccessMessage(asset, restored)}${missing.length ? `；仍有 ${missing.length} 个资源缺失` : ""}`);
   });
-  /** 清理没有被任何图片节点引用的资源元数据。 */
-  const deleteAsset = (asset: AssetMetadata) => void run(async () => {
+  /**
+   * 替换选中图片节点的图片。
+   *
+   * 换的是节点引用的资源，不是"补回原文件"：新图先按哈希落库并在同一事务里
+   * 登记元数据，再用 image.patch 把 assetId 指过去，节点位置、尺寸和 fit 都不变。
+   */
+  const replaceSelectedImage = (file: File) => void run(async () => {
+    if (selected?.type !== "image") return;
+    const nodeId = selected.id;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const invalid = imageFileError(file, bytes.byteLength);
+    if (invalid) { setMessage(invalid); return; }
+    const hash = await sha256Hex(bytes);
+    const assetId = assetIdForHash(hash);
+    if (assetId === selected.assetId) { setMessage("已经是这张图了"); return; }
+    await repository.putAsset(document.id, { hash, bytes });
+    forgetAssetUrl(document.id, hash);
+    const asset: AssetMetadata = { id: assetId, hash, mimeType: file.type || "image/png", byteLength: bytes.byteLength, name: file.name };
+    const commands: DesignCommand[] = [];
+    // 已经有同样的资源（同一张图被别处用过）就不需要重复登记。
+    if (!document.assets[assetId]) commands.push({ type: "asset.upsert", payload: { asset } });
+    commands.push({ type: "image.patch", payload: { id: nodeId, patch: { assetId } } });
+    await execute(commands);
+    await refreshMissingAssets(project.snapshot());
+    setMessage(`图片已替换为「${file.name}」`);
+  });
+  /** 清理没有被任何图片节点引用的资源元数据。 */  const deleteAsset = (asset: AssetMetadata) => void run(async () => {
     if (!await askConfirm({ title: "清理图片资源", description: `「${assetLabel(asset)}」没有被任何图片节点引用。清理后这份文件不能从历史版本里找回。`, confirmLabel: "清理", destructive: true })) return;
     await execute([{ type: "asset.delete", payload: { id: asset.id } }]);
     // 同一份字节可能被多条资源记录共享，确认没人再用这个哈希才回收字节。
@@ -566,6 +660,20 @@ function App() {
     await execute([{ type: "component.remove", payload: { id: componentId } }]);
     setMessage(`组件「${definition.name}」已删除`);
   });
+  /** 编组：把同级的多个对象包进一个不带填充的 frame。 */
+  const groupSelection = () => {
+    if (selectionLocked) return;
+    const plan = planGroup(document, selectedIds, canvasLayout.boxes, { id: `frame:${crypto.randomUUID().slice(0, 8)}` });
+    if (!plan) { setMessage("只有同一个父级下的两个及以上对象可以编组"); return; }
+    void run(async () => { await execute(plan.commands); setSelectedIds([plan.frameId]); setMessage(`已编组 ${plan.nodeIds.length} 个对象`); });
+  };
+  /** 取消编组：把 frame 的子节点放回原位置，再删掉空 frame。 */
+  const ungroupSelection = () => {
+    if (selectionLocked || selectedIds.length !== 1) return;
+    const plan = planUngroup(document, selectedIds[0]!, canvasLayout.boxes);
+    if (!plan) { setMessage("选中的对象不是带子节点的编组"); return; }
+    void run(async () => { await execute(plan.commands); setSelectedIds(plan.childIds); setMessage(`已取消编组，放出 ${plan.childIds.length} 个对象`); });
+  };
   nudgeAction.current = (dx, dy) => {
     if (!busy && selectedNodes.length && !selectionLocked) patchLayouts(nudgeNodes(selectedNodes, dx, dy));
   };
@@ -577,6 +685,8 @@ function App() {
     else if (action === "layerUp") reorderLayer(Math.min((selectedOwner?.childIds.length ?? 1) - 1, selectedLayerIndex + 1));
     else if (action === "layerDown") reorderLayer(Math.max(0, selectedLayerIndex - 1));
     else if (action === "selectAll") selectAll();
+    else if (action === "group") groupSelection();
+    else if (action === "ungroup") ungroupSelection();
     else deleteSelection();
   };
   const previewStale = preview?.baseRevision !== document.revision;
@@ -585,10 +695,11 @@ function App() {
 
   return <div className={`studio${leftPanelOpen ? "" : " left-collapsed"}${rightPanelOpen ? "" : " right-collapsed"}`}>
     <header><strong>AI Design Studio</strong><select className="project-select" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select><Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip><Tooltip label={rightPanelOpen ? "收起属性面板" : "展开属性面板"}><button className="icon-only" aria-label="属性面板" onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip><button disabled={busy} onClick={createProject}><Icon name="newProject" />新建</button><button disabled={busy} onClick={renameProject}><Icon name="rename" />重命名</button><Tooltip label="撤销 · Ctrl/Cmd+Z"><button disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" />撤销</button></Tooltip><Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" />重做</button></Tooltip><select className="export-scope" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />HTML</button><button disabled={busy} onClick={exportSvg}><Icon name="exportSvg" />SVG</button><button disabled={busy} onClick={exportPng}><Icon name="exportPng" />PNG</button><button disabled={busy} onClick={exportJson}><Icon name="exportJson" />JSON</button><button disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" />导入</button><input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} /><button disabled={busy} className="header-danger" onClick={deleteCurrentProject}><Icon name="trash" />删除项目</button><span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span><span className="status">{message}</span></header>
-    <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}><Icon name="pageAdd" />新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}><Icon name="rename" />重命名</button><Tooltip label={page.childIds.length ? "请先清空页面" : "删除当前页面"}><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} onClick={deletePage}><Icon name="pageDelete" />删除</button></Tooltip></div><div className="section-heading"><h2>图层</h2><Tooltip label="全选页面顶层对象 · Ctrl/Cmd+A"><button disabled={busy || !page.childIds.length} onClick={selectAll}><Icon name="selectAll" />全选</button></Tooltip></div><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}><Icon name="addFrame" />Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}><Icon name="addRectangle" />矩形</button><button disabled={busy} onClick={() => addNode("ellipse")}><Icon name="addEllipse" />椭圆</button><button disabled={busy} onClick={() => addNode("text")}><Icon name="addText" />文本</button><button disabled={busy} onClick={() => imageInput.current?.click()}><Icon name="nodeImage" />图片</button></div><input ref={imageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) insertImage(file); }} /><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><Tooltip label="复制 · Ctrl/Cmd+C"><button disabled={busy || !selectedIds.length} onClick={copySelection}><Icon name="copy" />复制</button></Tooltip><Tooltip label="粘贴 · Ctrl/Cmd+V"><button disabled={busy || !clipboard.current} onClick={pasteSelection}><Icon name="paste" />粘贴</button></Tooltip><Tooltip label="重复 · Ctrl/Cmd+D"><button disabled={busy || !selectedIds.length} onClick={duplicateSelection}><Icon name="duplicate" />重复</button></Tooltip></div><div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><Tooltip label="置底"><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="置底" onClick={() => reorderLayer(0)}><Icon name="toBack" /></button></Tooltip><Tooltip label="下移 · Ctrl/Cmd+["><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="下移" onClick={() => reorderLayer(selectedLayerIndex - 1)}><Icon name="moveDown" /></button></Tooltip><Tooltip label="上移 · Ctrl/Cmd+]"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="上移" onClick={() => reorderLayer(selectedLayerIndex + 1)}><Icon name="moveUp" /></button></Tooltip><Tooltip label="置顶"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="置顶" onClick={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}><Icon name="toFront" /></button></Tooltip></div><LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} /></aside>    <section className="workspace"><div className={`canvas-scroller${panMode ? " pan-mode" : ""}${panning ? " panning" : ""}`} ref={setScroller} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}><ContextMenuRoot><ContextMenuTrigger onContextMenu={handleCanvasContextMenu}><div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></ContextMenuTrigger><ContextMenuContent>{contextIds.length ? <><ContextMenuItem icon="copy" shortcut="Ctrl/Cmd+C" disabled={busy} onSelect={copySelection}>复制</ContextMenuItem><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuItem icon="duplicate" shortcut="Ctrl/Cmd+D" disabled={busy} onSelect={duplicateSelection}>重复</ContextMenuItem><ContextMenuSeparator /><ContextMenuItem icon="trash" shortcut="Delete" danger disabled={busy} onSelect={deleteSelection}>删除</ContextMenuItem><ContextMenuSeparator />{contextIds.length === 1 && <ContextMenuSub label="图层顺序" icon="layerOrder"><ContextMenuItem icon="toFront" disabled={busy} onSelect={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}>置顶</ContextMenuItem><ContextMenuItem icon="toBack" disabled={busy} onSelect={() => reorderLayer(0)}>置底</ContextMenuItem><ContextMenuItem icon="moveUp" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex + 1)}>上移</ContextMenuItem><ContextMenuItem icon="moveDown" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex - 1)}>下移</ContextMenuItem></ContextMenuSub>}{contextIds.length > 1 && <ContextMenuSub label="对齐" icon="alignGroup"><ContextMenuItem icon="alignLeft" disabled={busy} onSelect={() => arrangeSelection("left")}>左对齐</ContextMenuItem><ContextMenuItem icon="alignCenterX" disabled={busy} onSelect={() => arrangeSelection("centerX")}>水平居中</ContextMenuItem><ContextMenuItem icon="alignRight" disabled={busy} onSelect={() => arrangeSelection("right")}>右对齐</ContextMenuItem><ContextMenuItem icon="alignTop" disabled={busy} onSelect={() => arrangeSelection("top")}>顶对齐</ContextMenuItem><ContextMenuItem icon="alignCenterY" disabled={busy} onSelect={() => arrangeSelection("centerY")}>垂直居中</ContextMenuItem><ContextMenuItem icon="alignBottom" disabled={busy} onSelect={() => arrangeSelection("bottom")}>底对齐</ContextMenuItem></ContextMenuSub>}{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}</> : <><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuSeparator /><ContextMenuSub label="添加" icon="addFrame"><ContextMenuItem icon="addFrame" disabled={busy} onSelect={() => addNode("frame")}>Frame</ContextMenuItem><ContextMenuItem icon="addRectangle" disabled={busy} onSelect={() => addNode("rectangle")}>矩形</ContextMenuItem><ContextMenuItem icon="addEllipse" disabled={busy} onSelect={() => addNode("ellipse")}>椭圆</ContextMenuItem><ContextMenuItem icon="addText" disabled={busy} onSelect={() => addNode("text")}>文本</ContextMenuItem></ContextMenuSub></>}</ContextMenuContent></ContextMenuRoot></div><div className="canvas-controls"><Tooltip label={panMode ? "退出抓手" : "抓手拖动画布"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setPanMode(on => !on)}><Icon name="pan" /></button></Tooltip><Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => setZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip><Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => setZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip><Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip><Tooltip label="适应内容"><button className="icon-only zoom-fit" aria-label="适应内容" onClick={fitCanvas}><Icon name="zoomFit" /></button></Tooltip></div></section>
+    <aside className="layers"><div className="section-heading"><h2>页面</h2><button disabled={busy} onClick={createPage}><Icon name="pageAdd" />新增</button></div><select className="project-select" style={{ width: "100%", minWidth: 0, marginBottom: 8 }} disabled={busy} value={page.id} onChange={event => switchPage(event.target.value)}>{document.pageOrder.map(id => <option key={id} value={id}>{document.pages[id]?.name}</option>)}</select><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 20 }}><button disabled={busy} onClick={renamePage}><Icon name="rename" />重命名</button><Tooltip label={page.childIds.length ? "请先清空页面" : "删除当前页面"}><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} onClick={deletePage}><Icon name="pageDelete" />删除</button></Tooltip></div><div className="section-heading"><h2>图层</h2><Tooltip label="全选页面顶层对象 · Ctrl/Cmd+A"><button disabled={busy || !page.childIds.length} onClick={selectAll}><Icon name="selectAll" />全选</button></Tooltip></div><div className="tools"><button disabled={busy} onClick={() => addNode("frame")}><Icon name="addFrame" />Frame</button><button disabled={busy} onClick={() => addNode("rectangle")}><Icon name="addRectangle" />矩形</button><button disabled={busy} onClick={() => addNode("ellipse")}><Icon name="addEllipse" />椭圆</button><button disabled={busy} onClick={() => addNode("text")}><Icon name="addText" />文本</button><button disabled={busy} onClick={() => imageInput.current?.click()}><Icon name="nodeImage" />图片</button></div><input ref={imageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) insertImage(file); }} /><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><Tooltip label="复制 · Ctrl/Cmd+C"><button disabled={busy || !selectedIds.length} onClick={copySelection}><Icon name="copy" />复制</button></Tooltip><Tooltip label="粘贴 · Ctrl/Cmd+V"><button disabled={busy || !clipboard.current} onClick={pasteSelection}><Icon name="paste" />粘贴</button></Tooltip><Tooltip label="重复 · Ctrl/Cmd+D"><button disabled={busy || !selectedIds.length} onClick={duplicateSelection}><Icon name="duplicate" />重复</button></Tooltip></div><div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6, marginBottom: 8 }}><Tooltip label="编组 · Ctrl/Cmd+G"><button disabled={busy || selectedIds.length < 2 || !selectionSameParent} onClick={groupSelection}><Icon name="nodeComponent" />编组</button></Tooltip><Tooltip label="取消编组 · Shift+Ctrl/Cmd+G"><button disabled={busy || selectedIds.length !== 1 || selected.type !== "frame" || !selected.childIds.length} onClick={ungroupSelection}><Icon name="tokenUnbind" />取消编组</button></Tooltip></div><div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4, marginBottom: 12 }}><Tooltip label="置底"><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="置底" onClick={() => reorderLayer(0)}><Icon name="toBack" /></button></Tooltip><Tooltip label="下移 · Ctrl/Cmd+["><button className="icon-only" disabled={busy || selectedLayerIndex <= 0} aria-label="下移" onClick={() => reorderLayer(selectedLayerIndex - 1)}><Icon name="moveDown" /></button></Tooltip><Tooltip label="上移 · Ctrl/Cmd+]"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="上移" onClick={() => reorderLayer(selectedLayerIndex + 1)}><Icon name="moveUp" /></button></Tooltip><Tooltip label="置顶"><button className="icon-only" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} aria-label="置顶" onClick={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}><Icon name="toFront" /></button></Tooltip></div><LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} /></aside>    <section className="workspace"><div className={`canvas-scroller${panMode ? " pan-mode" : ""}${panning ? " panning" : ""}`} ref={setScroller} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}><ContextMenuRoot><ContextMenuTrigger onContextMenu={handleCanvasContextMenu}><div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClick={event => event.target === event.currentTarget && setSelectedIds([])}>{page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}><CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={setSelectedIds} onCommit={patchLayouts} /></Suspense></div></ContextMenuTrigger><ContextMenuContent>{contextIds.length ? <><ContextMenuItem icon="copy" shortcut="Ctrl/Cmd+C" disabled={busy} onSelect={copySelection}>复制</ContextMenuItem><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuItem icon="duplicate" shortcut="Ctrl/Cmd+D" disabled={busy} onSelect={duplicateSelection}>重复</ContextMenuItem><ContextMenuSeparator /><ContextMenuItem icon="trash" shortcut="Delete" danger disabled={busy} onSelect={deleteSelection}>删除</ContextMenuItem><ContextMenuSeparator />{contextIds.length === 1 && <ContextMenuSub label="图层顺序" icon="layerOrder"><ContextMenuItem icon="toFront" disabled={busy} onSelect={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}>置顶</ContextMenuItem><ContextMenuItem icon="toBack" disabled={busy} onSelect={() => reorderLayer(0)}>置底</ContextMenuItem><ContextMenuItem icon="moveUp" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex + 1)}>上移</ContextMenuItem><ContextMenuItem icon="moveDown" disabled={busy} onSelect={() => reorderLayer(selectedLayerIndex - 1)}>下移</ContextMenuItem></ContextMenuSub>}{contextIds.length > 1 && <ContextMenuSub label="对齐" icon="alignGroup"><ContextMenuItem icon="alignLeft" disabled={busy} onSelect={() => arrangeSelection("left")}>左对齐</ContextMenuItem><ContextMenuItem icon="alignCenterX" disabled={busy} onSelect={() => arrangeSelection("centerX")}>水平居中</ContextMenuItem><ContextMenuItem icon="alignRight" disabled={busy} onSelect={() => arrangeSelection("right")}>右对齐</ContextMenuItem><ContextMenuItem icon="alignTop" disabled={busy} onSelect={() => arrangeSelection("top")}>顶对齐</ContextMenuItem><ContextMenuItem icon="alignCenterY" disabled={busy} onSelect={() => arrangeSelection("centerY")}>垂直居中</ContextMenuItem><ContextMenuItem icon="alignBottom" disabled={busy} onSelect={() => arrangeSelection("bottom")}>底对齐</ContextMenuItem></ContextMenuSub>}<ContextMenuItem icon="nodeComponent" disabled={busy || !selectionSameParent} onSelect={groupSelection}>编组</ContextMenuItem>{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}{contextIds.length === 1 && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={ungroupSelection}>取消编组</ContextMenuItem>}</> : <><ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem><ContextMenuSeparator /><ContextMenuSub label="添加" icon="addFrame"><ContextMenuItem icon="addFrame" disabled={busy} onSelect={() => addNode("frame")}>Frame</ContextMenuItem><ContextMenuItem icon="addRectangle" disabled={busy} onSelect={() => addNode("rectangle")}>矩形</ContextMenuItem><ContextMenuItem icon="addEllipse" disabled={busy} onSelect={() => addNode("ellipse")}>椭圆</ContextMenuItem><ContextMenuItem icon="addText" disabled={busy} onSelect={() => addNode("text")}>文本</ContextMenuItem></ContextMenuSub></>}</ContextMenuContent></ContextMenuRoot></div><div className="canvas-controls"><Tooltip label={panMode ? "退出抓手" : "抓手拖动画布"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setPanMode(on => !on)}><Icon name="pan" /></button></Tooltip><Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => setZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip><Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => setZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip><Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip><Tooltip label="适应内容"><button className="icon-only zoom-fit" aria-label="适应内容" onClick={fitCanvas}><Icon name="zoomFit" /></button></Tooltip></div></section>
     <aside className="inspector"><h2>属性{selectedIds.length > 1 ? ` · 已选 ${selectedIds.length}` : ""}</h2>{selectedIds.length > 1 && <><h2>对齐与分布</h2><div className="icon-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 5, marginBottom: 12 }}><Tooltip label="左对齐"><button className="icon-only" disabled={busy} aria-label="左对齐" onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip><Tooltip label="水平居中"><button className="icon-only" disabled={busy} aria-label="水平居中" onClick={() => arrangeSelection("centerX")}><Icon name="alignCenterX" /></button></Tooltip><Tooltip label="右对齐"><button className="icon-only" disabled={busy} aria-label="右对齐" onClick={() => arrangeSelection("right")}><Icon name="alignRight" /></button></Tooltip><Tooltip label="顶对齐"><button className="icon-only" disabled={busy} aria-label="顶对齐" onClick={() => arrangeSelection("top")}><Icon name="alignTop" /></button></Tooltip><Tooltip label="垂直居中"><button className="icon-only" disabled={busy} aria-label="垂直居中" onClick={() => arrangeSelection("centerY")}><Icon name="alignCenterY" /></button></Tooltip><Tooltip label="底对齐"><button className="icon-only" disabled={busy} aria-label="底对齐" onClick={() => arrangeSelection("bottom")}><Icon name="alignBottom" /></button></Tooltip><Tooltip label="水平分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="水平分布" onClick={() => arrangeSelection("distributeX")}><Icon name="distributeX" /></button></Tooltip><Tooltip label="垂直分布"><button className="icon-only" disabled={busy || selectedIds.length < 3} aria-label="垂直分布" onClick={() => arrangeSelection("distributeY")}><Icon name="distributeY" /></button></Tooltip></div></>}{selected && selectedIds.length === 1 ? <>
       <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
-      <PropertyPanel node={selected} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} />
+      <PropertyPanel node={selected} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} />
+      <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
       <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
       <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
       <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除{selectedIds.length > 1 ? ` ${selectedIds.length} 个节点` : ""}</button>
@@ -601,6 +712,14 @@ function App() {
         ? <span className="snapshot-current">当前</span>
         : <Tooltip label={`还原到 ${row.label}`}><button className="icon-only" aria-label={`还原到 ${row.label}`} disabled={busy} onClick={() => restoreVersion(row)}><Icon name="versionRestore" /></button></Tooltip>}</div>)
       : <p className="empty-hint">还没有历史版本。改动落盘之后，这里会列出可以回滚到的版本。</p>}</div>
+    <hr/><h2>操作历史</h2>
+    <HistoryPanel rows={transactionRows} disabled={busy} onRestore={restoreTransaction} />
+    <hr/><h2>存储用量</h2>
+    <StoragePanel estimate={storage} disabled={busy} onRefresh={refreshStorage} onExportBackup={exportJson} />
+    <hr/><h2>自动备份</h2>
+    <div className="backup-list">{backups.length
+      ? backups.map(row => <div className="backup-row" key={row.createdAt}><span className="backup-time">{formatSnapshotTime(row.createdAt)}</span><span className="backup-meta">r{row.revision} · {formatBytes(row.byteLength)}</span><Tooltip label="把这份备份下载成 JSON"><button className="icon-only" aria-label="下载备份" disabled={busy} onClick={() => downloadBackup(row)}><Icon name="exportJson" /></button></Tooltip><Tooltip label="还原到这份备份"><button className="icon-only" aria-label="还原备份" disabled={busy} onClick={() => restoreBackup(row)}><Icon name="versionRestore" /></button></Tooltip></div>)
+      : <p className="empty-hint">还没有自动备份。每次落盘后最多每 10 分钟保存一份，保留最近 3 份。</p>}</div>
     <hr/><div className="section-heading"><h2>颜色 Tokens</h2><button disabled={busy} onClick={createColorToken}><Icon name="tokenAdd" />新增</button></div>
     <div className="token-list">{Object.entries(document.tokens).map(([name, token]) => <div className="token-row" style={{ gridTemplateColumns: "18px minmax(0,1fr) auto auto auto" }} key={name}><span className="token-swatch" style={{ background: String(token.value) }} /><span title={`${name}: ${String(token.value)}`}>{name}</span>{token.type === "color" && <Tooltip label="修改颜色值"><button className="icon-only" aria-label="修改颜色值" disabled={busy} onClick={() => updateColorToken(name, token.value)}><Icon name="tokenEdit" /></button></Tooltip>}{token.type === "color" && selected && <Tooltip label="绑定为选中节点的填充"><button className="icon-only" aria-label="绑定填充" disabled={busy} onClick={() => patchNode(selected.id, { bindings: { ...selected.bindings, fill: name } })}><Icon name="tokenBind" /></button></Tooltip>}<Tooltip label="删除 Token"><button className="icon-only" aria-label="删除 Token" disabled={busy} onClick={() => void run(() => execute([{ type: "token.delete", payload: { name } }]))}><Icon name="tokenRemove" /></button></Tooltip></div>)}</div>
     {selected?.bindings?.fill && <button className="unbind" disabled={busy} onClick={unbindFill}><Icon name="tokenUnbind" />解绑填充：{selected.bindings.fill}</button>}
