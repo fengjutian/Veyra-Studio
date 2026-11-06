@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { componentDependencies, componentReachability, createDocument, findOwningComponentId, wouldCreateComponentCycle, type DesignDocument, type DesignNode } from "../src/index";
+import { componentDependencies, componentReachability, createDocument, findOwningComponentId, overridableFields, wouldCreateComponentCycle, type DesignDocument, type DesignNode } from "../src/index";
 
 function frame(id: string, parentId: string): DesignNode {
   return {
@@ -76,4 +76,11 @@ test("finds the innermost owning component", () => {
   assert.equal(findOwningComponentId(document, "in-b"), "component:b");
   assert.equal(findOwningComponentId(document, "b-root"), "component:b");
   assert.equal(findOwningComponentId(document, "page:1"), undefined);
+});
+
+test("override field contract depends on the node type", () => {
+  const text: DesignNode = { ...frame("t", "page:1"), type: "text", text: "x", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
+  assert.deepEqual(overridableFields(text), ["text", "name", "visible", "appearance"]);
+  assert.deepEqual(overridableFields(frame("f", "page:1")), ["name", "visible", "appearance"]);
+  assert.deepEqual(overridableFields(instance("i", "page:1", "component:x")), ["name", "visible", "appearance"]);
 });

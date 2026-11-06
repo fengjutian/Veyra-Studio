@@ -1,4 +1,4 @@
-import { findOwningComponentId, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
+import { findOwningComponentId, overridableFields, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
 export class RevisionConflictError extends Error {
@@ -197,6 +197,7 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "slot.fill": return fillSlot(document, command.payload);
     case "component.override": return overrideInstanceNode(document, command.payload);
     case "component.resetOverride": return resetInstanceOverride(document, command.payload);
+    case "component.resetOverrides": return resetInstanceOverrides(document, command.payload);
   }
 }
 
@@ -343,6 +344,19 @@ function overrideInstanceNode(
   if (!isInside(document, copyId, instance.id)) throw new CommandError(`Node ${copyId} does not belong to instance ${instance.id}`);
 
   const { text, name, visible, appearance } = payload.patch;
+  const patchRecord = payload.patch as Record<string, unknown>;
+  const patchKeys = Object.keys(patchRecord).filter(key => patchRecord[key] !== undefined);
+  const allowed = overridableFields(copy);
+  for (const key of patchKeys) {
+    if (!(allowed as readonly string[]).includes(key)) throw new CommandError(`Node ${copy.id} cannot override ${key}`);
+  }
+  if (!patchKeys.length) throw new CommandError("Override patch cannot be empty");
+  if (appearance?.opacity !== undefined && (!Number.isFinite(appearance.opacity) || appearance.opacity < 0 || appearance.opacity > 1)) {
+    throw new CommandError("Override opacity must be between 0 and 1");
+  }
+  if (appearance?.cornerRadius !== undefined && (!Number.isFinite(appearance.cornerRadius) || appearance.cornerRadius < 0)) {
+    throw new CommandError("Override corner radius must be a non-negative number");
+  }
   if (text !== undefined) {
     if (copy.type !== "text") throw new CommandError(`Node ${copyId} is not a text node`);
     copy.text = text;
@@ -372,15 +386,32 @@ function overrideInstanceNode(
  * 重新实例化（重新实例化会换 id，选中和布局都会跳）。
  */
 function resetInstanceOverride(document: DesignDocument, payload: { instanceId: NodeId; sourceNodeId: NodeId }): void {
-  const instance = requireNode(document, payload.instanceId);
-  if (instance.type !== "instance") throw new CommandError(`Node ${instance.id} is not a component instance`);
+  const instance = requireInstance(document, payload.instanceId);
+  resetOneOverride(document, instance, payload.sourceNodeId);
+}
+
+/** 批量重置；不传 sourceNodeIds 时清空该实例的全部覆盖。 */
+function resetInstanceOverrides(document: DesignDocument, payload: { instanceId: NodeId; sourceNodeIds?: NodeId[] }): void {
+  const instance = requireInstance(document, payload.instanceId);
+  const targets = payload.sourceNodeIds ?? Object.keys(instance.overrides);
+  if (!targets.length) throw new CommandError(`Instance ${instance.id} has no overrides to reset`);
+  for (const sourceNodeId of targets) resetOneOverride(document, instance, sourceNodeId);
+}
+
+function requireInstance(document: DesignDocument, id: NodeId): InstanceNode {
+  const node = requireNode(document, id);
+  if (node.type !== "instance") throw new CommandError(`Node ${node.id} is not a component instance`);
+  return node;
+}
+
+function resetOneOverride(document: DesignDocument, instance: InstanceNode, sourceNodeId: NodeId): void {
   const definition = document.components[instance.componentId];
   if (!definition) throw new CommandError(`Component ${instance.componentId} does not exist`);
-  const source = requireNode(document, payload.sourceNodeId);
+  const source = requireNode(document, sourceNodeId);
   if (!isInside(document, source.id, definition.rootNodeId)) {
     throw new CommandError(`Node ${source.id} is not part of component ${definition.id}`);
   }
-  const copy = requireNode(document, `${instance.id}--${payload.sourceNodeId}`);
+  const copy = requireNode(document, `${instance.id}--${sourceNodeId}`);
 
   copy.name = source.name;
   copy.visible = source.visible;
@@ -388,7 +419,7 @@ function resetInstanceOverride(document: DesignDocument, payload: { instanceId: 
   if (copy.type === "text" && source.type === "text") copy.text = source.text;
 
   const overrides = { ...instance.overrides };
-  delete overrides[payload.sourceNodeId];
+  delete overrides[sourceNodeId];
   instance.overrides = overrides;
 }
 /** `id` 是否是 `ancestorId` 的后代（沿 parentId 链向上找）。 */

@@ -72,3 +72,10 @@ export function findOwningComponentId(document: DesignDocument, nodeId: NodeId):
   }
   return undefined;
 }
+
+/** 实例可以覆盖的字段。文本节点多一个 `text`，其它节点只能覆盖外观类字段。 */
+export type OverrideField = "text" | "name" | "visible" | "appearance";
+
+export function overridableFields(node: DesignNode): OverrideField[] {
+  return node.type === "text" ? ["text", "name", "visible", "appearance"] : ["name", "visible", "appearance"];
+}

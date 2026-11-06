@@ -344,3 +344,74 @@ test("reset refuses nodes outside the component definition", () => {
     /does not exist|not part of component/,
   );
 });
+
+test("batch reset clears every override in one transaction", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: { ...frame("card"), type: "component" } } },
+    { type: "node.create", payload: { node: text("title", "card", "标题") } },
+    { type: "node.create", payload: { node: text("body", "card", "正文") } },
+  ]));
+  runtime.execute(envelope(1, [{ type: "node.reparent", payload: { id: "title", parentId: "card" } }]));
+  runtime.execute(envelope(2, [{ type: "node.reparent", payload: { id: "body", parentId: "card" } }]));
+  runtime.execute(envelope(3, [{ type: "component.define", payload: { component: { id: "component:card", name: "Card", rootNodeId: "card" } } }]));
+  runtime.execute(envelope(4, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:card", overrides: {} } },
+  }]));
+  runtime.execute(envelope(5, [
+    { type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "title", patch: { text: "新标题" } } },
+    { type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "body", patch: { text: "新正文" } } },
+  ]));
+
+  runtime.execute(envelope(6, [{ type: "component.resetOverrides", payload: { instanceId: "instance:1" } }]));
+  const snapshot = runtime.snapshot();
+  assert.equal((snapshot.nodes["instance:1--title"] as { text?: string }).text, "标题");
+  assert.equal((snapshot.nodes["instance:1--body"] as { text?: string }).text, "正文");
+  assert.deepEqual((snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> }).overrides, {});
+});
+
+test("batch reset can target a subset and keeps the rest", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: { ...frame("card"), type: "component" } } },
+    { type: "node.create", payload: { node: text("title", "card", "标题") } },
+    { type: "node.create", payload: { node: text("body", "card", "正文") } },
+  ]));
+  runtime.execute(envelope(1, [{ type: "node.reparent", payload: { id: "title", parentId: "card" } }]));
+  runtime.execute(envelope(2, [{ type: "node.reparent", payload: { id: "body", parentId: "card" } }]));
+  runtime.execute(envelope(3, [{ type: "component.define", payload: { component: { id: "component:card", name: "Card", rootNodeId: "card" } } }]));
+  runtime.execute(envelope(4, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:card", overrides: {} } },
+  }]));
+  runtime.execute(envelope(5, [
+    { type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "title", patch: { text: "新标题" } } },
+    { type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "body", patch: { text: "新正文" } } },
+  ]));
+
+  runtime.execute(envelope(6, [{ type: "component.resetOverrides", payload: { instanceId: "instance:1", sourceNodeIds: ["title"] } }]));
+  const snapshot = runtime.snapshot();
+  assert.equal((snapshot.nodes["instance:1--title"] as { text?: string }).text, "标题");
+  assert.deepEqual((snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> }).overrides, { body: { text: "新正文" } });
+});
+
+test("validates override patches against the exposed field contract", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } },
+  }]));
+
+  assert.throws(() => runtime.execute(envelope(4, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "label", patch: {} } }])), /cannot be empty/);
+  assert.throws(() => runtime.execute(envelope(4, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { layout: {} } } }])), /cannot override/);
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { appearance: { opacity: 2 } } } }])),
+    /between 0 and 1/,
+  );
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { appearance: { cornerRadius: -1 } } } }])),
+    /non-negative/,
+  );
+});

@@ -205,7 +205,8 @@ export type DesignCommand =
   | DetachComponentCommand
   | FillSlotCommand
   | ComponentOverrideCommand
-  | ResetComponentOverrideCommand;
+  | ResetComponentOverrideCommand
+  | ResetAllComponentOverridesCommand;
 
 export interface CommandEnvelope {
   commandId: string;
@@ -235,4 +236,15 @@ export interface TransactionEntry {
   actor: CommandEnvelope["actor"];
   commands: DesignCommand[];
   warnings: string[];
+}
+
+/**
+ * 批量清除覆盖。
+ *
+ * 不传 `sourceNodeIds` 时清掉这个实例的全部覆盖；传了就只清指定的几个。
+ * 一次事务完成，撤销时一起回来。
+ */
+export interface ResetAllComponentOverridesCommand {
+  type: "component.resetOverrides";
+  payload: { instanceId: NodeId; sourceNodeIds?: NodeId[] };
 }

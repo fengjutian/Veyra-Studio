@@ -171,7 +171,12 @@
 - 实例覆盖：组件物化出来的文本节点在实例选中时列进「实例覆盖」面板，改文字会通过
   `component.override` 同时更新实例自己的副本并记进 `instance.overrides[sourceNodeId]`，
   组件定义和其它实例不受影响；插槽内容按前缀排除，不会把用户填进去的文字误当成
-  组件覆盖；
+  组件覆盖。命令层同时支持外观覆盖（填充/描边/圆角/透明度），也可以
+  `component.resetOverride` 把某个节点恢复成组件定义里的样子（直接抄源节点字段，
+  不重新实例化，节点 id 与布局保持稳定）；也能 `component.resetOverrides` 一次清空或
+  只清指定节点，撤销时整批回来。可覆盖字段有明确契约（`overridableFields`）：文本节点
+  多一个 `text`，其它节点只能覆盖 `name` / `visible` / `appearance`；未知字段、空补丁、
+  越界的透明度与圆角都会被命令层拒绝。面板目前只暴露文本编辑与「重置」；
 - 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
   以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
 - 属性面板是独立的 `PropertyPanel` 组件，覆盖布局引擎已支持的完整词汇：布局模式

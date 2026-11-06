@@ -99,8 +99,8 @@ AI 原型：
 - 画布采用 DOM 渲染，尚无正式性能基线或大文档虚拟化方案。
 - 文本测量尚未建立跨平台字体基线、字体加载策略和完整缓存策略。
 - PNG 依赖浏览器 SVG/Canvas 光栅化；外部图片可能污染画布，尚无独立交付流水线。
-- 组件与 override 仍是受限子集：detach、slot、循环引用防护与文本 override 已实现，
-  尚未覆盖非文本属性覆盖（颜色/尺寸/显隐）、override 重置与组件属性暴露。
+- 组件与 override 仍是受限子集：detach、slot、循环引用防护、文本/外观 override 与重置已实现，
+  尚未覆盖尺寸/显隐的界面入口、组件属性暴露与批量重置。
 - OpenAI-compatible Provider 已有实现，但仍需真实服务端到端验证、流式体验、凭据安全和 Provider 支持矩阵。
 - 测试以单元测试和包级构建为主，缺少完整端到端、视觉回归、性能和浏览器矩阵。
 
@@ -229,6 +229,8 @@ AI 原型：
   （`slot.fill`），重复填充先清空，作用范围限制在实例自身、不污染组件定义。
 - 实例覆盖：实例选中时列出物化出的文本节点，编辑通过 `component.override` 同步更新
   副本与 `instance.overrides`，组件定义和其它实例不受影响；插槽内容不计入覆盖。
+  命令层还支持外观覆盖、单条 `component.resetOverride` 与批量 `component.resetOverrides`
+  （恢复组件定义值，不重新实例化），以及按节点类型定义的 `overridableFields` 字段契约。
 
 仍未完成：字体 token 的渲染语义、token 分组/别名/主题切换、从样式表或 Figma 导入；
 非文本属性覆盖与 override 重置；图片资源来源元数据与 SVG 支持。

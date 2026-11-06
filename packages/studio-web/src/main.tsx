@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
+import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, resolveRadius, resolveStroke, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
@@ -897,25 +898,16 @@ function App() {
         <h2>{activeInspectorTab.label}</h2>
         <span className="inspector-head-meta" title={activeInspectorTab.meta}>{activeInspectorTab.meta}</span>
       </div>
-      <div className="inspector-tabs" role="tablist" aria-label="右侧面板分段">
-        {inspectorTabRows.map(tab => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            id={`inspector-tab-${tab.id}`}
-            aria-selected={inspectorTab === tab.id}
-            aria-controls="inspector-body"
-            className="inspector-tab"
-            onClick={() => setInspectorTab(tab.id)}
-          >
-            {tab.label}
-            {tab.badge ? <span className="inspector-tab-badge">{tab.badge}</span> : null}
-          </button>
-        ))}
-      </div>
-      <div className="inspector-body" id="inspector-body" role="tabpanel" aria-labelledby={`inspector-tab-${inspectorTab}`}>
-        {inspectorTab === "properties" && <>
+      <Tabs.Root className="inspector-tabs-root" value={inspectorTab} onValueChange={value => setInspectorTab(value as InspectorTabId)}>
+        <Tabs.List className="inspector-tabs" aria-label="右侧面板分段">
+          {inspectorTabRows.map(tab => (
+            <Tabs.Trigger key={tab.id} value={tab.id} className="inspector-tab">
+              {tab.label}
+              {tab.badge ? <span className="inspector-tab-badge">{tab.badge}</span> : null}
+            </Tabs.Trigger>
+          ))}
+        </Tabs.List>
+        <Tabs.Content value="properties" className="inspector-body">
           {selectedIds.length > 1 && (
             <section className="inspector-section">
               <h2>对齐与分布</h2>
@@ -959,8 +951,8 @@ function App() {
               <div className="warning-list">{canvasLayout.warnings.map((warning, index) => <button key={`${warning.nodeId}:${warning.code}:${index}`} className="warning-row" onClick={() => warning.nodeId && setSelectedIds([warning.nodeId])} title={warning.nodeId ? `选中 ${warning.nodeId}` : warning.message}><span className={`warning-code warning-code-${warning.code}`}>{warning.code}</span><span className="warning-message">{warning.message}</span></button>)}</div>
             </section>
           )}
-        </>}
-        {inspectorTab === "export" && <>
+        </Tabs.Content>
+        <Tabs.Content value="export" className="inspector-body">
           <section className="inspector-section">
             <h2>预览交付物</h2>
             <div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
@@ -973,8 +965,8 @@ function App() {
             <h2>导出诊断</h2>
             <ExportDiagnosticsPanel format={exportReport?.format} diagnostics={exportReport?.diagnostics ?? []} onSelect={nodeId => { if (document.nodes[nodeId]) setSelectedIds([nodeId]); }} />
           </section>
-        </>}
-        {inspectorTab === "history" && <>
+        </Tabs.Content>
+        <Tabs.Content value="history" className="inspector-body">
           <section className="inspector-section">
             <h2>历史版本</h2>
             <div className="snapshot-list">{versionRows.length
@@ -1000,8 +992,8 @@ function App() {
               <button disabled={busy} onClick={() => { downloadFile(recoveryReportFileName(recovery.projectName), JSON.stringify({ ...recovery, missingAssets }, null, 2), "application/json"); setMessage("恢复报告已导出"); }}><Icon name="exportJson" />导出报告</button>
             </section>
           )}
-        </>}
-        {inspectorTab === "data" && <>
+        </Tabs.Content>
+        <Tabs.Content value="data" className="inspector-body">
           <section className="inspector-section">
             <h2>存储用量</h2>
             <StoragePanel estimate={storage} disabled={busy} onRefresh={refreshStorage} onExportBackup={exportJson} />
@@ -1021,8 +1013,8 @@ function App() {
               ? componentSummaries.map(component => <div className="component-row" key={component.id}><span className="component-glyph"><Icon name="nodeComponent" size={12} /></span><span className="component-name" title={component.name}>{component.name}</span><span className="component-count">{component.instanceCount}</span><Tooltip label="创建实例"><button className="icon-only" aria-label="创建实例" disabled={busy} onClick={() => instantiateComponent(component.id)}><Icon name="componentInstantiate" /></button></Tooltip><Tooltip label="删除组件"><button className="icon-only" aria-label="删除组件" disabled={busy} onClick={() => removeComponent(component.id)}><Icon name="componentRemove" /></button></Tooltip></div>)
               : <p className="empty-hint">还没有组件。选中一个节点，输入名称后点击「创建」。</p>}</div>
           </section>
-        </>}
-        {inspectorTab === "ai" && <>
+        </Tabs.Content>
+        <Tabs.Content value="ai" className="inspector-body">
           <section className="inspector-section">
             <AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
           </section>
@@ -1034,8 +1026,8 @@ function App() {
             {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
             {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
           </section>
-        </>}
-      </div>
+        </Tabs.Content>
+      </Tabs.Root>
       <div className="inspector-foot">
         <span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span>
         <span className="inspector-foot-meta">{storage ? `存储 ${storagePercent(storage)}%` : "存储用量未知"}</span>
