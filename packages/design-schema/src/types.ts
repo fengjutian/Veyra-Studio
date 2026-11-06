@@ -151,8 +151,20 @@ export interface AssetMetadata {
   name?: string;
 }
 
+/**
+ * 一次文档格式迁移的记录。
+ *
+ * 迁移后的文档会把这段历史留在自己身上，这样导入、恢复和备份报告都能说清
+ * "这份文档是从哪个格式版本升上来的"。
+ */
+export interface MigrationRecord {
+  from: number;
+  to: number;
+  at: string;
+}
+
 export interface DesignDocument {
-  schemaVersion: 1;
+  schemaVersion: 2;
   id: DocumentId;
   revision: number;
   meta: DocumentMeta;
@@ -162,6 +174,8 @@ export interface DesignDocument {
   components: Record<ComponentId, ComponentDefinition>;
   tokens: Record<string, TokenValue>;
   assets: Record<AssetId, AssetMetadata>;
+  /** 迁移历史；新建文档没有这个字段，迁移过的文档才有。 */
+  migrations?: MigrationRecord[];
 }
 
 export const defaultLayout = (): LayoutSpec => ({

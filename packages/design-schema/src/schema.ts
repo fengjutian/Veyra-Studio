@@ -96,7 +96,7 @@ export const designNodeSchema = z.discriminatedUnion("type", [
 ]);
 
 export const designDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   id,
   revision: z.number().int().nonnegative(),
   meta: z.object({ name: z.string().min(1), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime() }),
@@ -115,4 +115,9 @@ export const designDocumentSchema = z.object({
     byteLength: z.number().int().nonnegative(),
     name: z.string().optional(),
   })),
+  migrations: z.array(z.object({
+    from: z.number().int().positive(),
+    to: z.number().int().positive(),
+    at: z.iso.datetime(),
+  })).optional(),
 });
