@@ -62,6 +62,21 @@
   未发生变化的节点不发补丁；批量改填充会解除该节点的填充 token 绑定，否则新颜色不生效；
   批量填写宽/高会把该轴的尺寸模式切到「固定」，因为布局引擎只在固定模式下读取存储尺寸；
   合并与补丁规则抽在 `batch-edit.ts` 纯函数层并有单元测试；
+- 画布支持缩放与适应内容：缩放是纯视图状态（不写文档、不涨 revision），由
+  `canvas-zoom.ts` 纯函数层提供 `clampZoom`/`zoomStep`/`fitZoom`/`zoomPercent`/
+  `contentBounds`，缩放范围 10%–400%；`Ctrl/Cmd + 滚轮` 与右下角控件（缩小、百分比
+  回到 100%、放大、适应内容）都可调整；「适应内容」按布局引擎解出的内容包围盒计算
+  （而非整块 960×680 画布）且只缩不放；缩放用 CSS `zoom` 实现，Moveable 读取
+  offsetParent 的 `zoom` 并纳入矩阵栈，拖拽与手柄几何在缩放下保持正确；工作区过窄时
+  控件按重要性用容器查询降级；
+- 画布拖拽的根因修复：入口不再在模块顶层无条件 `createRoot`，而是在容器上缓存并复用
+  root，Vite HMR 重新执行模块时只重新 render，不会出现两棵 React 树互相撕裂 DOM
+  （此前表现为点击随机失效、拖拽坐标错乱）；
+- 画布拖拽与缩放的坐标修复：Moveable 的 `bounds` 之前带 `position: "css"`，该模式下
+  `right`/`bottom` 被当成 CSS 的 `right`/`bottom` 偏移反算，960×680 的画布因此退化成
+  0×0 的边界框，于是任何一次拖拽或缩放都会把节点甩到 `left = -width`/`top = -height`；
+  现在 `bounds` 固定为坐标语义的 `CANVAS_BOUNDS`，拖拽位移与指针位移一一对应，
+  拖出画布时按画布边界正确钳制，缩放手柄同样恢复正常；
 - 图层工具栏提供椭圆节点入口（`ellipse` 节点类型），形状由 `borderRadius: 50%` 表达；
 - 布局引擎的 warnings 上浮到属性面板的「布局警告」区块，点击警告行可直接选中对应节点；
 - 属性面板支持文本内容、字体、字号、行高、节点显隐和锁定；文本修改通过独立
@@ -124,6 +139,7 @@
 npm run build:studio-core
 npm run test:studio-core
 npm run build:studio-web
+npm run test -w packages/studio-web
 ```
 
 本地启动 Web 垂直切片：

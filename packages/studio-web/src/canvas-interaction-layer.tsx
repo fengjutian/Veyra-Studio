@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Moveable from "react-moveable";
 import Selecto from "react-selecto";
 import type { DesignNode } from "@ufira/design-schema";
+import { CANVAS_BOUNDS, CANVAS_HEIGHT, CANVAS_WIDTH } from "./canvas-zoom";
 
 export interface CanvasInteractionLayerProps {
   canvas: HTMLElement | null;
@@ -41,9 +42,9 @@ export function CanvasInteractionLayer({ canvas, nodes, selectedIds, disabled, o
       snappable
       snapThreshold={6}
       elementGuidelines={guidelines}
-      verticalGuidelines={[0, canvas.clientWidth / 2, canvas.clientWidth]}
-      horizontalGuidelines={[0, canvas.clientHeight / 2, canvas.clientHeight]}
-      bounds={{ left: 0, top: 0, right: canvas.clientWidth, bottom: canvas.clientHeight, position: "css" }}
+      verticalGuidelines={[0, CANVAS_WIDTH / 2, CANVAS_WIDTH]}
+      horizontalGuidelines={[0, CANVAS_HEIGHT / 2, CANVAS_HEIGHT]}
+      bounds={CANVAS_BOUNDS}
       onDrag={event => {
         if (selectedNodes.length !== 1) return;
         event.target.style.left = `${Math.round(event.left)}px`;

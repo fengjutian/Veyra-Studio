@@ -41,6 +41,7 @@ import {
   Pencil,
   Plus,
   Redo2,
+  Scan,
   SendToBack,
   Shapes,
   Spline,
@@ -52,6 +53,8 @@ import {
   Upload,
   WandSparkles,
   X,
+  ZoomIn,
+  ZoomOut,
   type LucideIcon,
 } from "lucide-react";
 
@@ -90,6 +93,11 @@ export const ICONS = {
 
   // 选区
   selectAll: CheckCheck,
+
+  // 画布视图
+  zoomIn: ZoomIn,
+  zoomOut: ZoomOut,
+  zoomFit: Scan,
 
   // 图层顺序
   toBack: SendToBack,
