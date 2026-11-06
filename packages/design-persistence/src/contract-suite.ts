@@ -184,6 +184,19 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
     });
   });
 
+  test(`${name}: 支持删除资源字节，重复删除不会报错`, async () => {
+    await withRepository(async ({ repository }) => {
+      if (!repository.deleteAsset) return;
+      const bytes = new TextEncoder().encode("asset-data");
+      const hash = await sha256Hex(bytes);
+      await repository.putAsset("project:1", { hash, bytes });
+      await repository.deleteAsset("project:1", hash);
+      assert.equal(await repository.getAsset("project:1", hash), undefined);
+      // 字节已经不在了，再删一次应当等同成功，调用方不必先探测。
+      await repository.deleteAsset("project:1", hash);
+    });
+  });
+
   test(`${name}: 旧格式文档在打开时被迁移并被记录`, async () => {
     await withRepository(async ({ repository, seed }) => {
       if (!seed) return;

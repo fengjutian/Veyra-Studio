@@ -171,6 +171,7 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       Object.assign(node, structuredClone(command.payload.patch));
       return;
     }
+    case "asset.delete": return deleteAsset(document, command.payload.id);
     case "token.upsert": {
       if (!command.payload.name.trim()) throw new CommandError("Token name cannot be empty");
       document.tokens[command.payload.name] = structuredClone(command.payload.token);
@@ -215,6 +216,13 @@ function deleteToken(document: DesignDocument, name: string): void {
   const bound = Object.values(document.nodes).find(node => Object.values(node.bindings ?? {}).includes(name));
   if (bound) throw new CommandError(`Token ${name} is still bound by node ${bound.id}`);
   delete document.tokens[name];
+}
+
+function deleteAsset(document: DesignDocument, id: string): void {
+  if (!document.assets[id]) throw new CommandError(`Asset ${id} does not exist`);
+  const used = Object.values(document.nodes).find(node => node.type === "image" && node.assetId === id);
+  if (used) throw new CommandError(`Asset ${id} is still used by node ${used.id}`);
+  delete document.assets[id];
 }
 
 function defineComponent(document: DesignDocument, component: DesignDocument["components"][string]): void {

@@ -79,6 +79,17 @@ export interface PatchImageCommand {
   payload: { id: NodeId; patch: { fit?: ImageFit } };
 }
 
+/**
+ * 删除一份图片资源的元数据。
+ *
+ * 只允许删除没有被任何图片节点引用的资源：删掉正在被引用的元数据会让文档
+ * 立刻不合法（节点指向一个不存在的资源）。字节的清理由仓库负责。
+ */
+export interface DeleteAssetCommand {
+  type: "asset.delete";
+  payload: { id: string };
+}
+
 export interface UpsertTokenCommand {
   type: "token.upsert";
   payload: { name: string; token: TokenValue };
@@ -134,6 +145,7 @@ export type DesignCommand =
   | ReparentNodeCommand
   | UpsertAssetCommand
   | PatchImageCommand
+  | DeleteAssetCommand
   | UpsertTokenCommand
   | DeleteTokenCommand
   | CreatePageCommand

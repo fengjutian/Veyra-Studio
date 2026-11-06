@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { detectSchemaVersion, type DesignDocument } from "@ufira/design-schema";
 import type { TransactionEntry } from "@ufira/design-runtime";
@@ -122,6 +122,15 @@ export class FileSystemProjectRepository implements ProjectRepository {
     } catch (error: any) {
       if (error?.code === "ENOENT") return undefined;
       throw error;
+    }
+  }
+
+  async deleteAsset(projectId: string, hash: string): Promise<void> {
+    try {
+      await unlink(join(this.projectDirectory(projectId), "assets", normalizeAssetHash(hash)));
+    } catch (error: any) {
+      // 字节本来就不在，等价于已经删掉了。
+      if (error?.code !== "ENOENT") throw error;
     }
   }
 

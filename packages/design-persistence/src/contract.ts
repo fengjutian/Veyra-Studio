@@ -67,6 +67,13 @@ export interface ProjectRepository {
   listTransactions(projectId: string, afterRevision?: number): Promise<TransactionEntry[]>;
   putAsset(projectId: string, asset: AssetWrite): Promise<void>;
   getAsset(projectId: string, hash: string): Promise<Uint8Array | undefined>;
+  /**
+   * 删除一份资源字节。
+   *
+   * 可选能力：清理没有被任何图片节点引用的资源时用来回收存储。调用方必须自己
+   * 确认没有别的资源元数据共享同一个哈希，否则会把还在用的字节删掉。
+   */
+  deleteAsset?(projectId: string, hash: string): Promise<void>;
   recover(projectId: string): Promise<ProjectSnapshot>;
   listProjects(): Promise<ProjectSummary[]>;
   deleteProject(projectId: string): Promise<void>;

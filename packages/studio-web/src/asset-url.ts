@@ -12,6 +12,12 @@ import type { AssetMetadata } from "@ufira/design-schema";
  * "之前读不到、后来补上了"，由 {@link forgetAssetUrl} 在写入资源后清掉。
  */
 const cache = new Map<string, Promise<string | undefined>>();
+let version = 0;
+
+/** 缓存版本号：写入资源后加一，让已经渲染过的节点重新读一次。 */
+export function assetUrlCacheVersion(): number {
+  return version;
+}
 
 function cacheKey(projectId: string, hash: string): string {
   return `${projectId}:${hash}`;
@@ -32,11 +38,13 @@ export function loadAssetUrl(repository: ProjectRepository, projectId: string, a
 /** 资源被重新写入后清掉旧结果，让画布重新读一次。 */
 export function forgetAssetUrl(projectId: string, hash: string): void {
   cache.delete(cacheKey(projectId, hash));
+  version += 1;
 }
 
 /** 切项目或删除项目时整体清空。 */
 export function resetAssetUrlCache(): void {
   cache.clear();
+  version += 1;
 }
 
 /** Blob 只接受真正的 ArrayBuffer，这里把 Uint8Array 的窗口裁出来。 */

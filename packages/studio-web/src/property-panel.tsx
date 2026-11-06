@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, type DesignNode, type FontStyle, type LayoutSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
 import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
 export interface PropertyPanelProps {
@@ -8,6 +8,7 @@ export interface PropertyPanelProps {
   disabled?: boolean;
   onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance">>): void;
   onPatchText(patch: TextPatch): void;
+  onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
 }
 
 /**
@@ -17,7 +18,7 @@ export interface PropertyPanelProps {
  * absolute and stack modes, fixed/fill/hug sizing, gap, padding and alignment —
  * so the editor can drive the same semantics the exporters use.
  */
-export function PropertyPanel({ node, disabled, onPatch, onPatchText }: PropertyPanelProps) {
+export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchImage }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";
   const padding = resolvePadding(layout);
@@ -104,6 +105,19 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText }: Property
         <NumberField label="透明度" value={opacityToPercent(node.appearance.opacity)} disabled={disabled} onCommit={percent => onPatch({ appearance: { ...node.appearance, opacity: percentToOpacity(percent) } })} />
       </Section>
 
+      {node.type === "image" && (
+        <Section title="图片">
+          <Segmented
+            label="填充方式"
+            value={node.fit}
+            disabled={disabled}
+            options={imageFitOptions}
+            onChange={fit => onPatchImage({ fit: fit as ImageNode["fit"] })}
+          />
+          <p className="field-hint">资源 {node.assetId}</p>
+        </Section>
+      )}
+
       {node.type === "text" && (
         <Section title="文字">
           <TextField label="文本" value={node.text} disabled={disabled} onCommit={text => onPatchText({ text })} />
@@ -149,6 +163,12 @@ const sizeModeOptions = [
   { value: "fixed", label: "固定" },
   { value: "fill", label: "填充" },
   { value: "hug", label: "适应" },
+];
+
+const imageFitOptions = [
+  { value: "cover", label: "覆盖" },
+  { value: "contain", label: "适应" },
+  { value: "fill", label: "拉伸" },
 ];
 
 const fontWeightOptions = [

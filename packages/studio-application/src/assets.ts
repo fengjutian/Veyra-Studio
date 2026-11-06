@@ -82,6 +82,32 @@ export async function createAssetResolver(
   return asset => urls.get(asset.id);
 }
 
+/** 一份资源在文档里的使用情况。 */
+export interface AssetUsage {
+  asset: AssetMetadata;
+  /** 引用这份资源的图片节点；为空表示资源没有被使用。 */
+  nodeIds: NodeId[];
+}
+
+/** 文档里每份资源分别被哪些图片节点引用。 */
+export function collectAssetUsage(document: DesignDocument): AssetUsage[] {
+  const usage = new Map<string, NodeId[]>();
+  for (const [nodeId, node] of Object.entries(document.nodes)) {
+    if (node.type !== "image" || !document.assets[node.assetId]) continue;
+    const ids = usage.get(node.assetId) ?? [];
+    ids.push(nodeId);
+    usage.set(node.assetId, ids);
+  }
+  return Object.values(document.assets).map(asset => ({ asset, nodeIds: usage.get(asset.id) ?? [] }));
+}
+
+/** 没有被任何图片节点引用的资源：可以安全清理掉元数据。 */
+export function unusedAssets(document: DesignDocument): AssetMetadata[] {
+  return collectAssetUsage(document)
+    .filter(entry => entry.nodeIds.length === 0)
+    .map(entry => entry.asset);
+}
+
 /**
  * 文档里声明了、但仓库中读不到字节的资源。
  *

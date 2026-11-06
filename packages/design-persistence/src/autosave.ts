@@ -113,6 +113,8 @@ export function withAutosave(repository: ProjectRepository, options: AutosaveOpt
     deleteProject: projectId => repository.deleteProject(projectId),
     putAsset: (projectId, asset: AssetWrite) => repository.putAsset(projectId, asset),
     getAsset: (projectId, hash) => repository.getAsset(projectId, hash),
+    // 资源清理不是文档写入，不需要排队，也没必要在底层仓库不支持时假装支持。
+    ...(repository.deleteAsset ? { deleteAsset: (projectId: string, hash: string) => repository.deleteAsset!(projectId, hash) } : {}),
     appendTransactions: (entries: TransactionEntry[]) => repository.appendTransactions(entries),
     listSnapshots: (projectId: string) => repository.listSnapshots(projectId),
     readSnapshot: (projectId: string, revision: number) => repository.readSnapshot(projectId, revision),

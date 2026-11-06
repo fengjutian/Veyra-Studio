@@ -80,3 +80,9 @@ button.icon-only{padding:5px;min-width:26px}
 .canvas.pan-mode{pointer-events:none}
 .canvas-controls .icon-only.active{border-color:#8b5cf6;background:#4c1d95;color:#c4b5fd}
 .export-scope{min-width:104px;border:1px solid #363d4b;border-radius:7px;background:#242936;color:#e7e9ee;padding:6px 8px;font-size:12px}
+.asset-list{display:grid;gap:6px;margin-bottom:8px}
+.asset-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#c8ccd6}
+.asset-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.asset-meta,.asset-refs{flex:none;color:#98a2b3;font-size:11px;font-variant-numeric:tabular-nums}
+.asset-row button{padding:4px 6px;font-size:11px}
+.asset-missing .asset-name{color:#d8c26a}

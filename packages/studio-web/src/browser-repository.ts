@@ -31,7 +31,7 @@ interface StudioDatabase extends Dexie {
   snapshots: EntityTable<SnapshotRecord, "projectId">;
   snapshotHistory: Table<SnapshotRecord, [string, number]>;
   transactions: Table<TransactionEntry, [string, number]>;
-  assets: Table<AssetRecord, [string, number]>;
+  assets: Table<AssetRecord, [string, string]>;
 }
 
 export interface DexieRepositoryOptions { databaseName?: string; indexedDB?: IDBFactory; IDBKeyRange?: typeof IDBKeyRange }
@@ -118,6 +118,10 @@ export class DexieProjectRepository implements ProjectRepository {
   async getAsset(projectId: string, hash: string): Promise<Uint8Array | undefined> {
     const record = await this.database.assets.get([projectId, normalizeAssetHash(hash)]);
     return record ? new Uint8Array(record.bytes) : undefined;
+  }
+
+  async deleteAsset(projectId: string, hash: string): Promise<void> {
+    await this.database.assets.delete([projectId, normalizeAssetHash(hash)]);
   }
 
   async recover(projectId: string): Promise<ProjectSnapshot> {

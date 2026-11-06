@@ -58,3 +58,21 @@ test("报告文件名去掉非法字符并带上后缀", () => {
   assert.equal(recoveryReportFileName("首页/设计"), "首页-设计-恢复报告.json");
   assert.equal(recoveryReportFileName("   "), "design-恢复报告.json");
 });
+
+test("图片资源缺失会单独列一行并带数量与名字", () => {
+  const missing = [
+    { id: "asset:1", hash: "a".repeat(64), mimeType: "image/png", byteLength: 1, name: "封面.png" },
+    { id: "asset:2", hash: "b".repeat(64), mimeType: "image/png", byteLength: 1, name: "图标.png" },
+  ];
+  const rows = recoveryReportRows(report({ missingAssets: missing }));
+  const row = rows.find(item => item.label === "图片资源");
+
+  assert.equal(row?.tone, "warning");
+  assert.match(row?.value ?? "", /2 个缺失/);
+  assert.match(row?.value ?? "", /封面\.png/);
+});
+
+test("没有图片资源时不出现多余的行", () => {
+  assert.equal(recoveryReportRows(report()).some(row => row.label === "图片资源"), false);
+  assert.equal(recoveryReportRows(report({ missingAssets: [] })).some(row => row.label === "图片资源"), false);
+});
