@@ -108,7 +108,7 @@ test("cancelling mid-stream stops with AiCancelledError", async () => {
 test("forwards the delta callback through SafeAiEditor", async () => {
   const repository = new MemoryRepository();
   const project = await StudioProject.create(repository, "project:1", "Demo");
-  let received: string[] = [];
+  const received: string[] = [];
   const planner: AiPlanner = {
     async plan(planRequest) {
       planRequest.onDelta?.("half", "half");

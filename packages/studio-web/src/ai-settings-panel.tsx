@@ -13,12 +13,15 @@ export interface AiSettingsPanelProps {
 /**
  * AI 模型设置面板。
  *
- * 只负责收集输入和展示当前规划器，密钥落盘由调用方决定（studio-web 存 localStorage）。
+ * 只负责收集输入和展示当前规划器；密钥怎么存由 `ai-settings` 决定——目前只落
+ * sessionStorage，关掉标签页就失效。
  */
 export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }: AiSettingsPanelProps) {
   const [draft, setDraft] = useState(settings);
   useEffect(() => setDraft(settings), [settings]);
   const update = (patch: Partial<AiSettings>) => setDraft(current => ({ ...current, ...patch }));
+  // 只在这个会话里配过密钥才提示会失效；本地免鉴权网关不需要吓用户。
+  const keyInSession = Boolean(settings.apiKey);
 
   return (
     <div className="ai-settings">
@@ -46,7 +49,8 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
         <button disabled={disabled} onClick={() => onSave(draft)}>保存设置</button>
         <button disabled={disabled} onClick={onClear}>清除</button>
       </div>
-      <p className="ai-settings-hint">密钥只保存在本浏览器的 localStorage，不写入设计文档、事务日志或导出文件。</p>
+      <p className="ai-settings-hint">API Key 只保存在当前标签页的会话存储里，关闭标签页即失效；不会写入 localStorage、设计文档、事务日志或导出文件。地址和模型名会记住，下次只需重新填密钥。</p>
+      {keyInSession && <p className="ai-settings-hint">本次会话已配置密钥，关闭标签页后需要重新输入。</p>}
     </div>
   );
 }
