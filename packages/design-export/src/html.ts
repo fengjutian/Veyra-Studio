@@ -68,6 +68,10 @@ function renderNode(
   }
   if (node.type === "instance") {
     diagnostics.push({ nodeId, feature: "component-instance", support: "approximated", message: "Instance export currently uses only materialized instance children" });
+    const overrides = Object.keys(node.overrides ?? {}).length;
+    if (overrides) {
+      diagnostics.push({ nodeId, feature: "component-override", support: "exact", message: `Instance exports ${overrides} overridden node${overrides === 1 ? "" : "s"} from its materialized children` });
+    }
   }
 
   const children = node.childIds

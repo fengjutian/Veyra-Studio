@@ -415,3 +415,33 @@ test("validates override patches against the exposed field contract", () => {
     /non-negative/,
   );
 });
+
+test("detaches several instances in one transaction", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [
+    { type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } } },
+    { type: "component.instantiate", payload: { node: { ...frame("instance:2"), type: "instance", componentId: "component:button", overrides: {} } } },
+  ]));
+  runtime.execute(envelope(4, [{ type: "component.detachMany", payload: { ids: ["instance:1", "instance:2"] } }]));
+
+  const snapshot = runtime.snapshot();
+  assert.equal(snapshot.nodes["instance:1"]?.type, "frame");
+  assert.equal(snapshot.nodes["instance:2"]?.type, "frame");
+  // 没有实例引用了，组件定义可以删除。
+  runtime.execute(envelope(5, [{ type: "component.remove", payload: { id: "component:button" } }]));
+});
+
+test("a batch detach with a non-instance id leaves everything untouched", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } },
+  }]));
+
+  const revisionBefore = runtime.snapshot().revision;
+  assert.throws(() => runtime.execute(envelope(4, [{ type: "component.detachMany", payload: { ids: ["instance:1", "root"] } }])), /not a component instance/);
+  assert.equal(runtime.snapshot().nodes["instance:1"]?.type, "instance");
+  assert.equal(runtime.snapshot().revision, revisionBefore);
+});

@@ -178,7 +178,10 @@
   不重新实例化，节点 id 与布局保持稳定）；也能 `component.resetOverrides` 一次清空或
   只清指定节点，撤销时整批回来。可覆盖字段有明确契约（`overridableFields`）：文本节点
   多一个 `text`，其它节点只能覆盖 `name` / `visible` / `appearance`；未知字段、空补丁、
-  越界的透明度与圆角都会被命令层拒绝。面板目前只暴露文本编辑与「重置」；
+  越界的透明度与圆角都会被命令层拒绝。`exposedOverrideTargets()` 把这份契约变成可查询
+  的清单（源节点 id、类型、默认文本、允许字段），供 UI、AI 与外部集成共用；
+  实例也支持 `component.detachMany` 批量脱离，任一目标不是实例就整批失败并回滚。
+  面板目前只暴露文本编辑与「重置」；
 - 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
   以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
 - 属性面板是独立的 `PropertyPanel` 组件，覆盖布局引擎已支持的完整词汇：布局模式

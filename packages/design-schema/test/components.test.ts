@@ -87,20 +87,16 @@ test("override field contract depends on the node type", () => {
 
 test("lists the override targets exposed by an instance", () => {
   const document = createDocument("doc:1", "Demo", "page:1");
-  const instance = instance("instance:1", "page:1", "component:card");
+  const instanceNode = instance("instance:1", "page:1", "component:card");
   const labelCopy = { ...frame("instance:1--label", "instance:1"), type: "text", text: "副本", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
   const boxCopy = frame("instance:1--box", "instance:1");
   const slotCopy = { ...frame("instance:1--slot--x", "instance:1"), type: "text", text: "插槽", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
-  (instance as { childIds: string[] }).childIds = [labelCopy.id, boxCopy.id, slotCopy.id];
+  (instanceNode as { childIds: string[] }).childIds = [labelCopy.id, boxCopy.id, slotCopy.id];
   const labelSource = { ...frame("label", "card"), type: "text", text: "标题", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
   const boxSource = frame("box", "card");
   const card = componentRoot("card");
   card.childIds = ["label", "box"];
-  document.nodes = {
-    "page:1": undefined as never,
-    ...{},
-  } as never;
-  document.nodes = { "card": card, "label": labelSource, "box": boxSource, "instance:1": instance, "instance:1--label": labelCopy, "instance:1--box": boxCopy, "instance:1--slot--x": slotCopy } as never;
+  document.nodes = { "card": card, "label": labelSource, "box": boxSource, "instance:1": instanceNode, "instance:1--label": labelCopy, "instance:1--box": boxCopy, "instance:1--slot--x": slotCopy } as never;
   document.pages["page:1"].childIds = ["card", "instance:1"];
   document.components = { "component:card": { id: "component:card", name: "Card", rootNodeId: "card" } };
 

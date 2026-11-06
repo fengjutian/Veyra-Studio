@@ -230,7 +230,8 @@ AI 原型：
 - 实例覆盖：实例选中时列出物化出的文本节点，编辑通过 `component.override` 同步更新
   副本与 `instance.overrides`，组件定义和其它实例不受影响；插槽内容不计入覆盖。
   命令层还支持外观覆盖、单条 `component.resetOverride` 与批量 `component.resetOverrides`
-  （恢复组件定义值，不重新实例化），以及按节点类型定义的 `overridableFields` 字段契约。
+  （恢复组件定义值，不重新实例化），以及按节点类型定义的 `overridableFields` 字段契约；
+  `exposedOverrideTargets()` 输出可查询的属性暴露清单，`component.detachMany` 支持批量脱离。
 
 仍未完成：字体 token 的渲染语义、token 分组/别名/主题切换、从样式表或 Figma 导入；
 非文本属性覆盖与 override 重置；图片资源来源元数据与 SVG 支持。

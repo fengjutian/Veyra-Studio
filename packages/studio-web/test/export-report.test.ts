@@ -17,6 +17,11 @@ test("诊断行把特性翻译成中文，并保留定位用的节点 id", () =>
   assert.equal(rows[1]?.supportLabel, "近似");
 });
 
+test("组件覆盖有单独的特性名，不会和组件实例混在一起", () => {
+  assert.equal(featureLabel("component-override"), "组件覆盖");
+  assert.equal(featureLabel("component-instance"), "组件实例");
+});
+
 test("未知特性不会被吞掉，原样显示 id", () => {
   assert.equal(featureLabel("future-feature"), "future-feature");
 });

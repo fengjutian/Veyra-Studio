@@ -11,6 +11,7 @@ const FEATURE_LABELS: Record<string, string> = {
   "image-asset": "图片资源",
   vector: "矢量图形",
   "component-instance": "组件实例",
+  "component-override": "组件覆盖",
   "hidden-node": "隐藏节点",
   layout: "布局计算",
   "png-rasterize": "PNG 光栅化",

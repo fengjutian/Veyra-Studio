@@ -15,7 +15,7 @@ test("支持矩阵的特性 id 唯一且取值合法", () => {
 
 test("导出器会发出的每一种诊断都能在矩阵里找到对应行", () => {
   // 这些 feature 由 html.ts / svg.ts / png-export.ts 实际发出。
-  for (const feature of ["image-asset", "vector", "component-instance", "hidden-node", "layout", "png-rasterize"]) {
+  for (const feature of ["image-asset", "vector", "component-instance", "component-override", "hidden-node", "layout", "png-rasterize"]) {
     assert.ok(EXPORT_SUPPORT_MATRIX.some(entry => entry.feature === feature), `矩阵缺少 ${feature}`);
   }
 });
