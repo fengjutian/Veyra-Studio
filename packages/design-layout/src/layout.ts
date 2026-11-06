@@ -74,10 +74,20 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     const width = forced?.width ?? resolveDimension(node, "width", availableWidth);
     // A hugging text height depends on the width it actually got, which is only
     // known here — so measure against the resolved width instead of the cached intrinsic.
+    const measured = node.type === "text" ? measurer.measure(node, width) : undefined;
     const height = forced?.height ?? (node.type === "text" && node.layout.heightMode === "hug"
-      ? measurer.measure(node, width).height
+      ? measured!.height
       : resolveDimension(node, "height", availableHeight));
     boxes[nodeId] = { x, y, width, height };
+    // Text that needs more lines than the box allows is a layout problem the user
+    // must see, otherwise the content is silently clipped on the canvas.
+    if (measured && measured.height > height + 0.5) {
+      warnings.push({
+        nodeId: node.id,
+        code: "text-overflow",
+        message: `Text ${node.id} needs ${Math.round(measured.height)}px but the box is only ${Math.round(height)}px tall`,
+      });
+    }
     if (!node.childIds.length) return;
 
     const padding = node.layout.padding ?? ZERO_PADDING;

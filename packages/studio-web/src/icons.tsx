@@ -77,6 +77,7 @@ export const ICONS = {
   // 新建节点
   addFrame: FrameIcon,
   addRectangle: SquareIcon,
+  addEllipse: CircleIcon,
   addText: TypeIcon,
 
   // 图层编辑

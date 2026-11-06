@@ -96,3 +96,38 @@ test("reports overflow without rejecting the layout", () => {
   const result = computePageLayout(documentWith(root, [first, second]), "page:1", { viewport: { width: 800, height: 600 } });
   assert.equal(result.warnings[0].code, "overflow");
 });
+
+function textNode(id: string, text: string, layout: Partial<ReturnType<typeof defaultLayout>>): DesignNode {
+  return node(id, "page:1", {
+    type: "text",
+    text,
+    fontFamily: "Inter",
+    fontSize: 20,
+    lineHeight: 24,
+    layout: { ...defaultLayout(), ...layout },
+  } as Partial<DesignNode>);
+}
+
+test("reports text that needs more lines than its fixed height allows", () => {
+  const text = textNode("text", "AAAAA", { width: 40, height: 24 });
+  const document = createDocument("doc:1", "Layout");
+  document.pages["page:1"].childIds = [text.id];
+  document.nodes[text.id] = text;
+  const result = computePageLayout(document, "page:1", { viewport: { width: 800, height: 600 } });
+  const warning = result.warnings.find(item => item.code === "text-overflow");
+  assert.ok(warning, "expected a text-overflow warning");
+  assert.equal(warning!.nodeId, "text");
+  // The box keeps its declared size — the warning reports the problem, it does not resize it.
+  assert.deepEqual(result.boxes.text, { x: 0, y: 0, width: 40, height: 24 });
+});
+
+test("does not report text overflow when the height hugs the content", () => {
+  const text = textNode("text", "AAAAA", { width: 40, heightMode: "hug" });
+  const document = createDocument("doc:1", "Layout");
+  document.pages["page:1"].childIds = [text.id];
+  document.nodes[text.id] = text;
+  const result = computePageLayout(document, "page:1", { viewport: { width: 800, height: 600 } });
+  assert.equal(result.warnings.find(item => item.code === "text-overflow"), undefined);
+  // "AAAAA" at 20px needs 11px per glyph, so 40px of width fits two lines.
+  assert.equal(result.boxes.text.height, 48);
+});

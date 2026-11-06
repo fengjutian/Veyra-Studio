@@ -6,3 +6,19 @@ button.icon-only{padding:5px;min-width:26px}
 .icon-grid button{width:30px;height:30px;padding:0;justify-self:center}
 .tools button{padding:6px 5px;font-size:11px;gap:4px}
 .layer-actions button{padding:5px 3px;font-size:11px;gap:3px}
+.inspector .field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px;font-size:12px}
+.inspector .field-inline{flex-direction:row;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.inspector .field-label{color:#98a2b3;font-size:11px;white-space:nowrap}
+.inspector .field-inline input{flex:1;min-width:0;max-width:130px;border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;padding:5px 7px;font-size:12px}
+.inspector .field-inline input[type=checkbox]{max-width:none;width:16px;height:16px;flex:0 0 16px}
+.segmented{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;background:#1f2430;border:1px solid #363d4b;border-radius:7px;padding:3px}
+.segment{padding:4px 2px;font-size:11px;border:0;background:transparent;color:#98a2b3;border-radius:5px}
+.segment.active{background:#4c1d95;color:#fff}
+.segment:hover:not(:disabled){border-color:transparent}
+.field-grid{display:grid;gap:6px}
+.field-grid-4{grid-template-columns:repeat(2,1fr)}
+.warning-list{display:grid;gap:6px;margin-bottom:12px}
+.warning-row{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;padding:7px 9px;font-size:11px;background:#35220f;border-color:#b45309;color:#fcd9b6}
+.warning-row:hover:not(:disabled){border-color:#d97706}
+.warning-code{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#fbbf24}
+.warning-message{color:#e7e9ee;line-height:1.4}
