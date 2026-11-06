@@ -77,6 +77,82 @@ test("can cancel a pending plan", async () => {
   assert.equal(project.snapshot().nodes.discarded, undefined);
 });
 
+test("a planner failure leaves the project untouched and no pending plan", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  let calls = 0;
+  const failing: AiPlanner = {
+    async plan() {
+      calls += 1;
+      throw new Error("provider exploded");
+    },
+  };
+  const editor = new SafeAiEditor(project, failing);
+
+  await assert.rejects(editor.createPlan("make something"), /provider exploded/);
+  assert.equal(project.snapshot().revision, 0);
+  assert.deepEqual(repository.transactions, []);
+
+  // 失败之后可以原地重试，不需要清理任何残留状态。
+  const retrying = new SafeAiEditor(project, plannerFor(frame("retry-node")));
+  const preview = await retrying.createPlan("make something");
+  assert.equal(calls, 1);
+  assert.ok(preview.after.nodes["retry-node"]);
+});
+
+test("forwards the cancel signal to the planner and refuses pre-cancelled requests", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  let received: unknown;
+  const planner: AiPlanner = {
+    async plan(request) {
+      received = request.signal;
+      return { summary: "s", commands: [{ type: "node.create", payload: { node: frame("signalled") } }] };
+    },
+  };
+  const editor = new SafeAiEditor(project, planner);
+  const controller = new AbortController();
+
+  await editor.createPlan("plan with signal", [], { signal: controller.signal });
+  assert.equal(received, controller.signal);
+
+  controller.abort();
+  await assert.rejects(editor.createPlan("cancelled", [], { signal: controller.signal }), /已取消/);
+});
+
+test("reports image.patch targets in the preview", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const editor = new SafeAiEditor(project, {
+    async plan() {
+      const asset = { id: "asset:one", hash: "a".repeat(64), mimeType: "image/png", byteLength: 1, name: "a.png" };
+      const node: DesignNode = {
+        id: "image:1",
+        type: "image",
+        name: "图",
+        parentId: "page:1",
+        childIds: [],
+        visible: true,
+        locked: false,
+        layout: { ...defaultLayout(), width: 10, height: 10 },
+        appearance: defaultAppearance(),
+        assetId: asset.id,
+        fit: "cover",
+      };
+      return {
+        summary: "swap image",
+        commands: [
+          { type: "asset.upsert", payload: { asset } },
+          { type: "node.create", payload: { node } },
+          { type: "image.patch", payload: { id: "image:1", patch: { fit: "contain" } } },
+        ],
+      };
+    },
+  });
+  const preview = await editor.createPlan("swap");
+  assert.deepEqual(preview.affectedNodeIds, ["image:1"]);
+});
+
 class MemoryRepository implements ProjectRepository {
   document?: DesignDocument;
   transactions: TransactionEntry[] = [];

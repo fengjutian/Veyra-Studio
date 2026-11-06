@@ -1,4 +1,4 @@
-import { computePageLayout, type ComputedBox, type TextMeasurer } from "@ufira/design-layout";
+import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
 import { TEXT_DEFAULTS, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";

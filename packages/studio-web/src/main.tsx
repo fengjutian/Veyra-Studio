@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
+import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, migrateDocument, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
@@ -58,6 +58,9 @@ function App() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("添加一个蓝色卡片");
   const [preview, setPreview] = useState<AiPlanPreview>();
+  // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
+  const planAbort = useRef<AbortController | undefined>(undefined);
+  const [planning, setPlanning] = useState(false);
   const [message, setMessage] = useState("正在打开本地项目…");
   const [busy, setBusy] = useState(false);
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
@@ -570,6 +573,31 @@ function App() {
     setAiSettings({ ...DEFAULT_AI_SETTINGS });
     setMessage("AI 模型设置已清除，已回退到演示规划器");
   };
+  /**
+   * 生成 AI 计划。
+   *
+   * 走自己的取消信号而不是 `run()`：`run()` 会把 busy 一直占住，用户没有办法
+   * 中止一个卡住的模型请求。失败或取消都不会改动项目——计划只有在 dry-run
+   * 成功之后才会进入待确认状态。
+   */
+  const generateAiPlan = async () => {
+    if (!editor || !prompt.trim() || busy) return;
+    const controller = new AbortController();
+    planAbort.current = controller;
+    operationInFlight.current = true;
+    setPlanning(true); setBusy(true);
+    try {
+      const next = await editor.createPlan(prompt, selectedIds, { signal: controller.signal });
+      setPreview(next);
+      setMessage("AI 计划已完成 dry-run，等待确认");
+    } catch (error) {
+      setMessage(error instanceof AiCancelledError ? "已取消 AI 生成" : errorMessage(error));
+    } finally {
+      planAbort.current = undefined;
+      operationInFlight.current = false;
+      setPlanning(false); setBusy(false);
+    }
+  };
   const createColorToken = () => void run(async () => {
     const name = (await askText({ title: "Token 名称", defaultValue: "color.primary" }))?.trim(); if (!name) return;
     const value = (await askText({ title: "颜色值", defaultValue: "#6366f1", validate: validateColor }))?.trim(); if (!value) return;
@@ -777,7 +805,8 @@ function App() {
       : <p className="empty-hint">还没有组件。选中一个节点，输入名称后点击「创建」。</p>}</div>
     <hr/><AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
     <hr/><h2>AI 安全编辑</h2><textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
-      <button disabled={busy || !prompt.trim()} onClick={() => editor && void run(async () => { setPreview(await editor.createPlan(prompt, selectedIds)); setMessage("AI 计划已完成 dry-run，等待确认"); })}><Icon name="aiPlan" />生成变更预览</button>
+      <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
+      {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
       {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p>{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
     </aside>
     <ExportPreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} preview={exportPreview} />

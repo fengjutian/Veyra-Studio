@@ -54,6 +54,12 @@
   契约、临时运行时 dry-run、before/after 预览、影响节点、warnings、取消、显式确认
   提交，以及基于 `baseRevision` 的过期计划拒绝；已实现 OpenAI-compatible
   `/chat/completions` Planner、命令提示、文档摘要和 JSON 计划解析；
+- AI 请求的失败处理：网络错误、408/429/5xx 按指数退避重试（默认最多两次，
+  可配置），超时抛 `AiTimeoutError`、用户取消抛 `AiCancelledError`，这两类都不重试；
+  取消信号从界面一路透传到 fetch（内部 AbortController 与外部信号联动），退避
+  等待期间取消也会立刻结束。规划失败或取消不会改动项目——计划只有在 dry-run
+  成功之后才进入待确认状态，失败后可以直接重试；工作台在生成过程中提供
+  「取消生成」按钮，不再只能等请求超时；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
   节点创建/选择/框选/拖动/缩放/吸附/删除、基础属性编辑、Dexie/IndexedDB 项目、事务
   和二进制资产存储，以及 AI 计划预览、过期提示、取消和确认提交界面；画布交互层
@@ -219,8 +225,9 @@
 - PNG 导出的独立交付链路；当前由 SVG 经浏览器 Canvas 光栅化生成，外部图片会污染画布
   （工作台自己插入的图片已内联为 data URL，不会触发这个问题）；
 - React、PDF 等后续导出格式；
-- 生产级 AI Provider 体验、流式响应、凭据安全、Reviewer 和完整结构审查闭环；当前已有
-  OpenAI-compatible Planner、安全计划、dry-run、可视化确认与提交原型；
+- 生产级 AI Provider 体验的其余部分：流式响应、多 Provider 支持矩阵、凭据安全
+  （密钥目前只保存在浏览器 localStorage）、Reviewer 与完整结构审查闭环；超时、
+  取消、重试和失败恢复已实现；
 - 独立 Studio 的 MCP adapter；
 - 不依赖 Figma 的端到端设计工作流；
 - 导入冲突：id 相同会询问覆盖还是另存，重名会给「原名（2）」的建议名让用户确认，

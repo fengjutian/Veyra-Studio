@@ -2,10 +2,23 @@ import type { DesignCommand, CommandEnvelope, CommandResult } from "@ufira/desig
 import type { DesignDocument, NodeId } from "@ufira/design-schema";
 import type { StudioExecuteResult, StudioProject } from "@ufira/studio-application";
 
+/** 取消信号的形状。用结构化类型，避免依赖 DOM 的 AbortSignal 声明。 */
+export interface AbortSignalLike {
+  readonly aborted: boolean;
+  addEventListener?(type: "abort", listener: () => void): void;
+  removeEventListener?(type: "abort", listener: () => void): void;
+}
+
 export interface AiPlanRequest {
   prompt: string;
   document: DesignDocument;
   selectedNodeIds: NodeId[];
+  /** 取消信号：规划过程中用户点「取消」时透传给 Planner。 */
+  signal?: AbortSignalLike;
+}
+
+export interface CreatePlanOptions {
+  signal?: AbortSignalLike;
 }
 
 export interface AiCommandPlan {
@@ -47,8 +60,15 @@ export class SafeAiEditor {
     private readonly actorId = "studio-ai",
   ) {}
 
-  async createPlan(prompt: string, selectedNodeIds: NodeId[] = []): Promise<AiPlanPreview> {
+  /**
+   * 让模型给出一份可预览的计划。
+   *
+   * 失败或取消时什么都不留下：计划只有在 dry-run 成功之后才会进入 `pending`，
+   * 所以异常路径不会污染项目，也不会留下"幽灵计划"。
+   */
+  async createPlan(prompt: string, selectedNodeIds: NodeId[] = [], options: CreatePlanOptions = {}): Promise<AiPlanPreview> {
     if (!prompt.trim()) throw new Error("AI prompt cannot be empty");
+    if (options.signal?.aborted) throw new Error("AI 请求已取消");
     const document = this.project.snapshot();
     for (const id of selectedNodeIds) {
       if (!document.nodes[id]) throw new Error(`Selected node ${id} does not exist`);
@@ -58,6 +78,7 @@ export class SafeAiEditor {
       prompt,
       document: structuredClone(document),
       selectedNodeIds: [...selectedNodeIds],
+      ...(options.signal ? { signal: options.signal } : {}),
     });
     if (!planned.summary.trim()) throw new Error("AI plan summary cannot be empty");
     if (planned.commands.length === 0) throw new Error("AI plan must contain at least one command");
@@ -132,9 +153,16 @@ function collectAffectedNodeIds(commands: DesignCommand[]): NodeId[] {
       case "node.reparent":
         ids.add(command.payload.id);
         break;
+      case "image.patch":
+        ids.add(command.payload.id);
+        break;
       case "component.define":
         ids.add(command.payload.component.rootNodeId);
         break;
+      case "document.rename":
+      case "asset.upsert":
+      case "asset.delete":
+      case "history.restore":
       case "token.upsert":
       case "token.delete":
       case "page.create":
