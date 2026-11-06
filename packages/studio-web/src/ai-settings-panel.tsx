@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PROVIDER_PRESETS, capabilityLabels, describeProvider } from "@ufira/ai-orchestrator";
 import type { AiSettings } from "./ai-settings";
 
 export interface AiSettingsPanelProps {
@@ -22,6 +23,7 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
   const update = (patch: Partial<AiSettings>) => setDraft(current => ({ ...current, ...patch }));
   // 只在这个会话里配过密钥才提示会失效；本地免鉴权网关不需要吓用户。
   const keyInSession = Boolean(settings.apiKey);
+  const provider = describeProvider(draft.baseUrl);
 
   return (
     <div className="ai-settings">
@@ -37,6 +39,23 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
         <span className="field-label">服务地址</span>
         <input type="text" value={draft.baseUrl} placeholder="https://api.openai.com/v1" onChange={event => update({ baseUrl: event.target.value })} />
       </label>
+      <label className="field">
+        <span className="field-label">快速填入</span>
+        <select
+          value={provider.matched ? provider.id : ""}
+          onChange={event => {
+            const preset = PROVIDER_PRESETS.find(item => item.id === event.target.value);
+            if (preset) update({ baseUrl: preset.baseUrl, model: preset.defaultModel });
+          }}
+        >
+          <option value="">自定义</option>
+          {PROVIDER_PRESETS.map(preset => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+        </select>
+      </label>
+      <p className={provider.matched ? "ai-provider ai-provider-known" : "ai-provider"}>
+        {provider.label} · {capabilityLabels(provider.capabilities).join(" · ")}
+      </p>
+      <p className="ai-settings-hint">{provider.note}</p>
       <label className="field">
         <span className="field-label">模型</span>
         <input type="text" value={draft.model} placeholder="gpt-4o-mini" onChange={event => update({ model: event.target.value })} />

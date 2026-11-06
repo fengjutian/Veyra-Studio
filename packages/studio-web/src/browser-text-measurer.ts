@@ -1,19 +1,32 @@
-import { createHostTextMeasurer, type TextMeasurementRequest, type TextMeasurer } from "@ufira/design-layout";
+import { createCachedTextMeasurer, createHostTextMeasurer, resolveFontFamily, type CachedTextMeasurer, type TextMeasurementRequest, type TextMeasurer } from "@ufira/design-layout";
 
 /**
  * Measures text with a real font engine.
  *
  * A canvas 2D context resolves the actual glyph advances for the requested font,
  * which is what the layout engine needs to size hugging text and to wrap lines.
- * Results are cached per (font, text, width) because measurement is the hot path
- * during layout.
+ * Results go through the shared bounded cache so repeated layout passes do not
+ * re-measure the same text.
  */
 export function createBrowserTextMeasurer(): TextMeasurer {
   const context = createContext();
-  const cache = new Map<string, { width: number; height: number }>();
-  const measurer = createHostTextMeasurer(request => measure(context, request, cache));
-  return measurer;
+  const cached = createCachedTextMeasurer(createHostTextMeasurer(request => measure(context, request)), { limit: 512 });
+  activeCache = cached;
+  return cached;
 }
+
+/**
+ * Drops every cached measurement.
+ *
+ * Web fonts load asynchronously: measurements taken before the font arrives use a
+ * fallback face and are wrong afterwards. The app calls this once fonts are ready
+ * so the next layout pass measures with the real face.
+ */
+export function resetBrowserTextMeasurementCache(): void {
+  activeCache?.clear();
+}
+
+let activeCache: CachedTextMeasurer | undefined;
 
 function createContext(): CanvasRenderingContext2D | undefined {
   if (typeof document === "undefined") return undefined;
@@ -24,18 +37,8 @@ function createContext(): CanvasRenderingContext2D | undefined {
 function measure(
   context: CanvasRenderingContext2D | undefined,
   request: TextMeasurementRequest,
-  cache: Map<string, { width: number; height: number }>,
 ): { width: number; height: number } {
-  const key = `${request.fontStyle}|${request.fontWeight}|${request.fontFamily}|${request.fontSize}|${request.lineHeight}|${request.letterSpacing}|${request.availableWidth ?? ""}|${request.text}`;
-  const cached = cache.get(key);
-  if (cached) return cached;
-
-  const size = context
-    ? measureWithCanvas(context, request)
-    : measureWithoutCanvas(request);
-
-  cache.set(key, size);
-  return size;
+  return context ? measureWithCanvas(context, request) : measureWithoutCanvas(request);
 }
 
 /**
@@ -43,10 +46,12 @@ function measure(
  *
  * The canvas font property follows CSS, so weight and style belong in the string;
  * a bold or italic text measures differently and must not share a cache entry.
+ * The family goes through the shared fallback stack so a missing font still has a
+ * predictable width instead of measuring whichever face the browser picks.
  */
 function fontShorthand(request: TextMeasurementRequest): string {
   const style = request.fontStyle === "italic" ? "italic " : "";
-  return `${style}${request.fontWeight} ${request.fontSize}px ${request.fontFamily}`;
+  return `${style}${request.fontWeight} ${request.fontSize}px ${resolveFontFamily(request.fontFamily)}`;
 }
 
 /**

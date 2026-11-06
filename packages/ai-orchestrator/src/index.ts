@@ -4,3 +4,4 @@ export * from "./plan-parser";
 export * from "./prompt";
 export * from "./openai-planner";
 export * from "./review";
+export * from "./provider-matrix";

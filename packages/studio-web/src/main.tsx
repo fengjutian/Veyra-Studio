@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
-import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
+import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, migrateDocument, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
@@ -18,6 +18,8 @@ import { safeFilename } from "./file-name";
 import { LayerTree } from "./layer-tree";
 import { planReparent, type DropPosition } from "./layer-reorder";
 import { resolveBox, useCanvasLayout, type CanvasLayout } from "./canvas-layout";
+import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
+import { collectFontFamilies, prepareFonts } from "./font-loading";
 import { CANVAS_HEIGHT, CANVAS_PADDING, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
 import { clampScroll, panScroll } from "./canvas-pan";
 import { listComponents, makeInstanceNode } from "./components";
@@ -62,6 +64,8 @@ function App() {
   // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
   const planAbort = useRef<AbortController | undefined>(undefined);
   const [planning, setPlanning] = useState(false);
+  // 字体到位后自增，触发一次带真实字体度量的重排。
+  const [fontEpoch, setFontEpoch] = useState(0);
   // 流式回复的累计文本，只在生成过程中显示。
   const [streamText, setStreamText] = useState("");
   const [message, setMessage] = useState("正在打开本地项目…");
@@ -115,7 +119,14 @@ function App() {
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
   const planner = useMemo(() => aiSettingsComplete(aiSettings)
-    ? createOpenAiCompatiblePlanner({ baseUrl: aiSettings.baseUrl, model: aiSettings.model, apiKey: aiSettings.apiKey || undefined, stream: true })
+    ? createOpenAiCompatiblePlanner({
+        baseUrl: aiSettings.baseUrl,
+        model: aiSettings.model,
+        apiKey: aiSettings.apiKey || undefined,
+        stream: true,
+        // 按端点能力决定要不要发 response_format；未收录的端点保守地关掉。
+        jsonMode: describeProvider(aiSettings.baseUrl).capabilities.jsonMode,
+      })
     : demoPlanner, [aiSettings]);
   const editor = useMemo(() => project ? new SafeAiEditor(project, planner) : undefined, [project, planner]);
 
@@ -161,6 +172,18 @@ function App() {
     void repository.listTransactions(snapshotProjectId).then(entries => { if (!cancelled) setTransactions(entries); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [snapshotProjectId, autosave.lastSavedAt]);
+  // 字体异步到达：加载完清掉测量缓存并触发一次重排，避免回退字形的尺寸一直留着。
+  const fontFamiliesKey = useMemo(() => document ? collectFontFamilies(document).join("|") : "", [document]);
+  useEffect(() => {
+    if (!fontFamiliesKey) return;
+    let cancelled = false;
+    void prepareFonts(fontFamiliesKey.split("|")).then(loaded => {
+      if (cancelled || !loaded.length) return;
+      resetBrowserTextMeasurementCache();
+      setFontEpoch(epoch => epoch + 1);
+    });
+    return () => { cancelled = true; };
+  }, [fontFamiliesKey]);
   useEffect(() => {
     if (!project) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -193,7 +216,7 @@ function App() {
 
   const activePageId = document && currentPageId && document.pages[currentPageId] ? currentPageId : document?.pageOrder[0];
   // Hooks must run before the early return below, so the layout is resolved unconditionally.
-  const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+  const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch);
   // 导出范围：整页用画布尺寸；选区用选中节点的包围盒，并只导出与选中节点相关的分支。
   const exportTarget = useMemo(() => {
     if (exportScope === "selection") {
