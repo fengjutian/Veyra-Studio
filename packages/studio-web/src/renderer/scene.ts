@@ -1,0 +1,112 @@
+import {
+  resolveRadius,
+  resolveStroke,
+  tokenColor,
+  type DesignDocument,
+  type DesignNode,
+  type NodeId,
+} from "@ufira/design-schema";
+
+/**
+ * 场景构建：把设计文档 + 布局结果压成一份"画什么"的纯数据。
+ *
+ * 这一层不碰 DOM、不碰 Canvas，所以可以在 Node 里直接断言。渲染器只负责把
+ * SceneNode 画出来；换渲染器时只需要换渲染器，不需要重新理解文档结构。
+ *
+ * 借鉴 tldraw / Excalidraw 的分工：形状描述是纯函数，绘制与命中测试各自实现。
+ */
+
+export interface SceneBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface SceneText {
+  value: string;
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  fontWeight: number;
+  /** 目前只支持 normal / italic。 */
+  fontStyle: "normal" | "italic";
+  align: "left" | "center" | "right";
+  letterSpacing: number;
+  color: string;
+}
+
+export interface SceneImage {
+  assetId: string;
+  fit: "cover" | "contain" | "fill";
+}
+
+export interface SceneNode {
+  id: NodeId;
+  type: DesignNode["type"];
+  box: SceneBox;
+  /** 容器是否裁剪子节点（对应 DOM 的 overflow: hidden）。 */
+  clip: boolean;
+  opacity: number;
+  fill?: string;
+  stroke?: string;
+  strokeWidth: number;
+  radius: number;
+  text?: SceneText;
+  image?: SceneImage;
+  children: SceneNode[];
+}
+
+/**
+ * 构建页面场景。
+ *
+ * 顺序即绘制顺序：先父后子，同级按 `childIds`。隐藏节点整棵跳过——这与导出和
+ * 画布当前行为一致。
+ */
+export function buildScene(document: DesignDocument, pageId: string, boxes: Record<string, SceneBox | undefined>): SceneNode[] {
+  const page = document.pages[pageId];
+  if (!page) return [];
+  return page.childIds
+    .map(id => buildNode(document, document.nodes[id], boxes))
+    .filter((node): node is SceneNode => Boolean(node));
+}
+
+export function buildNode(document: DesignDocument, node: DesignNode | undefined, boxes: Record<string, SceneBox | undefined>): SceneNode | undefined {
+  if (!node || node.visible === false) return undefined;
+  const box = boxes[node.id] ?? { x: node.layout.x ?? 0, y: node.layout.y ?? 0, width: node.layout.width ?? 0, height: node.layout.height ?? 0 };
+  const fill = tokenColor(document, node.bindings?.fill) ?? node.appearance.fill;
+  const stroke = resolveStroke(document, node);
+  const scene: SceneNode = {
+    id: node.id,
+    type: node.type,
+    box,
+    clip: node.type === "frame" || node.type === "component" || node.type === "instance",
+    opacity: node.appearance.opacity ?? 1,
+    ...(fill ? { fill } : {}),
+    ...(stroke ? { stroke } : {}),
+    // 模型里还没有描边宽度，统一按 1px 画（与 DOM 默认边框一致）。
+    strokeWidth: stroke ? 1 : 0,
+    radius: resolveRadius(document, node) ?? 0,
+    children: node.childIds
+      .map(childId => buildNode(document, document.nodes[childId], boxes))
+      .filter((child): child is SceneNode => Boolean(child)),
+  };
+
+  if (node.type === "text") {
+    scene.text = {
+      value: node.text,
+      fontFamily: node.fontFamily,
+      fontSize: node.fontSize,
+      lineHeight: node.lineHeight,
+      fontWeight: node.fontWeight ?? 400,
+      fontStyle: node.fontStyle === "italic" ? "italic" : "normal",
+      align: node.textAlign === "center" || node.textAlign === "right" ? node.textAlign : "left",
+      letterSpacing: node.letterSpacing ?? 0,
+      color: fill ?? "#111111",
+    };
+  }
+  if (node.type === "image" && node.assetId) {
+    scene.image = { assetId: node.assetId, fit: node.fit === "contain" || node.fit === "fill" ? node.fit : "cover" };
+  }
+  return scene;
+}

@@ -187,3 +187,7 @@ button.icon-only{padding:5px;min-width:26px}
 .instance-override-appearance input[type=color]{width:34px;height:26px;padding:0;border:1px solid #363d4b;border-radius:5px;background:#111318}
 :focus-visible{outline:2px solid #8b5cf6;outline-offset:2px}
 .warning-code-contrast{color:#f0abfc}
+.canvas-surface{position:absolute;inset:0;pointer-events:none;z-index:0}
+.canvas.canvas-rendered .node{background:transparent!important;border-color:transparent!important;box-shadow:none!important;color:transparent!important}
+.canvas.canvas-rendered .node img{opacity:0}
+.canvas.canvas-rendered textarea{color:#e5e7eb;background:#111318}

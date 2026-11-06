@@ -97,6 +97,14 @@
   携带，会话按空闲时间过期，同一会话的请求串行执行；请求体上限 256 KB；
   未实现 SSE 服务端推送与 OAuth —— 当前工具都是请求-响应式，公网部署仍需反向代理
   再加一层鉴权；
+- 画布渲染器：场景先压成纯数据的 `SceneNode` 树（`renderer/scene.ts`，布局盒 + 填充/描边/
+  圆角/文字/图片，不碰 DOM），再由 Canvas 2D 渲染器按 `zoom × dpr` 绘制
+  （`renderer/canvas-renderer.ts`），缩放时重绘而不是拉伸位图。分层借鉴 tldraw /
+  Excalidraw：绘制走 Canvas，命中测试、选择框、拖拽手柄和文本编辑继续用 DOM 覆盖层，
+  所以输入法、文本选择和 Moveable/Selecto 的行为不变；图片走现有的对象 URL 缓存。
+  默认启用，`?renderer=dom` 可回退到旧的 DOM 绘制。场景构建与绘制调用都有单元测试
+  （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
+  像素验证，也没有做视口裁剪（culling）；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
   节点创建/选择/框选/拖动/缩放/吸附/删除、基础属性编辑、Dexie/IndexedDB 项目、事务
   和二进制资产存储，以及 AI 计划预览、过期提示、取消和确认提交界面；画布交互层
@@ -177,10 +185,18 @@
   像素对比用 `node:zlib` 自实现，不引入原生图像库；找不到浏览器时 check 会跳过并提示，
   加 `--require-browser` 则明确失败。基线绑定本机字体，跨机器更新需要显式
   `--update`；
+- 可访问性（对比度）：`collectContrastIssues()` 从文档解析文本色与最近的背景色，
+  按 WCAG 相对亮度公式算对比度（正文 4.5:1、大字号 3:1，大字号按 ≥24px 或
+  ≥18.66px 加粗判定），token 绑定也算在内；属性面板列出不达标的文本节点，点击可
+  定位。工作台补了全局 `:focus-visible` 描边；键盘遍历与屏幕阅读器路径还没有自动化
+  检查；
 - 布局性能基线：`npm run bench:layout` 用合成文档（文本节点 + 自动布局容器）测
   200/500/1000/2000 节点的中位数与 p95，支持 `--json` 与 `--budget`（超预算非零退出）；
-  本机基线约 1.3 / 2.9 / 4.6 / 10.4 ms，接近线性（约 5µs/节点）。`test:studio-core`
-  里另有一条 1000 节点、2 秒上限的 smoke 测试，只拦截数量级退化，避免 CI 抖动误报；
+  本机基线约 1.5 / 3 / 5-7 / 11-19 / 30-45 ms（5000 节点），接近线性。另有
+  `npm run bench:export` 测 1000/5000 节点的 HTML 与 SVG 生成（本机 5000 节点约
+  50-70ms），`npm run check:budgets` 把两条基线一起做门禁（超预算非零退出）。
+  `test:studio-core` 里有 1000 节点布局与 5000 节点布局+导出的 smoke 测试，只拦截
+  数量级退化，避免 CI 抖动误报；
 - 设计 Token 扩展到三类：颜色 token 绑定填充/描边，数值 token 绑定圆角与自动布局
   间距；`resolveRadius` / `resolveGap` / `resolveStroke` 是唯一解析入口，画布渲染、
   布局引擎和 HTML/SVG 导出共用它，不会各算一套。Token 面板支持新增颜色/数值 token、

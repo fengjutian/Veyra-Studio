@@ -32,7 +32,8 @@ The target architecture in `docs/ai-design-studio-architecture-analysis.md` is a
 **draft roadmap, not a description of implemented functionality**. The Studio already
 has a runnable web workbench, a host-independent layout and text-measurement engine,
 a safe AI editing loop, and HTML/SVG/PNG export prototypes, but none of them are
-production-grade yet: the canvas renders through the DOM, text measurement depends on
+production-grade yet: the canvas paints through a Canvas 2D scene renderer (DOM overlays keep
+selection, handles and text editing), text measurement depends on
 browser font metrics, and the AI path is still limited to a single OpenAI-compatible
 provider.
 
