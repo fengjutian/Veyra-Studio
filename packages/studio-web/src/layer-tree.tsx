@@ -138,7 +138,7 @@ export function LayerTree({ document, rootIds, selectedIds, onSelect, onReorder 
         </SortableContext>
         <DragOverlay>{draggingId && document.nodes[draggingId] ? <div className="layer layer-drag-overlay">{document.nodes[draggingId].name}</div> : null}</DragOverlay>
       </DndContext>
-      {rows.length === 0 && <p className="empty-hint">没有匹配的图层</p>}
+      {rows.length === 0 && <p className="empty-hint">{query.trim() ? "没有匹配的图层" : "还没有图层。用顶部的工具创建 Frame、形状或文本。"}</p>}
     </div>
   );
 }

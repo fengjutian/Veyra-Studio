@@ -1,0 +1,700 @@
+/*
+ * 工作台布局（对标 Figma / Penpot / Sketch 的编辑器外壳）
+ *
+ * styles.css 里是功能组件的样式，这一层只负责「外壳」：顶栏工具栏、左侧页面 +
+ * 图层双段面板、中间的带标题画板和右侧检查器。放在单独文件里是为了让布局规则
+ * 集中可读，不再往 styles.css 第一条压缩行里追加。
+ *
+ * 三个关键约束：
+ * 1. 每一层 flex 容器都写 min-height: 0，否则图层树会把整个面板撑高、底栏被挤出视口。
+ * 2. 顶栏不换行，窄屏按优先级隐藏文字标签而不是让按钮溢出。
+ * 3. 画板标题放在缩放层之外，缩放画布时标题保持可读，不会跟着变成小字。
+ */
+
+.studio {
+  --panel-left: 248px;
+  --panel-right: 300px;
+  --topbar-height: 48px;
+  --workbench-border: #232833;
+  --workbench-border-strong: #2c3340;
+  --workbench-panel: #15181f;
+  --workbench-elevated: #1a1e26;
+  --workbench-hover: #232936;
+  --workbench-text: #e7e9ee;
+  --workbench-muted: #9aa3b2;
+  --workbench-dim: #6b7484;
+  --workbench-accent: #8b5cf6;
+  --workbench-accent-soft: #2a2140;
+  grid-template: var(--topbar-height) minmax(0, 1fr) / var(--panel-left) minmax(0, 1fr) var(--panel-right);
+  color: var(--workbench-text);
+  font-size: 12px;
+}
+
+/* ---------- 顶栏 ---------- */
+
+.studio .topbar {
+  grid-column: 1 / 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--workbench-border);
+  background: #14171e;
+  overflow: hidden;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  margin-right: 2px;
+  min-width: 0;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  box-shadow: inset 0 0 0 1px #a78bfa4d;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+
+.studio .topbar .project-select {
+  flex: none;
+  width: 178px;
+  min-width: 120px;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--workbench-border-strong);
+  border-radius: 7px;
+  background: #1b202a;
+  color: var(--workbench-text);
+  font-size: 12px;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  min-width: 0;
+}
+
+/* 顶栏按钮统一成 30×30 的图标键；文字键单独放宽。 */
+.studio .topbar button {
+  height: 30px;
+  padding: 0 8px;
+  gap: 5px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--workbench-muted);
+  font-size: 12px;
+}
+
+.studio .topbar button.icon-only {
+  width: 30px;
+  min-width: 30px;
+  padding: 0;
+}
+
+.studio .topbar button:hover:not(:disabled) {
+  background: var(--workbench-hover);
+  border-color: transparent;
+  color: var(--workbench-text);
+}
+
+.studio .topbar button:disabled {
+  opacity: .38;
+}
+
+.studio .topbar button[aria-pressed="true"] {
+  background: var(--workbench-accent-soft);
+  color: #c4b5fd;
+}
+
+.studio .topbar button.header-danger {
+  color: #f2a7a7;
+}
+
+.studio .topbar button.header-danger:hover:not(:disabled) {
+  background: #3a1d22;
+  color: #ffc9c9;
+}
+
+.toolbar-separator {
+  width: 1px;
+  height: 18px;
+  flex: none;
+  margin: 0 4px;
+  background: var(--workbench-border-strong);
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.studio .topbar .export-scope {
+  width: 104px;
+  flex: none;
+  height: 28px;
+  padding: 0 5px;
+  border: 1px solid var(--workbench-border-strong);
+  border-radius: 7px;
+  background: #1b202a;
+  color: var(--workbench-muted);
+  font-size: 11px;
+}
+
+.studio .topbar .autosave-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 158px;
+  margin-left: 2px;
+  padding: 3px 8px;
+  overflow: hidden;
+  border: 1px solid var(--workbench-border);
+  border-radius: 999px;
+  background: #171b23;
+  color: var(--workbench-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.autosave-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: #7dd3a0;
+}
+
+.autosave-status.autosave-pending,
+.autosave-status.autosave-saving {
+  color: #d8c26a;
+}
+
+.autosave-status.autosave-pending::before,
+.autosave-status.autosave-saving::before {
+  background: #d8c26a;
+}
+
+.autosave-status.autosave-error {
+  color: #ff9b9b;
+}
+
+.autosave-status.autosave-error::before {
+  background: #ff6b6b;
+}
+
+.studio .topbar .status {
+  flex: 0 1 220px;
+  min-width: 0;
+  margin-left: 4px;
+  color: var(--workbench-dim);
+  font-size: 11px;
+}
+
+/* ---------- 左侧栏：页面 + 图层双段 ---------- */
+
+.layers {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--workbench-border);
+  background: var(--workbench-panel);
+}
+
+.panel-block {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pages-block {
+  flex: none;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--workbench-border);
+}
+
+.layers-block {
+  flex: 1 1 auto;
+  padding: 10px 12px 0;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  margin-bottom: 6px;
+}
+
+.panel-head h2 {
+  margin: 0;
+  flex: none;
+  color: #8b93a3;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.panel-count {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #1d222c;
+  color: var(--workbench-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+}
+
+.panel-head .tooltip-anchor {
+  margin-left: auto;
+}
+
+.panel-head button {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--workbench-muted);
+}
+
+.panel-head button:hover:not(:disabled) {
+  background: var(--workbench-hover);
+  border-color: transparent;
+  color: var(--workbench-text);
+}
+
+.page-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 132px;
+  margin: 0 -4px;
+  overflow: auto;
+}
+
+.page-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #aeb6c4;
+  font-size: 12px;
+  text-align: left;
+}
+
+.page-row svg {
+  flex: none;
+  color: var(--workbench-dim);
+}
+
+.page-row:hover:not(:disabled) {
+  border-color: transparent;
+  background: #1f242e;
+  color: var(--workbench-text);
+}
+
+.page-row.active {
+  background: var(--workbench-accent-soft);
+  box-shadow: inset 0 0 0 1px #4c1d95;
+  color: #ddd6fe;
+}
+
+.page-row.active svg {
+  color: #a78bfa;
+}
+
+.page-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.page-row-meta {
+  flex: none;
+  color: var(--workbench-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.page-actions .tooltip-anchor,
+.page-actions > button {
+  flex: 1;
+  min-width: 0;
+}
+
+.page-actions button {
+  justify-content: center;
+  width: 100%;
+  padding: 4px 6px;
+  border-color: #262c37;
+  background: #1a1e26;
+  color: var(--workbench-muted);
+  font-size: 11px;
+}
+
+.layer-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  margin-bottom: 8px;
+  padding: 3px;
+  border: 1px solid var(--workbench-border);
+  border-radius: 7px;
+  background: #181c24;
+}
+
+.layer-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+}
+
+.layer-tool-label {
+  padding: 0 5px 0 3px;
+  color: var(--workbench-dim);
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+
+.layer-tools button {
+  width: 26px;
+  height: 24px;
+  min-width: 26px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--workbench-muted);
+}
+
+.layer-tools button:hover:not(:disabled) {
+  border-color: transparent;
+  background: #262c38;
+  color: #fff;
+}
+
+.layer-tools button:disabled {
+  opacity: .32;
+}
+
+.tool-divider {
+  width: 1px;
+  height: 14px;
+  flex: none;
+  margin: 0 2px;
+  background: var(--workbench-border-strong);
+}
+
+/* 图层树自己滚动，搜索框固定在顶部；面板整体不再滚动。 */
+.layers .layer-tree {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0 0 10px;
+  overflow: auto;
+}
+
+.layers .layer-search {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: none;
+  margin: 0 0 6px;
+  padding: 5px 8px;
+  border: 1px solid #262c37;
+  border-radius: 6px;
+  background: #1a1e26;
+}
+
+.layers .layer-row {
+  border-radius: 5px;
+}
+
+.layers .layer-row:hover {
+  background: #1f242e;
+}
+
+.layers .layer {
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: transparent;
+  color: #c3c9d4;
+  font-size: 12px;
+}
+
+.layers .layer.active {
+  background: var(--workbench-accent-soft);
+  box-shadow: inset 0 0 0 1px #4c1d95;
+  color: #ddd6fe;
+}
+
+.layers .empty-hint {
+  margin: 4px 2px;
+  color: var(--workbench-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.layers .section-heading {
+  display: none;
+}
+
+/* ---------- 中间画布 ---------- */
+
+.workspace {
+  background-color: #101319;
+  background-image: radial-gradient(#262c37 1px, transparent 1px);
+  background-position: -1px -1px;
+  background-size: 22px 22px;
+}
+
+.canvas-scroller {
+  display: flex;
+  padding: 36px 28px 32px;
+}
+
+.canvas-stage {
+  position: relative;
+  flex: none;
+  width: max-content;
+  margin: auto;
+  padding-top: 24px;
+}
+
+.canvas-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  color: var(--workbench-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+.canvas-frame-name {
+  color: #c3c9d4;
+  font-weight: 600;
+}
+
+.canvas-frame-size {
+  color: var(--workbench-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas-frame-zoom {
+  color: #4f5665;
+  font-variant-numeric: tabular-nums;
+}
+
+.canvas {
+  box-shadow: 0 2px 10px #00000066, 0 24px 64px #00000099;
+}
+
+.canvas-controls {
+  right: 16px;
+  bottom: 16px;
+  padding: 3px;
+  border-color: #2a303b;
+  background: #171b23e6;
+  box-shadow: 0 8px 24px #00000080;
+  backdrop-filter: blur(8px);
+}
+
+.canvas-controls .icon-only {
+  width: 28px;
+  height: 26px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--workbench-muted);
+}
+
+.canvas-controls .icon-only:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--workbench-hover);
+  color: var(--workbench-text);
+}
+
+.canvas-controls .zoom-value {
+  border-color: transparent;
+  background: transparent;
+}
+
+.canvas-controls .zoom-value:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--workbench-hover);
+}
+
+/* ---------- 右侧检查器 ---------- */
+
+.inspector {
+  width: var(--panel-right);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--workbench-border);
+  background: var(--workbench-panel);
+}
+
+.inspector-head {
+  flex: none;
+  padding: 12px 14px 6px;
+}
+
+.inspector-head h2 {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.inspector-tabs {
+  padding: 0 10px 8px;
+}
+
+.inspector-body {
+  padding: 12px 14px 20px;
+}
+
+.inspector-foot {
+  padding: 8px 14px;
+  background: #14171e;
+}
+
+.inspector-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 16px 4px;
+  color: var(--workbench-dim);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.inspector-empty-title {
+  color: #b6bdca;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.inspector-empty kbd {
+  padding: 0 5px;
+  border: 1px solid var(--workbench-border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--workbench-elevated);
+  color: var(--workbench-muted);
+  font: inherit;
+  font-size: 10px;
+}
+
+/* ---------- 面板收起 ---------- */
+
+.studio.left-collapsed .layers,
+.studio.right-collapsed .inspector {
+  width: 0;
+  border: 0;
+}
+
+/* ---------- 窄屏：先丢品牌名与状态文案，按钮保持可用 ---------- */
+
+@media (max-width: 1440px) {
+  .studio {
+    --panel-left: 236px;
+    --panel-right: 288px;
+  }
+
+  .brand-name {
+    display: none;
+  }
+
+  .studio .topbar .project-select {
+    width: 160px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .studio {
+    --panel-left: 220px;
+    --panel-right: 272px;
+  }
+
+  .studio .topbar .status {
+    display: none;
+  }
+
+  .studio .topbar .autosave-status {
+    max-width: 118px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .studio .topbar .project-select {
+    width: 128px;
+    min-width: 96px;
+  }
+
+  .studio .topbar .export-scope {
+    width: 92px;
+  }
+
+  /* 顶栏放不下自动保存状态时先收起来；右侧检查器底部仍然常驻同一状态。 */
+  .studio .topbar .autosave-status {
+    display: none;
+  }
+}

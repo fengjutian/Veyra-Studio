@@ -77,18 +77,28 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
 }
 
 function drawShape(context: CanvasRenderingContext2D, node: SceneNode): void {
-  const { x, y, width, height } = node.box;
   if (node.fill) {
-    roundRectPath(context, x, y, width, height, node.radius);
+    shapePath(context, node);
     context.fillStyle = node.fill;
     context.fill();
   }
   if (node.stroke && node.strokeWidth > 0) {
-    roundRectPath(context, x, y, width, height, node.radius);
+    shapePath(context, node);
     context.strokeStyle = node.stroke;
     context.lineWidth = node.strokeWidth;
     context.stroke();
   }
+}
+
+/** 椭圆节点画椭圆，其余形状按圆角矩形处理。 */
+function shapePath(context: CanvasRenderingContext2D, node: SceneNode): void {
+  const { x, y, width, height } = node.box;
+  if (node.type === "ellipse") {
+    context.beginPath();
+    context.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+    return;
+  }
+  roundRectPath(context, x, y, width, height, node.radius);
 }
 
 function drawImage(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions): void {

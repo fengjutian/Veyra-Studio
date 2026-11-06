@@ -16,14 +16,16 @@ import {
   AlignStartHorizontal,
   AlignStartVertical,
   AlignVerticalSpaceAround,
+  ArrowDown,
+  ArrowDownToLine,
+  ArrowUp,
+  ArrowUpToLine,
   Braces,
-  BringToFront,
   Boxes,
   Check,
   CheckCheck,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   Circle as CircleIcon,
   ClipboardPaste,
   Component as ComponentIcon,
@@ -33,6 +35,7 @@ import {
   FileImage,
   FilePlus,
   Frame as FrameIcon,
+  Group,
   Hand,
   History,
   Image as ImageIcon,
@@ -48,13 +51,13 @@ import {
   RotateCcw,
   Scan,
   Search,
-  SendToBack,
   Shapes,
   Spline,
   Square as SquareIcon,
   Trash,
   Type as TypeIcon,
   Undo2,
+  Ungroup,
   Unlink,
   Upload,
   WandSparkles,
@@ -83,7 +86,8 @@ export const ICONS = {
   import: Upload,
 
   // 页面
-  pageAdd: FilePlus,
+  page: FilePlus,
+  pageAdd: Plus,
   pageDelete: Trash,
 
   // 新建节点
@@ -96,6 +100,8 @@ export const ICONS = {
   copy: Copy,
   paste: ClipboardPaste,
   duplicate: CopyPlus,
+  group: Group,
+  ungroup: Ungroup,
 
   // 选区
   selectAll: CheckCheck,
@@ -115,10 +121,10 @@ export const ICONS = {
   close: X,
 
   // 图层顺序
-  toBack: SendToBack,
-  moveDown: ChevronDown,
-  moveUp: ChevronUp,
-  toFront: BringToFront,
+  toBack: ArrowDownToLine,
+  moveDown: ArrowDown,
+  moveUp: ArrowUp,
+  toFront: ArrowUpToLine,
   layerOrder: LayersIcon,
 
   // 锁定状态
