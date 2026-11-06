@@ -3,18 +3,21 @@ import {
   JOURNAL_RETENTION,
   ProjectNotFoundError,
   SNAPSHOT_RETENTION,
+  SnapshotNotFoundError,
   assertSavableDocument,
   loadDocumentPayload,
   normalizeAssetHash,
   replayJournal,
+  snapshotSummary,
   type AssetWrite,
   type JournalPruneOptions,
   type ProjectRepository,
   type ProjectSnapshot,
   type ProjectSummary,
+  type SnapshotSummary,
 } from "@ufira/design-persistence";
 import type { TransactionEntry } from "@ufira/design-runtime";
-import type { DesignDocument } from "@ufira/design-schema";
+import { detectSchemaVersion, type DesignDocument } from "@ufira/design-schema";
 
 interface ProjectRecord { id: string; revision: number; updatedAt: string; name: string }
 interface SnapshotRecord { projectId: string; revision: number; document: DesignDocument }
@@ -71,6 +74,26 @@ export class DexieProjectRepository implements ProjectRepository {
       for (const stale of history.slice(0, Math.max(0, history.length - (SNAPSHOT_RETENTION - 1)))) {
         await this.database.snapshotHistory.delete([stale.projectId, stale.revision]);
       }
+    });
+  }
+
+  /**
+   * 整体替换一个项目：清掉旧快照、旧日志和旧资产，再写入新内容。
+   *
+   * 必须先清空再写——旧快照的 revision 可能比新文档高，残留下来会被恢复流程
+   * 选中，旧日志也会被重放到新内容上。
+   */
+  async replaceProject(projectId: string, document: DesignDocument): Promise<void> {
+    const valid = assertSavableDocument(document);
+    if (valid.id !== projectId) throw new Error(`Replacement document id ${valid.id} does not match project ${projectId}`);
+    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, async () => {
+      await this.database.projects.delete(projectId);
+      await this.database.snapshots.delete(projectId);
+      await this.database.snapshotHistory.where("projectId").equals(projectId).delete();
+      await this.database.transactions.where("documentId").equals(projectId).delete();
+      await this.database.assets.where("projectId").equals(projectId).delete();
+      await this.database.projects.put({ id: valid.id, revision: valid.revision, updatedAt: valid.meta.updatedAt, name: valid.meta.name });
+      await this.database.snapshots.put({ projectId: valid.id, revision: valid.revision, document: structuredClone(valid) });
     });
   }
 
@@ -148,6 +171,33 @@ export class DexieProjectRepository implements ProjectRepository {
     return this.database.transactions.where("documentId").equals(projectId).and(entry => entry.revision < cutoff).delete();
   }
 
+  /**
+   * 列出保留的历史版本。
+   *
+   * 当前版本在 snapshots 表里，旧版本在 snapshotHistory 表里；同一个 revision
+   * 可能两边都有（迁移升级时留下的旧格式副本），当前版本优先。
+   */
+  async listSnapshots(projectId: string): Promise<SnapshotSummary[]> {
+    const current = await this.database.snapshots.get(projectId);
+    const history = await this.database.snapshotHistory.where("projectId").equals(projectId).sortBy("revision");
+    const byRevision = new Map<number, SnapshotSummary>();
+    for (const record of history) byRevision.set(record.revision, describeSnapshot(record));
+    if (current) byRevision.set(current.revision, describeSnapshot(current));
+    return [...byRevision.values()]
+      .sort((left, right) => right.revision - left.revision)
+      .map((item, index) => ({ ...item, current: index === 0 }));
+  }
+
+  /** 读取某个历史版本的完整文档；存储里的旧格式在这里被迁移到当前格式。 */
+  async readSnapshot(projectId: string, revision: number): Promise<DesignDocument> {
+    const current = await this.database.snapshots.get(projectId);
+    const record = current?.revision === revision ? current : await this.database.snapshotHistory.get([projectId, revision]);
+    if (!record) throw new SnapshotNotFoundError(projectId, revision);
+    const { document } = loadDocumentPayload(record.document);
+    if (document.id !== projectId) throw new SnapshotNotFoundError(projectId, revision);
+    return document;
+  }
+
   close(): void { this.database.close(); }
   deleteDatabase(): Promise<void> { return this.database.delete(); }
 
@@ -158,4 +208,9 @@ export class DexieProjectRepository implements ProjectRepository {
 async function sha256(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, "0")).join("");
+}
+
+/** 把一条快照记录变成版本摘要。 */
+function describeSnapshot(record: SnapshotRecord): SnapshotSummary {
+  return snapshotSummary(record.document, { current: false, schemaVersion: detectSchemaVersion(record.document) ?? 0 });
 }

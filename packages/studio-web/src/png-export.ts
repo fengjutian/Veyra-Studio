@@ -1,4 +1,5 @@
 import { exportPageToSvg, type ExportDiagnostic } from "@ufira/design-export";
+import type { AssetMetadata } from "@ufira/design-schema";
 
 export interface PngExportResult {
   dataUrl: string;
@@ -12,12 +13,13 @@ export interface PngExportResult {
  *
  * The page is exported to SVG first and then drawn onto a canvas. This keeps the
  * exported image consistent with the SVG deliverable and avoids shipping a
- * headless browser to the workbench. External images taint the canvas, so that
- * case is reported instead of silently producing a broken image.
+ * headless browser to the workbench. Images that are inline data URLs keep the
+ * canvas clean; a remote URL taints it, so that case is reported instead of
+ * silently producing a broken image.
  */
 export async function exportPageToPng(
   document: Parameters<typeof exportPageToSvg>[0],
-  options: { pageId: string; viewport: { width: number; height: number }; title?: string; scale?: number; nodeIds?: string[]; origin?: { x: number; y: number } },
+  options: { pageId: string; viewport: { width: number; height: number }; title?: string; scale?: number; nodeIds?: string[]; origin?: { x: number; y: number }; resolveAsset?: (asset: AssetMetadata) => string | undefined },
 ): Promise<PngExportResult> {
   const scale = options.scale && options.scale > 0 ? options.scale : 1;
   const svgResult = exportPageToSvg(document, options);

@@ -3,6 +3,7 @@ import { computePageLayout, type LayoutOptions, type LayoutResult } from "@ufira
 import type { ProjectRepository, ProjectSnapshot } from "@ufira/design-persistence";
 import { DesignRuntime, type CommandEnvelope, type CommandResult, type TransactionEntry } from "@ufira/design-runtime";
 import { createDocument, type DesignDocument } from "@ufira/design-schema";
+import { createAssetResolver } from "./assets";
 
 export interface StudioExecuteResult {
   result: CommandResult;
@@ -99,6 +100,25 @@ export class StudioProject {
 
   exportSvg(options: SvgExportOptions): SvgExportResult {
     return exportPageToSvg(this.runtime.snapshot(), options);
+  }
+
+  /**
+   * 导出 HTML，并把文档引用的图片资源一起交给导出器。
+   *
+   * 资源字节在仓库里，导出器却是同步接口，所以这里先异步读一遍、转成 data URL，
+   * 再走原来的导出路径。调用方自己传了 `resolveAsset` 时以调用方为准。
+   */
+  async exportHtmlWithAssets(options: HtmlExportOptions): Promise<HtmlExportResult> {
+    const document = this.runtime.snapshot();
+    const resolveAsset = options.resolveAsset ?? await createAssetResolver(this.repository, document, options.pageId, options.nodeIds);
+    return exportPageToHtml(document, { ...options, resolveAsset });
+  }
+
+  /** 导出 SVG，资源处理同 {@link exportHtmlWithAssets}。 */
+  async exportSvgWithAssets(options: SvgExportOptions): Promise<SvgExportResult> {
+    const document = this.runtime.snapshot();
+    const resolveAsset = options.resolveAsset ?? await createAssetResolver(this.repository, document, options.pageId, options.nodeIds);
+    return exportPageToSvg(document, { ...options, resolveAsset });
   }
 
   private lastTransaction(): TransactionEntry {

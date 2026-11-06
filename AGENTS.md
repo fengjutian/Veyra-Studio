@@ -53,6 +53,17 @@ document. Verify the filesystem, tests, and exported APIs first.
   (`CURRENT_SCHEMA_VERSION` plus the `MIGRATIONS` step table). Every read path for older
   documents — repository recovery and JSON import — must call `migrateDocument()` before
   validation.
+- Rolling a project back to an earlier version means submitting the runtime's
+  `history.restore` command (`packages/design-runtime/src/commands.ts`), not overwriting
+  storage. `history.restore` keeps the revision monotonic, records the rollback in the
+  transaction journal, and therefore stays undoable; writing the snapshot back directly
+  would clear the journal and regress the revision number.
+- Radix `AlertDialog.Action` closes the dialog, which fires `onOpenChange(false)`. Settle
+  the dialog promise inside the action's `onClick`; otherwise the close event overwrites
+  the result (a confirm dialog would resolve `false` even when "confirm" is clicked).
+- `packages/studio-web` renders an API Key `type="password"` field, so the in-app Browser
+  tool classifies the page as an authentication takeover and blocks every other tool.
+  Browser-based verification of the workbench needs that field changed first.
 
 ## Legacy Vibma Reference
 

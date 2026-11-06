@@ -34,6 +34,7 @@ import {
   FilePlus,
   Frame as FrameIcon,
   Hand,
+  History,
   Image as ImageIcon,
   Layers as LayersIcon,
   Link2,
@@ -44,6 +45,7 @@ import {
   Pencil,
   Plus,
   Redo2,
+  RotateCcw,
   Scan,
   Search,
   SendToBack,
@@ -154,6 +156,10 @@ export const ICONS = {
   // 图层树
   chevronRight: ChevronRight,
   chevronDown: ChevronDown,
+
+  // 历史版本
+  versionHistory: History,
+  versionRestore: RotateCcw,
 
   // 节点类型
   nodeFrame: FrameIcon,

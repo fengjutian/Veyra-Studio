@@ -1,20 +1,23 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { type DesignDocument } from "@ufira/design-schema";
+import { detectSchemaVersion, type DesignDocument } from "@ufira/design-schema";
 import type { TransactionEntry } from "@ufira/design-runtime";
 import {
   ProjectNotFoundError,
   SNAPSHOT_RETENTION,
+  SnapshotNotFoundError,
   assertSavableDocument,
   loadDocumentPayload,
   normalizeAssetHash,
   replayJournal,
+  snapshotSummary,
   type AssetWrite,
   type JournalPruneOptions,
   type ProjectRepository,
   type ProjectSnapshot,
   type ProjectSummary,
+  type SnapshotSummary,
 } from "./contract";
 
 /**
@@ -61,6 +64,19 @@ export class FileSystemProjectRepository implements ProjectRepository {
       documentSchemaVersion: valid.schemaVersion,
     } satisfies Manifest));
     await this.pruneSnapshots(directory);
+  }
+
+  /**
+   * 整体替换一个项目：先删掉整个项目目录，再写入新内容。
+   *
+   * 必须先清空再写——旧快照的 revision 可能比新文档高，残留下来会被恢复流程
+   * 选中，旧日志也会被重放到新内容上。
+   */
+  async replaceProject(projectId: string, document: DesignDocument): Promise<void> {
+    const valid = assertSavableDocument(document);
+    if (valid.id !== projectId) throw new Error(`Replacement document id ${valid.id} does not match project ${projectId}`);
+    await rm(this.projectDirectory(projectId), { recursive: true, force: true });
+    await this.saveSnapshot(valid);
   }
 
   async appendTransactions(entries: TransactionEntry[]): Promise<void> {
@@ -180,6 +196,46 @@ export class FileSystemProjectRepository implements ProjectRepository {
     const outdated = files.slice(0, Math.max(0, files.length - keep));
     for (const file of outdated) await rm(join(directory, file), { force: true });
     return outdated.length;
+  }
+
+  /**
+   * 列出保留的快照版本。
+   *
+   * snapshots 目录里每一份文件就是一个版本，文件名上的 revision 越大越新，
+   * 所以最新的一份就是当前版本。坏掉的文件直接跳过，不让整个列表查不出来。
+   */
+  async listSnapshots(projectId: string): Promise<SnapshotSummary[]> {
+    const directory = join(this.projectDirectory(projectId), "snapshots");
+    const files = (await safeReadDirectory(directory)).filter(isRevisionFile).sort().reverse();
+    const summaries: SnapshotSummary[] = [];
+    for (const file of files) {
+      const stored = await this.readSnapshotFile(join(directory, file));
+      if (!stored) continue;
+      summaries.push(snapshotSummary(stored.document, { current: false, schemaVersion: stored.schemaVersion }));
+    }
+    if (summaries.length) summaries[0]!.current = true;
+    return summaries;
+  }
+
+  /** 读取某个历史版本的完整文档；存储里的旧格式在这里被迁移到当前格式。 */
+  async readSnapshot(projectId: string, revision: number): Promise<DesignDocument> {
+    const directory = join(this.projectDirectory(projectId), "snapshots");
+    const stored = await this.readSnapshotFile(join(directory, revisionFile(revision)));
+    if (!stored || stored.document.id !== projectId) throw new SnapshotNotFoundError(projectId, revision);
+    return stored.document;
+  }
+
+  private async readSnapshotFile(path: string): Promise<{ document: DesignDocument; schemaVersion: number } | undefined> {
+    const raw = await readFile(path, "utf8").catch(() => undefined);
+    if (raw === undefined) return undefined;
+    try {
+      const payload = JSON.parse(raw) as unknown;
+      // 存的是哪个格式版本，和读出来的是哪个格式版本，是两件事：迁移前的
+      // 旧文件迁上来之后内容一样，但界面上要如实告诉用户它是哪一版留下的。
+      return { document: loadDocumentPayload(payload).document, schemaVersion: detectSchemaVersion(payload) ?? 0 };
+    } catch {
+      return undefined;
+    }
   }
 
   private async writeMigratedSnapshot(directory: string, document: DesignDocument, original: string): Promise<void> {

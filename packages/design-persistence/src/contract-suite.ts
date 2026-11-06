@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createDocument } from "@ufira/design-schema";
+import { createDocument, type DesignDocument } from "@ufira/design-schema";
 import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
-import { ProjectNotFoundError, type ProjectRepository } from "./contract";
+import { ProjectNotFoundError, SnapshotNotFoundError, type ProjectRepository } from "./contract";
 
 /**
  * 仓库契约测试套件（node 环境专用）。
@@ -140,6 +140,39 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
     });
   });
 
+  test(`${name}: 覆盖项目会清掉旧快照与旧日志`, async () => {
+    await withRepository(async ({ repository }) => {
+      const document = createDocument("project:1", "Demo");
+      await repository.saveSnapshot(document);
+      await repository.appendTransactions([{
+        commandId: "cmd:1",
+        documentId: document.id,
+        revision: 1,
+        committedAt: "2026-11-05T08:00:00.000Z",
+        actor: { type: "human", id: "user:1" },
+        commands: [{ type: "token.upsert", payload: { name: "color.brand", token: { type: "color", value: "#3366ff" } } }],
+        warnings: [],
+      }]);
+
+      const replacement = createDocument("project:1", "Replaced");
+      await repository.replaceProject("project:1", replacement);
+
+      const opened = await repository.open("project:1");
+      assert.equal(opened.document.meta.name, "Replaced");
+      assert.equal(opened.replayedTransactions, 0);
+      assert.equal(opened.degraded, false);
+      assert.deepEqual(opened.document.tokens, {});
+      assert.deepEqual(await repository.listTransactions("project:1"), []);
+    });
+  });
+
+  test(`${name}: 覆盖项目会拒绝换一个 id 的文档`, async () => {
+    await withRepository(async ({ repository }) => {
+      await repository.saveSnapshot(createDocument("project:1", "Demo"));
+      await assert.rejects(repository.replaceProject("project:1", createDocument("project:2", "Other")), /does not match/);
+    });
+  });
+
   test(`${name}: 资产按哈希去重且拒绝不匹配的哈希`, async () => {
     await withRepository(async ({ repository }) => {
       const bytes = new TextEncoder().encode("asset-data");
@@ -164,6 +197,71 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
       assert.deepEqual(opened.document.migrations, [{ from: 1, to: 2, at: opened.document.migrations?.[0]?.at }]);
     });
   });
+
+  test(`${name}: 历史版本从新到旧列出，最新的一份是当前版本`, async () => {
+    await withRepository(async ({ repository }) => {
+      await repository.saveSnapshot(snapshotAt("project:1", 0, "v0"));
+      await repository.saveSnapshot(snapshotAt("project:1", 1, "v1"));
+      await repository.saveSnapshot(snapshotAt("project:1", 2, "v2"));
+
+      const snapshots = await repository.listSnapshots("project:1");
+      assert.deepEqual(snapshots.map(item => item.revision), [2, 1, 0]);
+      assert.deepEqual(snapshots.map(item => item.current), [true, false, false]);
+      assert.equal(snapshots[0]?.schemaVersion, 2);
+      assert.equal(snapshots[0]?.updatedAt, "2026-11-05T00:00:02.000Z");
+    });
+  });
+
+  test(`${name}: 历史版本按保留份数裁剪`, async () => {
+    await withRepository(async ({ repository }) => {
+      for (const revision of [0, 1, 2, 3, 4]) await repository.saveSnapshot(snapshotAt("project:1", revision, `v${revision}`));
+      const snapshots = await repository.listSnapshots("project:1");
+      assert.deepEqual(snapshots.map(item => item.revision), [4, 3, 2]);
+    });
+  });
+
+  test(`${name}: 读取历史版本拿到当时的内容`, async () => {
+    await withRepository(async ({ repository }) => {
+      await repository.saveSnapshot(snapshotAt("project:1", 0, "旧名字"));
+      await repository.saveSnapshot(snapshotAt("project:1", 1, "新名字"));
+
+      const old = await repository.readSnapshot("project:1", 0);
+      assert.equal(old.meta.name, "旧名字");
+      assert.equal(old.revision, 0);
+      assert.equal(old.schemaVersion, 2);
+    });
+  });
+
+  test(`${name}: 读取不存在的版本报 SnapshotNotFoundError`, async () => {
+    await withRepository(async ({ repository }) => {
+      await repository.saveSnapshot(snapshotAt("project:1", 0, "Demo"));
+      await assert.rejects(repository.readSnapshot("project:1", 9), SnapshotNotFoundError);
+    });
+  });
+
+  test(`${name}: 迁移前的旧版本仍然可以列出来并读回当前格式`, async () => {
+    await withRepository(async ({ repository, seed }) => {
+      if (!seed) return;
+      await seed("project:1", legacyDocumentPayload());
+
+      const snapshots = await repository.listSnapshots("project:1");
+      assert.equal(snapshots.length, 1);
+      assert.equal(snapshots[0]?.schemaVersion, 1);
+      assert.equal(snapshots[0]?.current, true);
+
+      const document = await repository.readSnapshot("project:1", 0);
+      assert.equal(document.schemaVersion, 2);
+      assert.equal(document.meta.name, "Legacy");
+    });
+  });
+}
+
+/** 造一份停在某个修订号上的文档，用来模拟历史版本。 */
+function snapshotAt(id: string, revision: number, name: string): DesignDocument {
+  const document = createDocument(id, name);
+  document.revision = revision;
+  document.meta.updatedAt = new Date(Date.UTC(2026, 10, 5, 0, 0, revision)).toISOString();
+  return document;
 }
 
 /** 生成一份 v1 文档，供各后端播种旧数据。 */

@@ -151,6 +151,26 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     }
     case "node.delete": return deleteNode(document, command.payload.id);
     case "node.reparent": return reparentNode(document, command.payload.id, command.payload.parentId, command.payload.index);
+    case "asset.upsert": {
+      const { asset } = command.payload;
+      if (!asset.id.trim()) throw new CommandError("Asset id cannot be empty");
+      if (!asset.hash.trim()) throw new CommandError("Asset hash cannot be empty");
+      if (!asset.mimeType.trim()) throw new CommandError("Asset mime type cannot be empty");
+      if (!Number.isInteger(asset.byteLength) || asset.byteLength < 0) throw new CommandError("Asset byte length must be a non-negative integer");
+      // 资源以内容哈希标识：同一个 id 换了一份不同内容，说明调用方把两张图混成了一个身份。
+      const existing = document.assets[asset.id];
+      if (existing && existing.hash !== asset.hash) throw new CommandError(`Asset ${asset.id} already exists with a different hash`);
+      document.assets[asset.id] = structuredClone(asset);
+      return;
+    }
+    case "image.patch": {
+      const node = requireNode(document, command.payload.id);
+      if (node.type !== "image") throw new CommandError(`Node ${node.id} is not an image node`);
+      const { fit } = command.payload.patch;
+      if (fit !== undefined && fit !== "cover" && fit !== "contain" && fit !== "fill") throw new CommandError("Image fit must be cover, contain or fill");
+      Object.assign(node, structuredClone(command.payload.patch));
+      return;
+    }
     case "token.upsert": {
       if (!command.payload.name.trim()) throw new CommandError("Token name cannot be empty");
       document.tokens[command.payload.name] = structuredClone(command.payload.token);

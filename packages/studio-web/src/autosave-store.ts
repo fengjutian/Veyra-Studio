@@ -28,6 +28,15 @@ export function currentAutosaveStatus(): AutosaveStatus {
   return status;
 }
 
+/**
+ * 把待写快照立刻落盘。
+ *
+ * 还原历史版本之后需要马上看到新的版本列表，这时不能再等合并写的延迟。
+ */
+export function flushAutosave(): Promise<void> {
+  return repository.flush();
+}
+
 /** 页面被关闭或切到后台时把待写快照立刻落盘。 */
 export function installAutosaveFlush(): () => void {
   const flush = () => { void repository.flush(); };

@@ -1,8 +1,10 @@
 import type {
+  AssetMetadata,
   ComponentDefinition,
   DesignDocument,
   DesignNode,
   DesignPage,
+  ImageNode,
   InstanceNode,
   NodeId,
   PageId,
@@ -49,6 +51,32 @@ export interface DeleteNodeCommand {
 export interface ReparentNodeCommand {
   type: "node.reparent";
   payload: { id: NodeId; parentId: NodeId | PageId; index?: number };
+}
+
+/** 图片资源的显示方式。 */
+export type ImageFit = ImageNode["fit"];
+
+/**
+ * 登记一份图片资源的元数据。
+ *
+ * 资源字节本身存在仓库里（按 SHA-256 去重），文档只保存元数据。图片节点必须
+ * 先有对应的资源记录，`validateDocument()` 才不会判定它引用了不存在的资源，
+ * 因此导入图片时这条命令和 `node.create` 必须落在同一个事务里。
+ */
+export interface UpsertAssetCommand {
+  type: "asset.upsert";
+  payload: { asset: AssetMetadata };
+}
+
+/**
+ * 改图片节点的显示方式。
+ *
+ * 和 `text.patch` 一样单独开一条命令，而不是扩张通用的 `node.patch`：`fit`
+ * 只对图片有意义，混进通用 patch 会让其他节点也能收到这个字段。
+ */
+export interface PatchImageCommand {
+  type: "image.patch";
+  payload: { id: NodeId; patch: { fit?: ImageFit } };
 }
 
 export interface UpsertTokenCommand {
@@ -104,6 +132,8 @@ export type DesignCommand =
   | PatchTextCommand
   | DeleteNodeCommand
   | ReparentNodeCommand
+  | UpsertAssetCommand
+  | PatchImageCommand
   | UpsertTokenCommand
   | DeleteTokenCommand
   | CreatePageCommand

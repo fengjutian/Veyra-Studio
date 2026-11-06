@@ -114,6 +114,8 @@ export function withAutosave(repository: ProjectRepository, options: AutosaveOpt
     putAsset: (projectId, asset: AssetWrite) => repository.putAsset(projectId, asset),
     getAsset: (projectId, hash) => repository.getAsset(projectId, hash),
     appendTransactions: (entries: TransactionEntry[]) => repository.appendTransactions(entries),
+    listSnapshots: (projectId: string) => repository.listSnapshots(projectId),
+    readSnapshot: (projectId: string, revision: number) => repository.readSnapshot(projectId, revision),
 
     async saveSnapshot(document: DesignDocument): Promise<void> {
       // 第一个项目的第一份快照必须立刻落盘，否则新建的项目在落盘前关闭就找不回来了。
@@ -123,6 +125,20 @@ export function withAutosave(repository: ProjectRepository, options: AutosaveOpt
         return;
       }
       schedule(document.id, document);
+    },
+
+    async replaceProject(projectId: string, document: DesignDocument): Promise<void> {
+      // 覆盖意味着这个项目的历史不再作废，待写队列里的旧内容必须一起丢掉。
+      const pendingWrite = pending.get(projectId);
+      if (pendingWrite?.timer) clearTimeout(pendingWrite.timer);
+      pending.delete(projectId);
+      written.delete(projectId);
+      publish({ pendingCount: pending.size });
+      await enqueue(async () => {
+        await repository.replaceProject(projectId, document);
+        written.add(projectId);
+        publish({ state: "saved", lastSavedAt: new Date().toISOString(), lastError: undefined, quotaExceeded: false });
+      });
     },
 
     async pruneJournal(projectId: string, pruneOptions?: JournalPruneOptions): Promise<number> {

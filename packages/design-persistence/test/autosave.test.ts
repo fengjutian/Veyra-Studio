@@ -3,7 +3,7 @@ import test from "node:test";
 import { createDocument, type DesignDocument } from "@ufira/design-schema";
 import type { TransactionEntry } from "@ufira/design-runtime";
 import { withAutosave, type AutosaveStatus } from "../src/autosave";
-import { ProjectNotFoundError, type ProjectRepository, type ProjectSnapshot, type ProjectSummary } from "../src/contract";
+import { ProjectNotFoundError, SnapshotNotFoundError, type ProjectRepository, type ProjectSnapshot, type ProjectSummary, type SnapshotSummary } from "../src/contract";
 
 interface FakeRepositoryOptions {
   failWith?: Error;
@@ -21,6 +21,11 @@ function fakeRepository(options: FakeRepositoryOptions = {}): ProjectRepository 
       if (options.failWith) throw options.failWith;
       snapshots.push(document);
     },
+    async replaceProject(_projectId: string, document: DesignDocument) {
+      if (options.failWith) throw options.failWith;
+      snapshots.length = 0;
+      snapshots.push(document);
+    },
     async appendTransactions(_entries: TransactionEntry[]) {},
     async listTransactions() { return []; },
     async putAsset() {},
@@ -28,6 +33,19 @@ function fakeRepository(options: FakeRepositoryOptions = {}): ProjectRepository 
     async listProjects(): Promise<ProjectSummary[]> { return []; },
     async deleteProject() {},
     async pruneJournal() { pruned += 1; return 0; },
+    async listSnapshots(): Promise<SnapshotSummary[]> {
+      return snapshots.map((document, index) => ({
+        revision: document.revision,
+        updatedAt: document.meta.updatedAt,
+        schemaVersion: document.schemaVersion,
+        current: index === snapshots.length - 1,
+      }));
+    },
+    async readSnapshot(_projectId: string, revision: number) {
+      const found = snapshots.find(document => document.revision === revision);
+      if (!found) throw new SnapshotNotFoundError("project:1", revision);
+      return found;
+    },
   };
   return repository;
 }

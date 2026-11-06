@@ -33,6 +33,21 @@ export interface ProjectSnapshot {
   migratedFrom?: number;
 }
 
+/**
+ * 历史版本摘要。
+ *
+ * 存储会保留最近几份快照，界面上要列出"可以回滚到哪一版"时只需要这些字段，
+ * 不必把整份文档读出来。
+ */
+export interface SnapshotSummary {
+  revision: number;
+  updatedAt: string;
+  /** 这份快照的文档格式版本；比当前版本旧说明它是迁移前留下的。 */
+  schemaVersion: number;
+  /** 是否是当前正在使用的版本。 */
+  current: boolean;
+}
+
 export interface JournalPruneOptions {
   /** 保留最近多少条事务；默认 {@link JOURNAL_RETENTION}。 */
   keep?: number;
@@ -41,6 +56,13 @@ export interface JournalPruneOptions {
 export interface ProjectRepository {
   open(projectId: string): Promise<ProjectSnapshot>;
   saveSnapshot(document: DesignDocument): Promise<void>;
+  /**
+   * 用给定文档整体替换一个项目的全部内容：旧快照、旧日志和旧资产都被清掉。
+   *
+   * 导入外部文件覆盖已有项目时必须走这里，而不是 saveSnapshot——旧日志会被
+   * 重放到新内容上，旧快照也可能盖过新写入的那一份。
+   */
+  replaceProject(projectId: string, document: DesignDocument): Promise<void>;
   appendTransactions(entries: TransactionEntry[]): Promise<void>;
   listTransactions(projectId: string, afterRevision?: number): Promise<TransactionEntry[]>;
   putAsset(projectId: string, asset: AssetWrite): Promise<void>;
@@ -50,12 +72,38 @@ export interface ProjectRepository {
   deleteProject(projectId: string): Promise<void>;
   /** 裁剪事务日志，返回被删除的条数。 */
   pruneJournal(projectId: string, options?: JournalPruneOptions): Promise<number>;
+  /**
+   * 列出项目保留的历史版本，按 revision 从新到旧。
+   *
+   * 保留几份由各后端自己的保留策略决定，但两个后端的条数与顺序必须一致，
+   * 否则同一个项目在两种存储下能回滚到的范围会不一样。
+   */
+  listSnapshots(projectId: string): Promise<SnapshotSummary[]>;
+  /**
+   * 读取某个历史版本的完整文档。
+   *
+   * 存储里的旧格式文档会在这里被迁移到当前格式——回滚要的是内容，
+   * 不是把整个应用退回旧格式。版本不存在时抛 {@link SnapshotNotFoundError}。
+   */
+  readSnapshot(projectId: string, revision: number): Promise<DesignDocument>;
 }
 
 export class ProjectNotFoundError extends Error {
   constructor(projectId: string) {
     super(`Project ${projectId} does not exist`);
     this.name = "ProjectNotFoundError";
+  }
+}
+
+/**
+ * 指定的历史版本不存在。
+ *
+ * 单独一种错误类型，调用方才能区分"项目没了"和"这一版已经被保留策略清掉"。
+ */
+export class SnapshotNotFoundError extends Error {
+  constructor(projectId: string, revision: number) {
+    super(`Snapshot r${revision} of project ${projectId} does not exist`);
+    this.name = "SnapshotNotFoundError";
   }
 }
 
@@ -85,6 +133,22 @@ export const SNAPSHOT_RETENTION = 3;
  */
 export function assertSavableDocument(document: DesignDocument): DesignDocument {
   return validateDocument(document);
+}
+
+/**
+ * 把文档变成版本摘要。
+ *
+ * 两个后端用同一份口径，免得同一份数据在文件系统里显示的版本信息和在浏览器里
+ * 显示的不一样。`schemaVersion` 可以显式传入存储里真实的格式版本——迁移前的
+ * 旧文件读上来之后内容已经是当前格式，但界面上要如实说明它是哪一版留下的。
+ */
+export function snapshotSummary(document: DesignDocument, options: { current: boolean; schemaVersion?: number }): SnapshotSummary {
+  return {
+    revision: document.revision,
+    updatedAt: document.meta.updatedAt,
+    schemaVersion: options.schemaVersion ?? document.schemaVersion,
+    current: options.current,
+  };
 }
 
 /** 校验资产哈希，统一大小写写法。 */

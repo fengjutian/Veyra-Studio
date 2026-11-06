@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AssetWrite, ProjectRepository, ProjectSnapshot } from "@ufira/design-persistence";
+import type { AssetWrite, ProjectRepository, ProjectSnapshot, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
+import { SnapshotNotFoundError } from "@ufira/design-persistence";
 import type { TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
@@ -87,6 +88,24 @@ class MemoryRepository implements ProjectRepository {
   async saveSnapshot(document: DesignDocument): Promise<void> { this.document = structuredClone(document); }
   async appendTransactions(entries: TransactionEntry[]): Promise<void> { this.transactions.push(...structuredClone(entries)); }
   async listTransactions(): Promise<TransactionEntry[]> { return structuredClone(this.transactions); }
+  async replaceProject(_projectId: string, document: DesignDocument): Promise<void> {
+    this.document = structuredClone(document);
+    this.transactions = [];
+  }
+  async listProjects(): Promise<ProjectSummary[]> {
+    if (!this.document) return [];
+    return [{ id: this.document.id, name: this.document.meta.name, revision: this.document.revision, updatedAt: this.document.meta.updatedAt }];
+  }
+  async deleteProject(): Promise<void> { this.document = undefined; this.transactions = []; }
+  async pruneJournal(): Promise<number> { return 0; }
+  async listSnapshots(): Promise<SnapshotSummary[]> {
+    if (!this.document) return [];
+    return [{ revision: this.document.revision, updatedAt: this.document.meta.updatedAt, schemaVersion: this.document.schemaVersion, current: true }];
+  }
+  async readSnapshot(_projectId: string, revision: number): Promise<DesignDocument> {
+    if (!this.document || this.document.revision !== revision) throw new SnapshotNotFoundError("project:1", revision);
+    return structuredClone(this.document);
+  }
   async putAsset(_projectId: string, _asset: AssetWrite): Promise<void> {}
   async getAsset(): Promise<Uint8Array | undefined> { return undefined; }
   async recover(projectId: string): Promise<ProjectSnapshot> { return this.open(projectId); }

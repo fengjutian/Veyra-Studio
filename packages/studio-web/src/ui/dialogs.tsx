@@ -37,13 +37,31 @@ export interface ConfirmRequest {
   destructive?: boolean;
 }
 
+/** 三选一弹窗的选项。 */
+export interface ChoiceOption {
+  value: string;
+  label: string;
+  /** 危险操作用红色按钮。 */
+  destructive?: boolean;
+}
+
+export interface ChoiceRequest {
+  title: string;
+  description?: string;
+  options: ChoiceOption[];
+  cancelLabel?: string;
+}
+
 type Pending =
   | { kind: "prompt"; request: PromptRequest }
-  | { kind: "confirm"; request: ConfirmRequest };
+  | { kind: "confirm"; request: ConfirmRequest }
+  | { kind: "choice"; request: ChoiceRequest };
 
 interface DialogApi {
   prompt(request: PromptRequest): Promise<string | null>;
   confirm(request: ConfirmRequest): Promise<boolean>;
+  /** 返回被选项的 value；取消或关闭返回 null。 */
+  choice(request: ChoiceRequest): Promise<string | null>;
 }
 
 const DialogContext = createContext<DialogApi | null>(null);
@@ -60,6 +78,13 @@ export function useConfirm(): DialogApi["confirm"] {
   const api = useContext(DialogContext);
   if (!api) throw new Error("useConfirm 必须在 <DialogProvider> 内使用");
   return api.confirm;
+}
+
+/** 打开一个多选一弹窗；返回被选项的 value，取消或关闭返回 null。 */
+export function useChoice(): DialogApi["choice"] {
+  const api = useContext(DialogContext);
+  if (!api) throw new Error("useChoice 必须在 <DialogProvider> 内使用");
+  return api.choice;
 }
 
 export function DialogProvider({ children }: { children: ReactNode }) {
@@ -82,7 +107,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     setPending({ kind: "confirm", request });
   }), []);
 
-  const api = useMemo<DialogApi>(() => ({ prompt, confirm }), [prompt, confirm]);
+  const choice = useCallback((request: ChoiceRequest) => new Promise<string | null>(resolve => {
+    resolveRef.current = resolve as (value: string | null | boolean) => void;
+    setPending({ kind: "choice", request });
+  }), []);
+
+  const api = useMemo<DialogApi>(() => ({ prompt, confirm, choice }), [prompt, confirm, choice]);
 
   const settle = (value: string | null | boolean) => {
     const resolve = resolveRef.current;
@@ -105,6 +135,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
 
   const promptRequest = pending?.kind === "prompt" ? pending.request : undefined;
   const confirmRequest = pending?.kind === "confirm" ? pending.request : undefined;
+  const choiceRequest = pending?.kind === "choice" ? pending.request : undefined;
 
   return (
     <DialogContext.Provider value={api}>
@@ -177,10 +208,41 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                 <button type="button">{confirmRequest?.cancelLabel ?? "取消"}</button>
               </AlertDialogPrimitive.Cancel>
               <AlertDialogPrimitive.Action asChild>
-                <button type="button" className={confirmRequest?.destructive ? "dialog-danger" : "dialog-primary"}>
+                {/* 必须在这里结算：Radix 的 Action 关闭弹窗时会再触发一次 onOpenChange，
+                    不先结算的话 promise 会被那次关闭覆盖成 false。 */}
+                <button type="button" className={confirmRequest?.destructive ? "dialog-danger" : "dialog-primary"} onClick={() => settle(true)}>
                   {confirmRequest?.confirmLabel ?? "确定"}
                 </button>
               </AlertDialogPrimitive.Action>
+            </div>
+          </AlertDialogPrimitive.Content>
+        </AlertDialogPrimitive.Portal>
+      </AlertDialogPrimitive.Root>
+
+      <AlertDialogPrimitive.Root
+        open={Boolean(choiceRequest)}
+        onOpenChange={open => { if (!open) settle(null); }}
+      >
+        <AlertDialogPrimitive.Portal>
+          <AlertDialogPrimitive.Overlay className="dialog-overlay" />
+          <AlertDialogPrimitive.Content className="dialog-content">
+            <AlertDialogPrimitive.Title className="dialog-title">
+              {choiceRequest?.title ?? ""}
+            </AlertDialogPrimitive.Title>
+            <AlertDialogPrimitive.Description className="dialog-description">
+              {choiceRequest?.description ?? ""}
+            </AlertDialogPrimitive.Description>
+            <div className="dialog-actions">
+              {choiceRequest?.options.map(option => (
+                <AlertDialogPrimitive.Action key={option.value} asChild>
+                  <button type="button" className={option.destructive ? "dialog-danger" : "dialog-primary"} onClick={() => settle(option.value)}>
+                    {option.label}
+                  </button>
+                </AlertDialogPrimitive.Action>
+              ))}
+              <AlertDialogPrimitive.Cancel asChild>
+                <button type="button">{choiceRequest?.cancelLabel ?? "取消"}</button>
+              </AlertDialogPrimitive.Cancel>
             </div>
           </AlertDialogPrimitive.Content>
         </AlertDialogPrimitive.Portal>
