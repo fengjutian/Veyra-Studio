@@ -196,6 +196,7 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.detach": return detachComponent(document, command.payload.id);
     case "slot.fill": return fillSlot(document, command.payload);
     case "component.override": return overrideInstanceNode(document, command.payload);
+    case "component.resetOverride": return resetInstanceOverride(document, command.payload);
   }
 }
 
@@ -329,7 +330,11 @@ function fillSlot(
 /** 给实例里的物化副本写入覆盖值，并把它记进实例的 overrides。 */
 function overrideInstanceNode(
   document: DesignDocument,
-  payload: { instanceId: NodeId; sourceNodeId: NodeId; patch: { text?: string; name?: string; visible?: boolean } },
+  payload: {
+    instanceId: NodeId;
+    sourceNodeId: NodeId;
+    patch: { text?: string; name?: string; visible?: boolean; appearance?: { fill?: string; stroke?: string; opacity?: number; cornerRadius?: number } };
+  },
 ): void {
   const instance = requireNode(document, payload.instanceId);
   if (instance.type !== "instance") throw new CommandError(`Node ${instance.id} is not a component instance`);
@@ -337,20 +342,54 @@ function overrideInstanceNode(
   const copy = requireNode(document, copyId);
   if (!isInside(document, copyId, instance.id)) throw new CommandError(`Node ${copyId} does not belong to instance ${instance.id}`);
 
-  const { text, name, visible } = payload.patch;
+  const { text, name, visible, appearance } = payload.patch;
   if (text !== undefined) {
     if (copy.type !== "text") throw new CommandError(`Node ${copyId} is not a text node`);
     copy.text = text;
   }
   if (name !== undefined) copy.name = name;
   if (visible !== undefined) copy.visible = visible;
+  if (appearance !== undefined) copy.appearance = { ...copy.appearance, ...appearance };
 
   const previous = instance.overrides[payload.sourceNodeId];
   const merged = typeof previous === "object" && previous !== null ? previous : {};
   instance.overrides = {
     ...instance.overrides,
-    [payload.sourceNodeId]: { ...merged, ...(text !== undefined ? { text } : {}), ...(name !== undefined ? { name } : {}), ...(visible !== undefined ? { visible } : {}) },
+    [payload.sourceNodeId]: {
+      ...merged,
+      ...(text !== undefined ? { text } : {}),
+      ...(name !== undefined ? { name } : {}),
+      ...(visible !== undefined ? { visible } : {}),
+      ...(appearance !== undefined ? { appearance } : {}),
+    },
   };
+}
+
+/**
+ * 清除覆盖：把实例副本恢复成组件定义里的样子，并删掉 overrides 记录。
+ *
+ * 组件定义节点本来就在同一份文档里，所以恢复可以直接从源节点抄字段，不需要
+ * 重新实例化（重新实例化会换 id，选中和布局都会跳）。
+ */
+function resetInstanceOverride(document: DesignDocument, payload: { instanceId: NodeId; sourceNodeId: NodeId }): void {
+  const instance = requireNode(document, payload.instanceId);
+  if (instance.type !== "instance") throw new CommandError(`Node ${instance.id} is not a component instance`);
+  const definition = document.components[instance.componentId];
+  if (!definition) throw new CommandError(`Component ${instance.componentId} does not exist`);
+  const source = requireNode(document, payload.sourceNodeId);
+  if (!isInside(document, source.id, definition.rootNodeId)) {
+    throw new CommandError(`Node ${source.id} is not part of component ${definition.id}`);
+  }
+  const copy = requireNode(document, `${instance.id}--${payload.sourceNodeId}`);
+
+  copy.name = source.name;
+  copy.visible = source.visible;
+  copy.appearance = structuredClone(source.appearance);
+  if (copy.type === "text" && source.type === "text") copy.text = source.text;
+
+  const overrides = { ...instance.overrides };
+  delete overrides[payload.sourceNodeId];
+  instance.overrides = overrides;
 }
 /** `id` 是否是 `ancestorId` 的后代（沿 parentId 链向上找）。 */
 function isInside(document: DesignDocument, id: NodeId, ancestorId: NodeId): boolean {

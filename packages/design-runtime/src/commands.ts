@@ -166,8 +166,16 @@ export interface ComponentOverrideCommand {
   payload: {
     instanceId: NodeId;
     sourceNodeId: NodeId;
-    patch: { text?: string; name?: string; visible?: boolean };
+    patch: { text?: string; name?: string; visible?: boolean; appearance?: { fill?: string; stroke?: string; opacity?: number; cornerRadius?: number } };
   };
+}
+
+/**
+ * 清除某个节点的覆盖，把实例副本恢复成组件定义里的样子。
+ */
+export interface ResetComponentOverrideCommand {
+  type: "component.resetOverride";
+  payload: { instanceId: NodeId; sourceNodeId: NodeId };
 }
 export interface InstantiateComponentCommand {
   type: "component.instantiate";
@@ -196,7 +204,8 @@ export type DesignCommand =
   | InstantiateComponentCommand
   | DetachComponentCommand
   | FillSlotCommand
-  | ComponentOverrideCommand;
+  | ComponentOverrideCommand
+  | ResetComponentOverrideCommand;
 
 export interface CommandEnvelope {
   commandId: string;

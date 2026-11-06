@@ -11,7 +11,8 @@ export interface InstancePanelProps {
   document: DesignDocument;
   instance: InstanceNode;
   disabled?: boolean;
-  onOverride(sourceNodeId: string, patch: { text?: string }): void;
+  onOverride(sourceNodeId: string, patch: { text?: string; visible?: boolean }): void;
+  onReset(sourceNodeId: string): void;
 }
 
 export interface TextCopy {
@@ -21,7 +22,7 @@ export interface TextCopy {
   text: string;
 }
 
-export function InstancePanel({ document, instance, disabled, onOverride }: InstancePanelProps) {
+export function InstancePanel({ document, instance, disabled, onOverride, onReset }: InstancePanelProps) {
   const copies = collectTextCopies(document, instance.id);
   return (
     <div className="instance-panel">
@@ -29,13 +30,15 @@ export function InstancePanel({ document, instance, disabled, onOverride }: Inst
       {copies.length === 0
         ? <p className="empty-hint">这个实例里没有可覆盖的文本。</p>
         : copies.map(copy => (
-          <TextField
-            key={copy.id}
-            label={copy.name}
-            value={copy.text}
-            disabled={disabled}
-            onCommit={text => onOverride(copy.sourceNodeId, { text })}
-          />
+          <div className="instance-override-row" key={copy.id}>
+            <TextField
+              label={copy.name}
+              value={copy.text}
+              disabled={disabled}
+              onCommit={text => onOverride(copy.sourceNodeId, { text })}
+            />
+            <button type="button" disabled={disabled} onClick={() => onReset(copy.sourceNodeId)}>重置</button>
+          </div>
         ))}
     </div>
   );

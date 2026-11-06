@@ -939,7 +939,7 @@ function App() {
                 <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
-                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} />}
+                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} />}
                 <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
                 <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
                 <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除</button>
@@ -1002,6 +1002,10 @@ function App() {
           )}
         </>}
         {inspectorTab === "data" && <>
+          <section className="inspector-section">
+            <h2>存储用量</h2>
+            <StoragePanel estimate={storage} disabled={busy} onRefresh={refreshStorage} onExportBackup={exportJson} />
+          </section>
           <section className="inspector-section">
             <TokenPanel tokens={document.tokens} bindings={selected?.bindings} disabled={busy} canBind={Boolean(selected)} onCreate={createToken} onUpdate={updateToken} onBind={bindToken} onUnbind={unbindToken} onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))} />
           </section>

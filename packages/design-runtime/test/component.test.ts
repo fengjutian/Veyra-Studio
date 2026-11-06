@@ -306,3 +306,41 @@ test("rejects overrides for unknown nodes, foreign instances and non-text fields
     /not a text node|does not exist/,
   );
 });
+
+test("overrides appearance and can reset an instance back to the component definition", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } },
+  }]));
+
+  runtime.execute(envelope(4, [{
+    type: "component.override",
+    payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { text: "覆盖", appearance: { fill: "#ff0000" } } },
+  }]));
+  let snapshot = runtime.snapshot();
+  assert.equal((snapshot.nodes["instance:1--label"] as { appearance?: { fill?: string } }).appearance?.fill, "#ff0000");
+  assert.deepEqual((snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> }).overrides?.label, { text: "覆盖", appearance: { fill: "#ff0000" } });
+  // 组件定义没被改动。
+  assert.equal((snapshot.nodes.label as { text?: string }).text, "Hello");
+
+  runtime.execute(envelope(5, [{ type: "component.resetOverride", payload: { instanceId: "instance:1", sourceNodeId: "label" } }]));
+  snapshot = runtime.snapshot();
+  assert.equal((snapshot.nodes["instance:1--label"] as { text?: string }).text, "Hello");
+  assert.notEqual((snapshot.nodes["instance:1--label"] as { appearance?: { fill?: string } }).appearance?.fill, "#ff0000");
+  assert.deepEqual((snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> }).overrides, {});
+});
+
+test("reset refuses nodes outside the component definition", () => {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [{
+    type: "component.instantiate",
+    payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } },
+  }]));
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "component.resetOverride", payload: { instanceId: "instance:1", sourceNodeId: "outside" } }])),
+    /does not exist|not part of component/,
+  );
+});
