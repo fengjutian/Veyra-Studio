@@ -24,6 +24,9 @@ export interface BatchLayoutChanges {
 
 /** 批量文字样式改动。只列出要改的字段，未列出的字段保持节点自己的值。 */
 export interface BatchTextChanges {
+  fontFamily?: string;
+  fontSize?: number;
+  lineHeight?: number;
   fontWeight?: number;
   fontStyle?: FontStyle;
   textAlign?: TextAlign;
@@ -129,6 +132,9 @@ export function planTextPatches(nodes: readonly DesignNode[], changes: BatchText
   return nodes.flatMap(node => {
     if (node.type !== "text") return [];
     const patch: TextPatch = {};
+    if (changes.fontFamily !== undefined && node.fontFamily !== changes.fontFamily) patch.fontFamily = changes.fontFamily;
+    if (changes.fontSize !== undefined && node.fontSize !== changes.fontSize) patch.fontSize = changes.fontSize;
+    if (changes.lineHeight !== undefined && node.lineHeight !== changes.lineHeight) patch.lineHeight = changes.lineHeight;
     if (changes.fontWeight !== undefined && (node.fontWeight ?? TEXT_DEFAULTS.fontWeight) !== changes.fontWeight) patch.fontWeight = changes.fontWeight;
     if (changes.fontStyle !== undefined && (node.fontStyle ?? TEXT_DEFAULTS.fontStyle) !== changes.fontStyle) patch.fontStyle = changes.fontStyle;
     if (changes.textAlign !== undefined && (node.textAlign ?? TEXT_DEFAULTS.textAlign) !== changes.textAlign) patch.textAlign = changes.textAlign;

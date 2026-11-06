@@ -29,6 +29,9 @@ export function BatchPanel({ nodes, disabled, onPatchAppearance, onPatchLayout, 
   const height = sharedField(nodes, node => node.layout.height);
   // 文字样式只对文本节点有意义：只看被选中的文本节点之间的取值。
   const textNodes = nodes.filter((node): node is TextNode => node.type === "text");
+  const fontFamily = sharedField(textNodes, node => node.fontFamily);
+  const fontSize = sharedField(textNodes, node => node.fontSize);
+  const lineHeight = sharedField(textNodes, node => node.lineHeight);
   const fontWeight = sharedField(textNodes, node => node.fontWeight ?? TEXT_DEFAULTS.fontWeight);
   const fontStyle = sharedField(textNodes, node => node.fontStyle ?? TEXT_DEFAULTS.fontStyle);
   const textAlign = sharedField(textNodes, node => node.textAlign ?? TEXT_DEFAULTS.textAlign);
@@ -49,6 +52,9 @@ export function BatchPanel({ nodes, disabled, onPatchAppearance, onPatchLayout, 
         <NumberField label="高" value={height.value} min={0} mixed={height.mixed} disabled={disabled} onCommit={value => onPatchLayout({ height: value })} />
       </Section>
       {textNodes.length > 0 && <Section title="批量文字">
+        <TextField label="字体" value={fontFamily.value} mixed={fontFamily.mixed} disabled={disabled} onCommit={value => onPatchText({ fontFamily: value })} />
+        <NumberField label="字号" value={fontSize.value} mixed={fontSize.mixed} disabled={disabled} onCommit={value => onPatchText({ fontSize: value })} />
+        <NumberField label="行高" value={lineHeight.value} mixed={lineHeight.mixed} disabled={disabled} onCommit={value => onPatchText({ lineHeight: value })} />
         <Segmented label="粗细" value={fontWeight.mixed ? "" : String(fontWeight.value)} disabled={disabled} options={fontWeightOptions} onChange={value => onPatchText({ fontWeight: Number(value) })} />
         <Segmented label="字形" value={fontStyle.mixed ? "" : fontStyle.value} disabled={disabled} options={fontStyleOptions} onChange={value => onPatchText({ fontStyle: value as FontStyle })} />
         <Segmented label="对齐" value={textAlign.mixed ? "" : textAlign.value} disabled={disabled} options={textAlignOptions} onChange={value => onPatchText({ textAlign: value as TextAlign })} />

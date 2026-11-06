@@ -30,6 +30,16 @@ test("plans several text styles at once", () => {
   assert.deepEqual(patches[0]!.patch, { fontWeight: 600, fontStyle: "italic", textAlign: "right", letterSpacing: 4 });
 });
 
+test("plans font family, size and line height changes", () => {
+  const patches = planTextPatches([text("text:a")], { fontFamily: "Roboto", fontSize: 32, lineHeight: 40 });
+  assert.deepEqual(patches[0]!.patch, { fontFamily: "Roboto", fontSize: 32, lineHeight: 40 });
+});
+
+test("keeps the font size when it already matches", () => {
+  const patches = planTextPatches([text("text:a")], { fontSize: 20 });
+  assert.deepEqual(patches, []);
+});
+
 function text(id: string): TextNode {
   return {
     id,
