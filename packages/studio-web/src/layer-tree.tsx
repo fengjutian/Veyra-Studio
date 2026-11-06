@@ -12,12 +12,12 @@ import {
 } from "@dnd-kit/core";
 import {
   SortableContext,
-  arrayMove,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { arrayMove, resolveDropPosition } from "./layer-reorder";
 import type { DesignDocument, DesignNode } from "@ufira/design-schema";
 
 export interface LayerTreeProps {
@@ -99,8 +99,11 @@ export function LayerTree({ document, rootIds, selectedIds, onSelect, onReorder 
     const target = document.nodes[targetId];
     if (!target) return;
 
-    // Dropping onto a container moves the node inside it; otherwise it becomes a sibling.
-    const position = target.childIds.length && !isDescendant(document, draggedId, targetId) ? "inside" : "before";
+    // The pointer position inside the target decides whether the node becomes a
+    // sibling or is nested into the target.
+    const overRect = over.rect;
+    const pointerY = event.activatorEvent instanceof MouseEvent && overRect ? event.delta.y + overRect.top : undefined;
+    const position = resolveDropPosition(target, pointerY, overRect?.height);
     onReorder(draggedId, targetId, position);
   };
 
@@ -203,15 +206,4 @@ function isDescendant(document: DesignDocument, ancestorId: string, candidateId:
   const ancestor = document.nodes[ancestorId];
   if (!ancestor) return false;
   return ancestor.childIds.some(childId => childId === candidateId || isDescendant(document, childId, candidateId));
-}
-
-/**
- * Reorders a node inside its parent's child list.
- * Exposed for direct manipulation of sibling order without drag events.
- */
-export function reorderWithinParent(childIds: string[], draggedId: string, targetId: string): string[] {
-  const from = childIds.indexOf(draggedId);
-  const to = childIds.indexOf(targetId);
-  if (from < 0 || to < 0) return childIds;
-  return arrayMove(childIds, from, to);
 }

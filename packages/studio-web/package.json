@@ -22,6 +22,7 @@
     "@ufira/studio-application": "*",
     "@vitejs/plugin-react": "latest",
     "dexie": "^4.4.7",
+    "lucide-react": "^1.69.0",
     "react": "latest",
     "react-dom": "latest",
     "react-moveable": "^0.56.0",

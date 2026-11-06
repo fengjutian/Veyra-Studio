@@ -1,4 +1,4 @@
-import type { DesignDocument, DesignNode } from "@ufira/design-schema";
+import type { DesignDocument, DesignNode, InstanceNode } from "@ufira/design-schema";
 
 export interface ComponentSummary {
   id: string;
@@ -29,7 +29,7 @@ export function makeInstanceNode(
   componentId: string,
   parentId: string,
   options: { id: string; name: string; x: number; y: number; width: number; height: number },
-): DesignNode {
+): InstanceNode {
   return {
     id: options.id,
     type: "instance",
@@ -42,7 +42,7 @@ export function makeInstanceNode(
     appearance: { opacity: 1 },
     componentId,
     overrides: {},
-  } as DesignNode;
+  };
 }
 
 /**

@@ -15,9 +15,10 @@ export interface CanvasLayout {
  * `hug`, `fill` and `stack` sizing behave the same way in the editor and in
  * the HTML/SVG exporters.
  */
-export function useCanvasLayout(document: DesignDocument, pageId: string, viewport: { width: number; height: number }): CanvasLayout {
+export function useCanvasLayout(document: DesignDocument | undefined, pageId: string, viewport: { width: number; height: number }): CanvasLayout {
   const measurer = useMemo(() => createBrowserTextMeasurer(), []);
   return useMemo(() => {
+    if (!document || !pageId) return { boxes: {}, warnings: [] };
     try {
       const result = computePageLayout(document, pageId, { viewport, textMeasurer: measurer });
       return { boxes: result.boxes, warnings: result.warnings };
