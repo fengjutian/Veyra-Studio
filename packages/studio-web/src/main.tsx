@@ -62,6 +62,8 @@ function App() {
   // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
   const planAbort = useRef<AbortController | undefined>(undefined);
   const [planning, setPlanning] = useState(false);
+  // 流式回复的累计文本，只在生成过程中显示。
+  const [streamText, setStreamText] = useState("");
   const [message, setMessage] = useState("正在打开本地项目…");
   const [busy, setBusy] = useState(false);
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
@@ -113,7 +115,7 @@ function App() {
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
   const planner = useMemo(() => aiSettingsComplete(aiSettings)
-    ? createOpenAiCompatiblePlanner({ baseUrl: aiSettings.baseUrl, model: aiSettings.model, apiKey: aiSettings.apiKey || undefined })
+    ? createOpenAiCompatiblePlanner({ baseUrl: aiSettings.baseUrl, model: aiSettings.model, apiKey: aiSettings.apiKey || undefined, stream: true })
     : demoPlanner, [aiSettings]);
   const editor = useMemo(() => project ? new SafeAiEditor(project, planner) : undefined, [project, planner]);
 
@@ -590,9 +592,13 @@ function App() {
     const controller = new AbortController();
     planAbort.current = controller;
     operationInFlight.current = true;
-    setPlanning(true); setBusy(true);
+    setPlanning(true); setBusy(true); setStreamText("");
     try {
-      const next = await editor.createPlan(prompt, selectedIds, { signal: controller.signal });
+      const next = await editor.createPlan(prompt, selectedIds, {
+        signal: controller.signal,
+        // 只覆盖显示累计文本；权威内容由 Planner 的 fullText 给出。
+        onDelta: (_delta, fullText) => setStreamText(fullText),
+      });
       setPreview(next);
       setMessage("AI 计划已完成 dry-run，等待确认");
     } catch (error) {
@@ -600,7 +606,7 @@ function App() {
     } finally {
       planAbort.current = undefined;
       operationInFlight.current = false;
-      setPlanning(false); setBusy(false);
+      setPlanning(false); setBusy(false); setStreamText("");
     }
   };
   const createColorToken = () => void run(async () => {
@@ -843,6 +849,7 @@ function App() {
     <hr/><h2>AI 安全编辑</h2><textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
       <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
       {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
+      {planning && <pre className="ai-stream" aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
       {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
     </aside>
     <ExportPreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} preview={exportPreview} />

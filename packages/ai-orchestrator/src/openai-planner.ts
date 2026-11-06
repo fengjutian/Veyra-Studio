@@ -178,40 +178,38 @@ async function postOnce(
       signal: controller?.signal,
     });
   } catch (error) {
+    if (timeout !== undefined) clearTimeout(timeout);
+    signal?.removeEventListener?.("abort", onAbort);
     if (signal?.aborted) throw new AiCancelledError();
     if (timedOut) throw new AiTimeoutError(timeoutMs);
     // 网络层错误通常是瞬时的，值得重试。
     throw new AiProviderError(`调用模型服务失败：${describeError(error)}`, undefined, true);
+  }
+
+  // 超时与取消监听要一直保留到响应体读完：流式响应在头部返回之后才传输正文，
+  // 提前清理会让"中途取消/超时"永远等不到 abort，界面就一直卡在生成中。
+  try {
+    if (!response.ok) {
+      const raw = await response.text().catch(() => "");
+      throw new AiProviderError(`模型服务返回 ${response.status}：${raw.slice(0, 300)}`, response.status, isRetryableStatus(response.status));
+    }
+
+    if (options.stream && response.body) {
+      const content = await readSse(response.body, onDelta);
+      return { raw: "", content };
+    }
+
+    const raw = await response.text();
+    return { raw };
+  } catch (error) {
+    if (error instanceof AiProviderError) throw error;
+    if (signal?.aborted) throw new AiCancelledError();
+    if (timedOut) throw new AiTimeoutError(timeoutMs);
+    throw new AiProviderError(`读取模型响应失败：${describeError(error)}`, response.status, !state.emitted);
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
     signal?.removeEventListener?.("abort", onAbort);
   }
-
-  if (!response.ok) {
-    const raw = await response.text().catch(() => "");
-    throw new AiProviderError(`模型服务返回 ${response.status}：${raw.slice(0, 300)}`, response.status, isRetryableStatus(response.status));
-  }
-
-  if (options.stream && response.body) {
-    try {
-      const content = await readSse(response.body, onDelta);
-      return { raw: "", content };
-    } catch (error) {
-      if (signal?.aborted) throw new AiCancelledError();
-      if (timedOut) throw new AiTimeoutError(timeoutMs);
-      throw new AiProviderError(`读取模型响应失败：${describeError(error)}`, response.status, !state.emitted);
-    }
-  }
-
-  let raw: string;
-  try {
-    raw = await response.text();
-  } catch (error) {
-    if (signal?.aborted) throw new AiCancelledError();
-    if (timedOut) throw new AiTimeoutError(timeoutMs);
-    throw new AiProviderError(`读取模型响应失败：${describeError(error)}`, response.status, true);
-  }
-  return { raw };
 }
 
 /**
@@ -227,7 +225,6 @@ async function readSse(body: { getReader(): StreamReaderLike }, onDelta: ((delta
   const reader = body.getReader();
   let buffer = "";
   let content = "";
-  let done = false;
 
   const consume = (line: string): void => {
     const trimmed = line.trim();
@@ -240,7 +237,7 @@ async function readSse(body: { getReader(): StreamReaderLike }, onDelta: ((delta
     onDelta?.(delta, content);
   };
 
-  while (!done) {
+  while (true) {
     const chunk = await reader.read();
     if (chunk.done) break;
     buffer += decoder.decode(chunk.value ?? new Uint8Array(), { stream: true });
