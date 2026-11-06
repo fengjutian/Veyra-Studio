@@ -47,10 +47,13 @@ const baseNodeShape = {
   externalRefs: z.array(z.object({ provider: z.string().min(1), id })).optional(),
 };
 
-const genericNodeSchema = z.object({
-  ...baseNodeShape,
-  type: z.enum(["frame", "rectangle", "ellipse", "vector", "component"]),
-});
+const genericNodeShape = { ...baseNodeShape };
+
+const frameNodeSchema = z.object({ ...genericNodeShape, type: z.literal("frame") });
+const rectangleNodeSchema = z.object({ ...genericNodeShape, type: z.literal("rectangle") });
+const ellipseNodeSchema = z.object({ ...genericNodeShape, type: z.literal("ellipse") });
+const vectorNodeSchema = z.object({ ...genericNodeShape, type: z.literal("vector") });
+const componentNodeSchema = z.object({ ...genericNodeShape, type: z.literal("component") });
 
 const textNodeSchema = z.object({
   ...baseNodeShape,
@@ -59,6 +62,10 @@ const textNodeSchema = z.object({
   fontFamily: z.string().min(1),
   fontSize: z.number().positive(),
   lineHeight: z.number().positive(),
+  fontWeight: z.number().int().min(100).max(900).optional(),
+  fontStyle: z.enum(["normal", "italic"]).optional(),
+  textAlign: z.enum(["left", "center", "right"]).optional(),
+  letterSpacing: z.number().finite().optional(),
 });
 
 const imageNodeSchema = z.object({
@@ -75,8 +82,14 @@ const instanceNodeSchema = z.object({
   overrides: z.record(z.string(), z.unknown()),
 });
 
-export const designNodeSchema = z.union([
-  genericNodeSchema,
+// 判别联合按 type 选分支，报错会直接落到出问题的字段上；
+// 普通 z.union 会把分支错误吞成一句 "Invalid input"，无法定位。
+export const designNodeSchema = z.discriminatedUnion("type", [
+  frameNodeSchema,
+  rectangleNodeSchema,
+  ellipseNodeSchema,
+  vectorNodeSchema,
+  componentNodeSchema,
   textNodeSchema,
   imageNodeSchema,
   instanceNodeSchema,

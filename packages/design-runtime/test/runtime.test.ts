@@ -155,3 +155,20 @@ test("patches text content and typography only on text nodes", () => {
   assert.equal(updated?.type === "text" && updated.fontSize, 20);
   assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { fontSize: 0 } } }])), /must be positive/);
 });
+
+test("patches the text style fields and rejects invalid ones", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  const runtime = new DesignRuntime(document);
+  const text: DesignNode = { ...frame("text:1"), type: "text", text: "Hello", fontFamily: "Inter", fontSize: 16, lineHeight: 24 };
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: text } }]));
+  runtime.execute(envelope(1, [{ type: "text.patch", payload: { id: text.id, patch: { fontWeight: 700, fontStyle: "italic", textAlign: "center", letterSpacing: 1.5 } } }]));
+  const updated = runtime.snapshot().nodes[text.id];
+  assert.equal(updated?.type === "text" && updated.fontWeight, 700);
+  assert.equal(updated?.type === "text" && updated.fontStyle, "italic");
+  assert.equal(updated?.type === "text" && updated.textAlign, "center");
+  assert.equal(updated?.type === "text" && updated.letterSpacing, 1.5);
+  // A rejected command must not advance the revision, so both failures share the same base.
+  assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { fontWeight: 95 } } }])), /Font weight/);
+  assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { textAlign: "justify" } } }])), /Text align/);
+  assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { fontStyle: "oblique" as never } } }])), /Font style/);
+});

@@ -76,13 +76,43 @@ export interface BaseNode {
   externalRefs?: ExternalReference[];
 }
 
+/** 文本在自身盒内的水平对齐方式。 */
+export type TextAlign = "left" | "center" | "right";
+
+/** 文本的字形倾斜方式。 */
+export type FontStyle = "normal" | "italic";
+
+/**
+ * 文本样式的缺省值。
+ *
+ * 这四个字段在 `TextNode` 上都是可选的，旧文档不需要迁移；读取时统一用这里的
+ * 默认值兜底，这样 schema、布局、导出和 UI 看到的语义一致。
+ */
+export const TEXT_DEFAULTS = {
+  fontWeight: 400,
+  fontStyle: "normal",
+  textAlign: "left",
+  letterSpacing: 0,
+} as const satisfies { fontWeight: number; fontStyle: FontStyle; textAlign: TextAlign; letterSpacing: number };
+
 export interface TextNode extends BaseNode {
   type: "text";
   text: string;
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
+  /** CSS 字重，100–900。缺省等同于 `TEXT_DEFAULTS.fontWeight`。 */
+  fontWeight?: number;
+  /** 斜体。缺省等同于 `TEXT_DEFAULTS.fontStyle`。 */
+  fontStyle?: FontStyle;
+  /** 盒内水平对齐。缺省等同于 `TEXT_DEFAULTS.textAlign`。 */
+  textAlign?: TextAlign;
+  /** 字间距，单位 px，可为负。缺省等同于 `TEXT_DEFAULTS.letterSpacing`。 */
+  letterSpacing?: number;
 }
+
+/** 可以一次改动掉的文本字段。 */
+export type TextPatch = Partial<Pick<TextNode, "text" | "fontFamily" | "fontSize" | "lineHeight" | "fontWeight" | "fontStyle" | "textAlign" | "letterSpacing">>;
 
 export interface ImageNode extends BaseNode {
   type: "image";

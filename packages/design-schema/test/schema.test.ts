@@ -73,3 +73,52 @@ test("rejects children on leaf nodes", () => {
   document.pages["page:1"].childIds = ["parent"];
   assert.throws(() => validateDocument(document), /text cannot contain children/);
 });
+
+test("accepts the optional text style fields", () => {
+  const document = createDocument("doc:1", "Demo");
+  document.nodes["text:1"] = {
+    id: "text:1",
+    type: "text",
+    name: "Text",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: defaultAppearance(),
+    text: "Hi",
+    fontFamily: "Inter",
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: 700,
+    fontStyle: "italic",
+    textAlign: "center",
+    letterSpacing: 2,
+  };
+  document.pages["page:1"].childIds = ["text:1"];
+  assert.deepEqual(validateDocument(document), document);
+});
+
+test("rejects invalid text style values", () => {
+  const base = {
+    id: "text:1",
+    type: "text" as const,
+    name: "Text",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: defaultAppearance(),
+    text: "Hi",
+    fontFamily: "Inter",
+    fontSize: 16,
+    lineHeight: 24,
+  };
+  for (const [field, value] of [["fontWeight", 95], ["fontStyle", "oblique"], ["textAlign", "justify"], ["letterSpacing", Number.NaN]] as const) {
+    const document = createDocument("doc:1", "Demo");
+    document.nodes["text:1"] = { ...base, [field]: value } as never;
+    document.pages["page:1"].childIds = ["text:1"];
+    assert.throws(() => validateDocument(document), new RegExp(field));
+  }
+});

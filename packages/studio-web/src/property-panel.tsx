@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import type { DesignNode, LayoutSpec, SizeMode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, type DesignNode, type FontStyle, type LayoutSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
 import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
 export interface PropertyPanelProps {
   node: DesignNode;
   disabled?: boolean;
   onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance">>): void;
-  onPatchText(patch: { text?: string; fontFamily?: string; fontSize?: number; lineHeight?: number }): void;
+  onPatchText(patch: TextPatch): void;
 }
 
 /**
@@ -110,6 +110,35 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText }: Property
           <TextField label="字体" value={node.fontFamily} disabled={disabled} onCommit={fontFamily => onPatchText({ fontFamily })} />
           <NumberField label="字号" value={node.fontSize} disabled={disabled} onCommit={fontSize => onPatchText({ fontSize })} />
           <NumberField label="行高" value={node.lineHeight} disabled={disabled} onCommit={lineHeight => onPatchText({ lineHeight })} />
+          <Segmented
+            label="粗细"
+            value={String(node.fontWeight ?? TEXT_DEFAULTS.fontWeight)}
+            disabled={disabled}
+            options={fontWeightOptions}
+            onChange={value => onPatchText({ fontWeight: Number(value) })}
+          />
+          <Segmented
+            label="字形"
+            value={node.fontStyle ?? TEXT_DEFAULTS.fontStyle}
+            disabled={disabled}
+            options={[
+              { value: "normal", label: "常规" },
+              { value: "italic", label: "斜体" },
+            ]}
+            onChange={value => onPatchText({ fontStyle: value as FontStyle })}
+          />
+          <Segmented
+            label="对齐"
+            value={node.textAlign ?? TEXT_DEFAULTS.textAlign}
+            disabled={disabled}
+            options={[
+              { value: "left", label: "左" },
+              { value: "center", label: "中" },
+              { value: "right", label: "右" },
+            ]}
+            onChange={value => onPatchText({ textAlign: value as TextAlign })}
+          />
+          <NumberField label="字距" value={node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing} disabled={disabled} onCommit={letterSpacing => onPatchText({ letterSpacing })} />
         </Section>
       )}
     </>
@@ -120,6 +149,13 @@ const sizeModeOptions = [
   { value: "fixed", label: "固定" },
   { value: "fill", label: "填充" },
   { value: "hug", label: "适应" },
+];
+
+const fontWeightOptions = [
+  { value: "400", label: "常规" },
+  { value: "500", label: "中等" },
+  { value: "600", label: "半粗" },
+  { value: "700", label: "加粗" },
 ];
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {

@@ -26,7 +26,7 @@ function measure(
   request: TextMeasurementRequest,
   cache: Map<string, { width: number; height: number }>,
 ): { width: number; height: number } {
-  const key = `${request.fontFamily}|${request.fontSize}|${request.lineHeight}|${request.availableWidth ?? ""}|${request.text}`;
+  const key = `${request.fontStyle}|${request.fontWeight}|${request.fontFamily}|${request.fontSize}|${request.lineHeight}|${request.letterSpacing}|${request.availableWidth ?? ""}|${request.text}`;
   const cached = cache.get(key);
   if (cached) return cached;
 
@@ -38,11 +38,33 @@ function measure(
   return size;
 }
 
+/**
+ * The CSS font shorthand for a request.
+ *
+ * The canvas font property follows CSS, so weight and style belong in the string;
+ * a bold or italic text measures differently and must not share a cache entry.
+ */
+function fontShorthand(request: TextMeasurementRequest): string {
+  const style = request.fontStyle === "italic" ? "italic " : "";
+  return `${style}${request.fontWeight} ${request.fontSize}px ${request.fontFamily}`;
+}
+
+/**
+ * Width of one line including letter spacing.
+ *
+ * CSS adds letter spacing after every character, including the last one.
+ */
+function measureLine(context: CanvasRenderingContext2D, text: string, letterSpacing: number): number {
+  const base = context.measureText(text).width;
+  if (!letterSpacing) return base;
+  return base + letterSpacing * Array.from(text).length;
+}
+
 function measureWithCanvas(
   context: CanvasRenderingContext2D,
   request: TextMeasurementRequest,
 ): { width: number; height: number } {
-  context.font = `${request.fontSize}px ${request.fontFamily}`;
+  context.font = fontShorthand(request);
   context.textBaseline = "alphabetic";
 
   const paragraphs = request.text.split("\n");
@@ -50,9 +72,9 @@ function measureWithCanvas(
   const lineWidths: number[] = [];
 
   for (const paragraph of paragraphs) {
-    const lines = wrapByWidth(context, paragraph, request.availableWidth);
+    const lines = wrapByWidth(context, paragraph, request.availableWidth, request.letterSpacing);
     for (const line of lines) {
-      const width = context.measureText(line).width;
+      const width = measureLine(context, line, request.letterSpacing);
       lineWidths.push(width);
       longest = Math.max(longest, width);
     }
@@ -70,26 +92,26 @@ function measureWithCanvas(
  * Breaks a single paragraph into lines that fit the available width.
  * Words longer than the limit are broken by character so nothing overflows silently.
  */
-function wrapByWidth(context: CanvasRenderingContext2D, text: string, availableWidth?: number): string[] {
+function wrapByWidth(context: CanvasRenderingContext2D, text: string, availableWidth?: number, letterSpacing = 0): string[] {
   if (!availableWidth || availableWidth <= 0) return [text];
   if (!text) return [""];
-  if (context.measureText(text).width <= availableWidth) return [text];
+  if (measureLine(context, text, letterSpacing) <= availableWidth) return [text];
 
   const lines: string[] = [];
   let current = "";
 
   for (const word of text.split(/(\s+)/)) {
     const candidate = current + word;
-    if (current && context.measureText(candidate).width > availableWidth) {
+    if (current && measureLine(context, candidate, letterSpacing) > availableWidth) {
       lines.push(current);
       current = word.trimStart();
     } else {
       current = candidate;
     }
 
-    while (context.measureText(current).width > availableWidth && current.length > 1) {
+    while (measureLine(context, current, letterSpacing) > availableWidth && current.length > 1) {
       let cut = current.length - 1;
-      while (cut > 1 && context.measureText(current.slice(0, cut)).width > availableWidth) cut -= 1;
+      while (cut > 1 && measureLine(context, current.slice(0, cut), letterSpacing) > availableWidth) cut -= 1;
       lines.push(current.slice(0, cut));
       current = current.slice(cut);
     }
@@ -99,7 +121,8 @@ function wrapByWidth(context: CanvasRenderingContext2D, text: string, availableW
 }
 
 function measureWithoutCanvas(request: TextMeasurementRequest): { width: number; height: number } {
-  const longest = request.text.split("\n").reduce((max, line) => Math.max(max, line.length * request.fontSize * 0.55), 0);
+  const spacing = request.letterSpacing * Array.from(request.text).length;
+  const longest = request.text.split("\n").reduce((max, line) => Math.max(max, line.length * request.fontSize * 0.55 + spacing), 0);
   const width = request.availableWidth && request.availableWidth > 0 ? Math.min(longest, request.availableWidth) : longest;
   return { width, height: request.text.split("\n").length * request.lineHeight };
 }

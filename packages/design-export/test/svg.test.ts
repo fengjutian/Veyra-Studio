@@ -88,3 +88,19 @@ test("throws for a missing page", () => {
 test("rejects a non-finite viewport", () => {
   assert.throws(() => exportPageToSvg(documentWith([]), { pageId: "page:1", viewport: { width: Number.NaN, height: 600 } }), /Viewport dimensions/);
 });
+
+test("exports the text style and the box alignment", () => {
+  const text: DesignNode = { ...frame("text"), type: "text", text: "Hello", fontFamily: "Inter", fontSize: 16, lineHeight: 24, fontWeight: 700, fontStyle: "italic", letterSpacing: 2, textAlign: "center" };
+  const result = exportPageToSvg(documentWith([text]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /font-weight:700/);
+  assert.match(result.svg, /font-style:italic/);
+  assert.match(result.svg, /letter-spacing:2/);
+  assert.match(result.svg, /text-anchor="middle"/);
+});
+
+test("keeps left aligned text on the default anchor", () => {
+  const text: DesignNode = { ...frame("text"), type: "text", text: "Hello", fontFamily: "Inter", fontSize: 16, lineHeight: 24 };
+  const result = exportPageToSvg(documentWith([text]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.doesNotMatch(result.svg, /text-anchor/);
+  assert.doesNotMatch(result.svg, /font-weight/);
+});

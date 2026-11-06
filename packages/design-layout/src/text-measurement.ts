@@ -1,4 +1,4 @@
-import type { TextNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, type TextNode } from "@ufira/design-schema";
 import type { Size, TextMeasurer, TextMeasurementRequest } from "./types";
 
 /**
@@ -8,6 +8,10 @@ import type { Size, TextMeasurer, TextMeasurementRequest } from "./types";
 const LATIN_ADVANCE_RATIO = 0.55;
 const CJK_ADVANCE_RATIO = 1;
 const SPACE_ADVANCE_RATIO = 0.28;
+
+/** Bold glyphs are a little wider than their regular counterparts. */
+const BOLD_ADVANCE_FACTOR = 1.06;
+const BOLD_WEIGHT_THRESHOLD = 600;
 
 const CJK_RANGES: ReadonlyArray<readonly [number, number]> = [
   [0x1100, 0x115f], // Hangul Jamo
@@ -37,20 +41,41 @@ export function advanceRatio(codePoint: number): number {
 }
 
 /**
+ * How much wider each glyph gets because of the font weight.
+ *
+ * The estimator has no real font metrics, so bold is approximated as a small
+ * uniform stretch. Hosts that measure real fonts do not need this.
+ */
+export function fontAdvanceScale(fontWeight: number): number {
+  return fontWeight >= BOLD_WEIGHT_THRESHOLD ? BOLD_ADVANCE_FACTOR : 1;
+}
+
+/**
+ * Width of one code point, in pixels, including weight and letter spacing.
+ *
+ * CSS letter spacing is added after every character, including the last one.
+ */
+function characterWidth(codePoint: number, fontSize: number, scale: number, letterSpacing: number): number {
+  return advanceRatio(codePoint) * fontSize * scale + letterSpacing;
+}
+
+/**
  * Splits text into visual lines given an available width.
  *
  * The estimator cannot know real glyph advances, so it measures per code point and
  * breaks at the last code point that still fits. Explicit newlines always break.
+ * Letter spacing and font weight are part of the width of every character.
  */
-export function wrapTextLines(text: string, fontSize: number, availableWidth?: number): string[] {
+export function wrapTextLines(text: string, fontSize: number, availableWidth?: number, letterSpacing = 0, fontWeight: number = TEXT_DEFAULTS.fontWeight): string[] {
   const paragraphs = text.split("\n");
   if (!availableWidth || availableWidth <= 0) return paragraphs;
+  const scale = fontAdvanceScale(fontWeight);
   const lines: string[] = [];
   for (const paragraph of paragraphs) {
     let current = "";
     let currentWidth = 0;
     for (const character of Array.from(paragraph)) {
-      const width = advanceRatio(character.codePointAt(0) ?? 0) * fontSize;
+      const width = characterWidth(character.codePointAt(0) ?? 0, fontSize, scale, letterSpacing);
       if (current && currentWidth + width > availableWidth) {
         lines.push(current);
         current = "";
@@ -74,9 +99,12 @@ export function wrapTextLines(text: string, fontSize: number, availableWidth?: n
 export function createEstimateTextMeasurer(): TextMeasurer {
   return {
     measure(node: TextNode, availableWidth?: number): Size {
-      const lines = wrapTextLines(node.text, node.fontSize, availableWidth);
+      const letterSpacing = node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
+      const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+      const scale = fontAdvanceScale(fontWeight);
+      const lines = wrapTextLines(node.text, node.fontSize, availableWidth, letterSpacing, fontWeight);
       const longest = lines.reduce((max, line) => {
-        const width = Array.from(line).reduce((sum, character) => sum + advanceRatio(character.codePointAt(0) ?? 0) * node.fontSize, 0);
+        const width = Array.from(line).reduce((sum, character) => sum + characterWidth(character.codePointAt(0) ?? 0, node.fontSize, scale, letterSpacing), 0);
         return Math.max(max, width);
       }, 0);
       const width = availableWidth && availableWidth > 0 ? Math.min(longest, availableWidth) : longest;
@@ -102,6 +130,9 @@ export function createHostTextMeasurer(
         fontFamily: node.fontFamily,
         fontSize: node.fontSize,
         lineHeight: node.lineHeight,
+        fontWeight: node.fontWeight ?? TEXT_DEFAULTS.fontWeight,
+        fontStyle: node.fontStyle ?? TEXT_DEFAULTS.fontStyle,
+        letterSpacing: node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing,
         availableWidth,
       });
       return {

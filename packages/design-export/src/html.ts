@@ -1,4 +1,4 @@
-import { validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
 const ZERO_PADDING = { top: 0, right: 0, bottom: 0, left: 0 };
@@ -87,6 +87,15 @@ function nodeStyle(node: DesignNode, parent: DesignNode | undefined, tokenVariab
 
   if (node.type === "text") {
     declarations.push(`font-family:${cssString(node.fontFamily)}`, `font-size:${px(node.fontSize)}`, `line-height:${px(node.lineHeight)}`, "white-space:pre-wrap", "margin:0");
+    // 只有偏离缺省值的样式才写进 CSS，旧文档的导出结果保持不变。
+    const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+    if (fontWeight !== TEXT_DEFAULTS.fontWeight) declarations.push(`font-weight:${fontWeight}`);
+    const fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
+    if (fontStyle !== TEXT_DEFAULTS.fontStyle) declarations.push(`font-style:${fontStyle}`);
+    const textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
+    if (textAlign !== TEXT_DEFAULTS.textAlign) declarations.push(`text-align:${textAlign}`);
+    const letterSpacing = node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
+    if (letterSpacing !== TEXT_DEFAULTS.letterSpacing) declarations.push(`letter-spacing:${px(letterSpacing)}`);
   }
   if (node.type === "image") declarations.push(`object-fit:${node.fit}`);
   if (node.type === "ellipse") declarations.push("border-radius:50%");

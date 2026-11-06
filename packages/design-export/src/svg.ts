@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox, type TextMeasurer } from "@ufira/design-layout";
-import { validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
 /**
@@ -87,7 +87,11 @@ function renderNode(
   const common = `data-node-id="${escapeXml(node.id)}" style="${escapeXml(style)}"`;
 
   if (node.type === "text") {
-    return `<text ${common} x="${num(box.x)}" y="${num(box.y)}" dominant-baseline="hanging">${escapeXml(node.text)}</text>`;
+    // SVG 没有 text-align，用 text-anchor + x 表达盒内对齐。
+    const textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
+    const x = textAlign === "center" ? box.x + box.width / 2 : textAlign === "right" ? box.x + box.width : box.x;
+    const anchor = textAlign === "center" ? " text-anchor=\"middle\"" : textAlign === "right" ? " text-anchor=\"end\"" : "";
+    return `<text ${common} x="${num(x)}" y="${num(box.y)}" dominant-baseline="hanging"${anchor}>${escapeXml(node.text)}</text>`;
   }
 
   if (node.type === "image") {
@@ -143,6 +147,12 @@ function nodeStyle(node: DesignNode, tokenVariables: Record<string, string>): st
   if (node.type === "text") {
     declarations.push(`font-family:${cssString(node.fontFamily)}`);
     declarations.push(`font-size:${num(node.fontSize)}`);
+    const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+    if (fontWeight !== TEXT_DEFAULTS.fontWeight) declarations.push(`font-weight:${fontWeight}`);
+    const fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
+    if (fontStyle !== TEXT_DEFAULTS.fontStyle) declarations.push(`font-style:${fontStyle}`);
+    const letterSpacing = node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
+    if (letterSpacing !== TEXT_DEFAULTS.letterSpacing) declarations.push(`letter-spacing:${num(letterSpacing)}`);
     declarations.push("stroke:none");
   }
   if (node.type === "ellipse") declarations.push("stroke:none");

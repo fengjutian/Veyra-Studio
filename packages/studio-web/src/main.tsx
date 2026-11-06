@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from "rea
 import { createRoot } from "react-dom/client";
 import { SafeAiEditor, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand } from "@ufira/design-runtime";
-import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { defaultAppearance, defaultLayout, TEXT_DEFAULTS, type DesignDocument, type DesignNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
 import { DexieProjectRepository, type StoredProjectSummary } from "./browser-repository";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -165,8 +165,8 @@ function App() {
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => selected && patchNode(selected.id, patchValue);
-  const patchTextOf = (id: string, patchValue: { text?: string; fontFamily?: string; fontSize?: number; lineHeight?: number }) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
-  const patchText = (patchValue: { text?: string; fontFamily?: string; fontSize?: number; lineHeight?: number }) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
+  const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
+  const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
   // 批量改动：每个节点用自己原有的外观/布局合并后再发一条 patch，避免整块替换丢掉别的字段。
   const patchBatchAppearance = (changes: BatchAppearanceChanges) => {
     const patches = planAppearancePatches(selectedNodes, changes);
@@ -368,7 +368,10 @@ function CanvasNode({ document, node, selectedIds, layout, onSelect, onCommitTex
     style.fontFamily = node.fontFamily;
     style.fontSize = node.fontSize;
     style.lineHeight = `${node.lineHeight}px`;
-    style.textAlign = "left";
+    style.fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+    style.fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
+    style.letterSpacing = `${node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing}px`;
+    style.textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
     style.alignItems = "flex-start";
     style.justifyContent = "flex-start";
     style.whiteSpace = "pre-wrap";
@@ -387,7 +390,7 @@ function CanvasNode({ document, node, selectedIds, layout, onSelect, onCommitTex
     const next = commitText(node.text, draft);
     if (next !== undefined) onCommitText(node.id, next);
   };
-  return <div role="button" tabIndex={0} data-node-id={node.id} className={`${selectedIds.includes(node.id) ? "node selected" : "node"}${node.locked ? " locked" : ""}`} style={style} onClick={event => { event.stopPropagation(); onSelect(node.id, event); }} onDoubleClick={event => { event.stopPropagation(); startEditing(); }} onKeyDown={event => { if (event.key === "Enter") onSelect(node.id, event); }}>{editing && node.type === "text" ? <textarea className="canvas-text-editor" autoFocus value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => finishEditing(true)} onKeyDown={event => { const action = textEditAction(event.key, event.shiftKey); if (action === "cancel") { event.preventDefault(); event.stopPropagation(); finishEditing(false); } else if (action === "commit") { event.preventDefault(); finishEditing(true); } }} /> : <span style={{ pointerEvents: "none" }}>{node.type === "text" ? node.text : node.name}</span>}{node.childIds.map(id => <CanvasNode key={id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={layout} onSelect={onSelect} onCommitText={onCommitText} />)}</div>;
+  return <div role="button" tabIndex={0} data-node-id={node.id} className={`${selectedIds.includes(node.id) ? "node selected" : "node"}${node.locked ? " locked" : ""}`} style={style} onClick={event => { event.stopPropagation(); onSelect(node.id, event); }} onDoubleClick={event => { event.stopPropagation(); startEditing(); }} onKeyDown={event => { if (event.key === "Enter") onSelect(node.id, event); }}>{editing && node.type === "text" ? <textarea className="canvas-text-editor" autoFocus value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => finishEditing(true)} onKeyDown={event => { const action = textEditAction(event.key, event.shiftKey); if (action === "cancel") { event.preventDefault(); event.stopPropagation(); finishEditing(false); } else if (action === "commit") { event.preventDefault(); finishEditing(true); } }} /> : <span style={{ pointerEvents: "none", ...(node.type === "text" ? { width: "100%" } : {}) }}>{node.type === "text" ? node.text : node.name}</span>}{node.childIds.map(id => <CanvasNode key={id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={layout} onSelect={onSelect} onCommitText={onCommitText} />)}</div>;
 }
 
 function Field({ label, value, type = "text", onCommit }: { label: string; value: string | number; type?: string; onCommit(value: string): void }) {

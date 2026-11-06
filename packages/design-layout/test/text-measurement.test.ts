@@ -99,3 +99,42 @@ test("host measurer rejects non-finite measurements", () => {
   });
   assert.deepEqual(result.boxes.text, { x: 0, y: 0, width: 0, height: 0 });
 });
+
+test("letter spacing widens the measured text", () => {
+  const measurer = createEstimateTextMeasurer();
+  const plain = measurer.measure(textNode("text", "page:1", "Hello"));
+  const spaced = measurer.measure(textNode("text", "page:1", "Hello", { letterSpacing: 4 }));
+  // CSS adds the spacing after every character, including the last one.
+  assert.equal(spaced.width - plain.width, 4 * 5);
+});
+
+test("bold text measures wider than regular text", () => {
+  const measurer = createEstimateTextMeasurer();
+  const regular = measurer.measure(textNode("text", "page:1", "Hello"));
+  const bold = measurer.measure(textNode("text", "page:1", "Hello", { fontWeight: 700 }));
+  assert.ok(bold.width > regular.width);
+});
+
+test("the host measurer receives the text style", () => {
+  const requests: TextMeasurementRequest[] = [];
+  const node = textNode("text", "page:1", "Hello", { fontWeight: 700, fontStyle: "italic", letterSpacing: 2 });
+  computePageLayout(documentWith([node]), "page:1", {
+    viewport: { width: 800, height: 600 },
+    textMeasurer: createHostTextMeasurer(request => { requests.push(request); return { width: 10, height: 24 }; }),
+  });
+  assert.equal(requests[0]?.fontWeight, 700);
+  assert.equal(requests[0]?.fontStyle, "italic");
+  assert.equal(requests[0]?.letterSpacing, 2);
+});
+
+test("the host measurer falls back to the default text style", () => {
+  const requests: TextMeasurementRequest[] = [];
+  const node = textNode("text", "page:1", "Hello");
+  computePageLayout(documentWith([node]), "page:1", {
+    viewport: { width: 800, height: 600 },
+    textMeasurer: createHostTextMeasurer(request => { requests.push(request); return { width: 10, height: 24 }; }),
+  });
+  assert.equal(requests[0]?.fontWeight, 400);
+  assert.equal(requests[0]?.fontStyle, "normal");
+  assert.equal(requests[0]?.letterSpacing, 0);
+});

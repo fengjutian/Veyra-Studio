@@ -1,4 +1,4 @@
-import type { NodeId, TextNode } from "@ufira/design-schema";
+import type { FontStyle, NodeId, TextNode } from "@ufira/design-schema";
 
 export interface Size {
   width: number;
@@ -15,6 +15,9 @@ export interface TextMeasurementRequest {
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
+  fontWeight: number;
+  fontStyle: FontStyle;
+  letterSpacing: number;
   availableWidth?: number;
 }
 

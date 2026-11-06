@@ -67,3 +67,27 @@ test("reports unsupported vectors and approximated instances", () => {
   const result = exportPageToHtml(document, { pageId: "page:1", viewport: { width: 800, height: 600 } });
   assert.deepEqual(result.diagnostics.map(item => item.support).sort(), ["approximated", "unsupported"]);
 });
+
+test("exports the text style as CSS", () => {
+  const document = createDocument("doc:1", "Demo");
+  const text: DesignNode = { ...frame("text"), type: "text", text: "Hello", fontFamily: "Inter", fontSize: 16, lineHeight: 24, fontWeight: 700, fontStyle: "italic", textAlign: "center", letterSpacing: 2 };
+  document.pages["page:1"].childIds = [text.id];
+  document.nodes[text.id] = text;
+  const result = exportPageToHtml(document, { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /font-weight:700/);
+  assert.match(result.html, /font-style:italic/);
+  assert.match(result.html, /text-align:center/);
+  assert.match(result.html, /letter-spacing:2px/);
+});
+
+test("keeps the default text style out of the exported CSS", () => {
+  const document = createDocument("doc:1", "Demo");
+  const text: DesignNode = { ...frame("text"), type: "text", text: "Hello", fontFamily: "Inter", fontSize: 16, lineHeight: 24 };
+  document.pages["page:1"].childIds = [text.id];
+  document.nodes[text.id] = text;
+  const result = exportPageToHtml(document, { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.doesNotMatch(result.html, /font-weight/);
+  assert.doesNotMatch(result.html, /font-style/);
+  assert.doesNotMatch(result.html, /text-align/);
+  assert.doesNotMatch(result.html, /letter-spacing/);
+});

@@ -6,6 +6,7 @@ import type {
   InstanceNode,
   NodeId,
   PageId,
+  TextPatch,
   TokenValue,
 } from "@ufira/design-schema";
 
@@ -36,7 +37,7 @@ export interface PatchTextCommand {
   type: "text.patch";
   payload: {
     id: NodeId;
-    patch: Partial<Pick<Extract<DesignNode, { type: "text" }>, "text" | "fontFamily" | "fontSize" | "lineHeight">>;
+    patch: TextPatch;
   };
 }
 

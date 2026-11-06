@@ -62,4 +62,4 @@ button.icon-only{padding:5px;min-width:26px}
 /* 工作区太窄时按重要性丢弃控件，先丢百分比，再丢「适应内容」。 */
 @container (max-width: 150px){.canvas-controls .zoom-value{display:none}}
 @container (max-width: 110px){.canvas-controls .zoom-fit{display:none}}
-.canvas-text-editor{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;text-align:left;white-space:pre-wrap;overflow:hidden;user-select:text;z-index:2}
+.canvas-text-editor{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;outline:0;resize:none;background:transparent;color:inherit;font:inherit;text-align:inherit;white-space:pre-wrap;overflow:hidden;user-select:text;z-index:2}

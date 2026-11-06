@@ -13,17 +13,25 @@
 
 ### 独立 Studio 的 Phase 0 基础
 
-- `packages/design-schema`：早期设计文档类型、Schema 与校验；
-- `packages/design-runtime`：早期命令和运行时原型；
+- `packages/design-schema`：早期设计文档类型、Schema 与校验；节点校验按 `type` 使用判别
+  联合，字段级错误不再被吞成一句 "Invalid input"（例如 `textAlign: "justify"` 会直接
+  报出 `nodes.<id>.textAlign`）；文本节点新增可选的 `fontWeight`（100–900）、`fontStyle`、
+  `textAlign`、`letterSpacing`，缺省值统一由 `TEXT_DEFAULTS` 兜底，旧文档无需迁移；
+- `packages/design-runtime`：早期命令和运行时原型；`text.patch` 接受并校验上述文本样式字段；
 - `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
   连续重放已提交事务的崩溃恢复原型；
 - `packages/design-layout`：宿主无关的 absolute/stack 布局原型，支持 fixed、fill、hug、
   padding、gap、对齐、文本测量接口和结构化布局警告；文本测量提供确定性的字符宽度估算器
   与宿主可注入的测量契约（`createHostTextMeasurer`），修复了 hug 文本高度不随可用宽度换行
   的缺陷；文本换行后超出自身盒高时会报 `text-overflow` 警告（此前该警告码只声明未产生）；
+  文本测量把字重和字间距计入宽度（字距按"每个字符后加一次"、字重 ≥600 视为加粗并放大
+  6%），宿主测量契约 `TextMeasurementRequest` 同步带上 `fontWeight`/`fontStyle`/
+  `letterSpacing`；
 - `packages/design-export`：独立 HTML/CSS 导出原型，保留布局与 CSS Token 语义，并对
   不支持或降级的特性输出诊断；新增独立 SVG 导出，SVG 几何由布局引擎解析，stack、fill、
-  hug 语义与画布一致；
+  hug 语义与画布一致；HTML 导出输出 `font-weight`/`font-style`/`text-align`/
+  `letter-spacing`，SVG 用 `text-anchor` + `x` 表达盒内对齐，缺省样式不写进 CSS，
+  旧文档的导出结果保持不变；
 - `packages/studio-application`：串联项目创建、命令事务、日志与快照、恢复、布局和
   HTML/SVG 导出的应用服务原型，并提供不修改真实项目的命令预演入口，作为未来工作台与
   AI Orchestrator 的共同入口；
@@ -81,6 +89,11 @@
 - 布局引擎的 warnings 上浮到属性面板的「布局警告」区块，点击警告行可直接选中对应节点；
 - 属性面板支持文本内容、字体、字号、行高、节点显隐和锁定；文本修改通过独立
   `text.patch` 命令校验类型和数值，不扩张通用节点 patch；
+- 文本样式补齐粗细、字形、盒内对齐与字间距：属性面板「文字」区提供粗细（常规/中等/
+  半粗/加粗）、字形（常规/斜体）、对齐（左/中/右）和字距四个控件，画布渲染与行内
+  编辑（textarea）同步跟随；浏览器 Canvas 测量器把字重/字形写进 `context.font`、
+  按字符数补上字距，缓存键带上样式，避免不同字重的文本共用一次测量结果；hug 宽度
+  会随字重和字距变化（例如 8 个汉字在字距 4px 下比 0px 宽 32px）；
 - 工作台可下载当前页面的独立 HTML、SVG 交付物和当前项目 JSON 备份，并报告导出诊断数量；
   PNG 交付物由 SVG 经浏览器 Canvas 光栅化生成；
 - 对应包已有有限的单元测试，并被根级 `build:studio-core` 和
