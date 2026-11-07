@@ -110,6 +110,11 @@
   0.7/0.7/0.3 ms），并随 `check:visual` 做预算门禁。命中测试已有纯函数实现
   （`renderer/hit-test.ts`，最深命中 + 命中栈 + 裁剪/透明度/椭圆）与双跑对比模式
   （`?hittest=compare`，Canvas 与 DOM 结果不一致时只告警），选择层仍由 DOM 承担。
+  选择框与手柄已能用 Canvas 绘制：`renderer/selection.ts` 提供包围盒合并、手柄命中与
+  缩放后的盒子，`renderer/selection-overlay.ts` 负责轮廓/手柄绘制（随 zoom 保持屏幕尺寸）；
+  工作台用 `?selection=overlay` 与 Moveable 并排对比。`?selection=drag` 下由 Canvas 接管
+  拖动与单节点缩放：预览盒子覆盖绘制、指针在捕获阶段处理并阻断 Moveable，松手后按现有
+  `node.patch` 事务提交；Moveable 仍在页面上，尚未移除。
   场景构建与绘制调用都有单元测试
   （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
   像素验证，也没有做视口裁剪（culling）；

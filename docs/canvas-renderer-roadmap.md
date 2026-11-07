@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | 像素级验证 | ✅ 已完成（Phase A）：独立 harness + Chrome 截图 + PNG diff | — |
 | 绘制性能 | ✅ 已完成（Phase B）：根节点级视口裁剪 + 绘制基线 + 预算门禁；浏览器光栅化耗时待测 | — |
-| 命中测试 | 🟡 Phase C 起步：`hitTest` + 双跑对比已完成；选择层与手柄仍走 DOM | 切换选择层并移除 DOM 节点副本 |
+| 命中测试 | 🟡 Phase C 进行中：`hitTest`、双跑对比、选择框绘制、Canvas 拖拽/缩放（`?selection=drag`）已完成；Moveable 尚未移除 | 移除 Moveable 与 DOM 节点副本 |
 
 ## Phase A：画布像素回归（✅ 已完成）
 
@@ -90,11 +90,19 @@
 - 工作台开关 `?hittest=compare`：Canvas 命中与 DOM `closest("[data-node-id]")` 同时跑，不一致只
   `console.warn`，不改变选择行为；
 - 单元测试覆盖重叠顺序、父子优先级、透明穿透、椭圆角落、裁剪容器与坐标换算。
+- 选择框几何与绘制：`renderer/selection.ts`（包围盒合并、8 个手柄、手柄命中、拖拽后的
+  盒子、光标映射）+ `renderer/selection-overlay.ts`（Canvas 绘制轮廓与手柄，手柄按
+  `zoom` 保持屏幕像素大小）；harness 基线里已叠加双选选择框，像素基线同时覆盖它；
+- 工作台开关 `?selection=overlay`：额外画一层 Canvas 选择框，与 Moveable 并排对比；
+- 拖拽/缩放接管：`renderer/selection-drag.ts`（子树偏移、单节点缩放、预览覆盖、布局补丁）
+  与 `renderer/use-canvas-drag.ts`（捕获阶段指针手势、`stopPropagation` 防止 Moveable
+  同时启动、`consumedClick` 抑制拖拽后的误清除选择）。开关 `?selection=drag`：拖动已选
+  节点或拖手柄时由 Canvas 接管，提交仍走现有 `node.patch` 事务。
 
 ### 剩余工作
 
-1. 在浏览器里实际跑一段对比，确认没有系统性偏差（需要人工点击或录制事件）；
-2. 用 Canvas/overlay 绘制选择框与手柄，替换 Moveable/Selecto；
+1. 在浏览器里实际跑一段双跑对比与拖拽，确认没有系统性偏差；
+2. 移除 Moveable/Selecto（`?selection=drag` 稳定后）；
 3. 移除透明 DOM 节点副本与 `canvas-rendered` 隐藏规则；
 4. 保留 `<textarea>` 文本编辑覆盖层。
 

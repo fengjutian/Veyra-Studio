@@ -31,6 +31,7 @@ import { CanvasSurface } from "./renderer/canvas-surface";
 import { buildScene } from "./renderer/scene";
 import { hitTest } from "./renderer/hit-test";
 import { compareHits, pointFromEvent } from "./renderer/hit-test-compare";
+import { useCanvasDrag } from "./renderer/use-canvas-drag";
 import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
 import { commitText, textEditAction } from "./text-edit";
@@ -89,6 +90,10 @@ function App() {
   const canvasRenderer = useMemo(() => new URLSearchParams(window.location.search).get("renderer") !== "dom", []);
   // `?hittest=compare`：Canvas 命中与 DOM 命中同时跑，只记录差异，不改变行为。
   const hitTestCompare = useMemo(() => new URLSearchParams(window.location.search).get("hittest") === "compare", []);
+  // `?selection=overlay`：额外用 Canvas 画一层选择框，与 Moveable 并排对比。
+  const selectionOverlay = useMemo(() => new URLSearchParams(window.location.search).get("selection") === "overlay", []);
+  // `?selection=drag`：由 Canvas 接管拖动与缩放（Moveable 仍在页面上，属于对比阶段）。
+  const selectionDrag = useMemo(() => new URLSearchParams(window.location.search).get("selection") === "drag", []);
   // 可视区域（场景坐标）：滚动 + 缩放变化时更新，Canvas 只画相交的根节点。
   const [canvasViewport, setCanvasViewport] = useState({ x: 0, y: 0, width: 0, height: 0 });
   const syncCanvasViewport = useCallback(() => {
@@ -250,8 +255,8 @@ function App() {
   }, [syncCanvasViewport]);
   const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch);
   const hitTestScene = useMemo(
-    () => (hitTestCompare && document && activePageId ? buildScene(document, activePageId, canvasLayout.boxes) : []),
-    [hitTestCompare, document, activePageId, canvasLayout.boxes],
+    () => (hitTestCompare || selectionDrag || selectionOverlay) && document && activePageId ? buildScene(document, activePageId, canvasLayout.boxes) : [],
+    [hitTestCompare, selectionDrag, selectionOverlay, document, activePageId, canvasLayout.boxes],
   );
   /** 双跑对比：只告警，不接管选择。 */
   const compareHitTest = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -537,6 +542,17 @@ function App() {
     switchPage(nextPageId);
   });
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
+  const canvasDrag = useCanvasDrag({
+    enabled: selectionDrag,
+    busy,
+    zoom,
+    scene: hitTestScene,
+    selectedIds,
+    pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
+    layoutOf: id => document?.nodes[id]?.layout,
+    onCommit: changes => patchLayouts(changes),
+    onMarquee: ids => setSelectedIds(ids),
+  });
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => selected && patchNode(selected.id, patchValue);
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
@@ -1064,8 +1080,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${canvasRenderer ? " canvas-rendered" : ""}${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClickCapture={compareHitTest} onClick={event => event.target === event.currentTarget && setSelectedIds([])}>
-                <CanvasSurface enabled={canvasRenderer} repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} />{page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}>
+              <div ref={setCanvas} className={`canvas${canvasRenderer ? " canvas-rendered" : ""}${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClickCapture={compareHitTest} {...canvasDrag.handlers} onClick={event => event.target === event.currentTarget && !canvasDrag.consumedClick() && setSelectedIds([])}>
+                <CanvasSurface enabled={canvasRenderer} repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectionOverlay || selectionDrag ? selectedIds : undefined} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} />{page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}>
                   <CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={ids => setSelectedIds(ids.filter(id => { const node = document.nodes[id]; return !node || canvasSelectable(node); }))} onCommit={patchLayouts} />
                 </Suspense>
               </div>

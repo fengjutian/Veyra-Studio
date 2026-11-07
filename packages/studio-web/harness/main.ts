@@ -3,6 +3,8 @@ import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, 
 import { buildScene } from "../src/renderer/scene";
 import { createCanvas2DRenderer } from "../src/renderer/canvas-renderer";
 import { cullScene } from "../src/renderer/culling";
+import { paintSelectionOverlay } from "../src/renderer/selection-overlay";
+import { selectedBoxes, selectionBounds } from "../src/renderer/selection";
 import { fixtureDocument } from "./fixture";
 
 /**
@@ -43,8 +45,15 @@ async function main(): Promise<void> {
   const fixtureMs = measure(() => renderer.paint(scene, options), 3);
   const sizes = SIZES.map(size => measureSize(size));
 
-  // 最终画面必须是完整 fixture（测速用的是独立 canvas，不会污染截图）。
-  renderer.paint(scene, options);
+  // 最终画面必须是完整 fixture（测速用的是独立 canvas，不会污染截图），
+  // 并叠加一个双选选择框，让像素基线同时覆盖选择框绘制。
+  const demoSelection = selectionBounds(selectedBoxes(scene, ["card", "accent"]));
+  renderer.paint(scene, {
+    ...options,
+    onAfterPaint: context => {
+      if (demoSelection) paintSelectionOverlay(context, demoSelection, { zoom: 1 });
+    },
+  });
 
   const metrics: PaintMetrics = { dpr: window.devicePixelRatio, fixtureMs, sizes };
   const pre = document.createElement("pre");

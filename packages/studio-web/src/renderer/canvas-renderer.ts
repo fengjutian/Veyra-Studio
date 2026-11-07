@@ -19,6 +19,8 @@ export interface PaintOptions {
   /** assetId → 已解码的图片。缺图时画占位框。 */
   images: Map<string, CanvasImageSource>;
   background?: string;
+  /** 场景绘制完成后的回调，用于选择框等覆盖层；坐标系与场景一致。 */
+  onAfterPaint?(context: CanvasRenderingContext2D): void;
 }
 
 export interface SceneRenderer {
@@ -45,6 +47,7 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): SceneRenderer
       context.fillRect(0, 0, options.width, options.height);
 
       for (const node of scene) drawNode(context, node, options, 1);
+      options.onAfterPaint?.(context);
     },
   };
 }
