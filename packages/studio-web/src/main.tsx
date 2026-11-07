@@ -5,7 +5,7 @@ import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describe
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
-import type { AutosaveStatus, ProjectRepository, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
+import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
 import { planGroup, planUngroup } from "./grouping";
@@ -47,6 +47,7 @@ import { backupRestoreConfirmation, backupStore, shouldWriteBackup, type BackupS
 import { historyRows, type HistoryRow } from "./history-rows";
 import { HistoryPanel } from "./history-panel";
 import { readStorageEstimate, storagePercent, type StorageEstimate } from "./storage-estimate";
+import { DEFAULT_HISTORY_KEEP, storageUsageOverview, type StorageUsageOverview } from "./storage-usage";
 import { StoragePanel } from "./storage-panel";
 import { inspectorTabs, type InspectorTabId } from "./inspector-tabs";
 import { forgetAssetUrl } from "./asset-url";
@@ -132,6 +133,8 @@ function App() {
   // 自动备份列表与浏览器存储用量。
   const [backups, setBackups] = useState<BackupSummary[]>([]);
   const [storage, setStorage] = useState<StorageEstimate>();
+  // 逐项目的存储占用与清理清单。
+  const [storageUsage, setStorageUsage] = useState<StorageUsageOverview>();
   // 最近一次导出的诊断与格式，面板据此列出可定位的问题。
   const [exportReport, setExportReport] = useState<{ format: ExportFormat; diagnostics: ExportDiagnostic[] }>();
   // 隔离预览：弹窗里渲染导出器真实产物。
@@ -372,6 +375,35 @@ function App() {
   });
   /** 重新读一遍浏览器存储用量；估算失败时显示"无法获取"，不阻塞编辑。 */
   const refreshStorage = () => void readStorageEstimate().then(setStorage).catch(() => setStorage(undefined));
+  /** 逐项目统计占用并生成清理清单；仓库不支持统计时保持 undefined。 */
+  const refreshStorageUsage = () => void (async () => {
+    if (!repository.inspectStorage) { setStorageUsage(undefined); return; }
+    try {
+      const summaries = await repository.listProjects();
+      const usages = await Promise.all(summaries.map(summary => repository.inspectStorage!(summary.id).catch(() => undefined)));
+      setStorageUsage(storageUsageOverview(usages.filter((usage): usage is ProjectStorageUsage => Boolean(usage)), { currentProjectId: document?.id }));
+    } catch {
+      setStorageUsage(undefined);
+    }
+  })();
+  /** 裁掉某个项目多余的历史版本；当前版本永远保留。 */
+  const trimProjectHistory = (projectId: string) => void run(async () => {
+    if (!repository.trimSnapshots) return;
+    const removed = await repository.trimSnapshots(projectId, DEFAULT_HISTORY_KEEP);
+    if (projectId === document?.id) setSnapshots(await repository.listSnapshots(projectId));
+    await refreshStorageUsage();
+    setMessage(removed ? `已裁掉 ${removed} 份旧版本` : "没有可裁掉的历史版本");
+  });
+  /** 从存储面板删掉一个旧项目；当前项目不走这条路，删除前必须确认。 */
+  const deleteStorageProject = (projectId: string) => void run(async () => {
+    if (projectId === document?.id) { await deleteCurrentProject(); return; }
+    if (!await askConfirm({ title: "删除项目", description: `删除项目“${projectId}”？此操作不可撤销。`, confirmLabel: "删除", destructive: true })) return;
+    await repository.deleteProject(projectId);
+    await backupStore.deleteProject(projectId);
+    setProjects(await repository.listProjects());
+    await refreshStorageUsage();
+    setMessage("项目已删除");
+  });
   const downloadBackup = (row: BackupSummary) => void run(async () => {
     const snapshot = await backupStore.read(document.id, row.createdAt);
     downloadFile(`${safeFilename(snapshot.meta.name)}-备份-r${row.revision}.json`, JSON.stringify(snapshot, null, 2), "application/json");
@@ -1251,7 +1283,7 @@ function App() {
         <Tabs.Content value="data" className="inspector-body">
           <section className="inspector-section">
             <h2>存储用量</h2>
-            <StoragePanel estimate={storage} disabled={busy} onRefresh={refreshStorage} onExportBackup={exportJson} />
+            <StoragePanel estimate={storage} usage={storageUsage} disabled={busy} onRefresh={() => { refreshStorage(); refreshStorageUsage(); }} onExportBackup={exportJson} onTrimHistory={trimProjectHistory} onDeleteProject={deleteStorageProject} />
           </section>
           <section className="inspector-section">
             <TokenPanel tokens={document.tokens} bindings={selected?.bindings} disabled={busy} canBind={Boolean(selected)} onCreate={createToken} onUpdate={updateToken} onBind={bindToken} onUnbind={unbindToken} onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))} />

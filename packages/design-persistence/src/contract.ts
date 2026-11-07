@@ -53,6 +53,30 @@ export interface JournalPruneOptions {
   keep?: number;
 }
 
+/**
+ * 一个项目在存储里占用的空间。
+ *
+ * 字节数是**估算值**：文件系统后端按文件实际字节数算，浏览器后端按序列化后的
+ * UTF-8 长度算。它回答的是"哪个项目占了最多空间、清理它能回收多少"，不作为
+ * 精确计量——所以面板上的文案要说"约"，不要写成精确值。
+ */
+export interface ProjectStorageUsage {
+  projectId: string;
+  projectName: string;
+  /** 当前快照与历史版本占用的字节数。 */
+  snapshotBytes: number;
+  /** 事务日志占用的字节数。 */
+  journalBytes: number;
+  /** 资源字节占用的字节数。 */
+  assetBytes: number;
+  /** 三者之和。 */
+  totalBytes: number;
+  /** 保留的历史版本份数（不含当前版本）。 */
+  historyCount: number;
+  /** 资源份数。 */
+  assetCount: number;
+}
+
 export interface ProjectRepository {
   open(projectId: string): Promise<ProjectSnapshot>;
   saveSnapshot(document: DesignDocument): Promise<void>;
@@ -93,6 +117,18 @@ export interface ProjectRepository {
    * 不是把整个应用退回旧格式。版本不存在时抛 {@link SnapshotNotFoundError}。
    */
   readSnapshot(projectId: string, revision: number): Promise<DesignDocument>;
+  /**
+   * 统计这个项目占用的存储空间。
+   *
+   * 可选能力：后端不支持计数时调用方应跳过这一项，而不是把 0 当成"没占空间"。
+   */
+  inspectStorage?(projectId: string): Promise<ProjectStorageUsage>;
+  /**
+   * 把历史版本裁剪到只剩最近 `keep` 份，返回被删除的份数。
+   *
+   * 当前版本永远保留。可选能力：后端不支持时调用方应跳过。
+   */
+  trimSnapshots?(projectId: string, keep: number): Promise<number>;
 }
 
 export class ProjectNotFoundError extends Error {
@@ -168,6 +204,20 @@ export function snapshotSummary(document: DesignDocument, options: { current: bo
 export function normalizeAssetHash(hash: string): string {
   if (!/^[a-f0-9]{64}$/i.test(hash)) throw new Error("Asset hash must be a SHA-256 hex string");
   return hash.toLowerCase();
+}
+
+/**
+ * 估算一份 JSON 载荷的 UTF-8 字节数。
+ *
+ * 浏览器后端拿不到"存进 IndexedDB 之后"的真实字节（那里是结构化克隆），
+ * 用同一套估算口径，两个后端报出来的数字才有可比性。
+ */
+export function estimateJsonBytes(value: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  } catch {
+    return 0;
+  }
 }
 
 /**

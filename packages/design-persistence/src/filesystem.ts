@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { detectSchemaVersion, type DesignDocument } from "@ufira/design-schema";
 import type { TransactionEntry } from "@ufira/design-runtime";
@@ -16,6 +16,7 @@ import {
   type JournalPruneOptions,
   type ProjectRepository,
   type ProjectSnapshot,
+  type ProjectStorageUsage,
   type ProjectSummary,
   type SnapshotSummary,
 } from "./contract";
@@ -234,6 +235,59 @@ export class FileSystemProjectRepository implements ProjectRepository {
     return stored.document;
   }
 
+  /**
+   * 统计这个项目占用的空间。
+   *
+   * 文件系统这边能拿到文件的真实字节数，所以快照和日志都按磁盘上的实际大小算，
+   * 只有资源字节是内容本身的长度（同一个 hash 只存一份）。
+   */
+  async inspectStorage(projectId: string): Promise<ProjectStorageUsage> {
+    const directory = this.projectDirectory(projectId);
+    const manifest = await readManifest(join(directory, "manifest.json"));
+    const snapshotBytes = await sumFileSizes(join(directory, "snapshots"));
+    const journalBytes = await sumFileSizes(join(directory, "transactions"));
+    const assetBytes = await sumFileSizes(join(directory, "assets"));
+    const historyCount = (await safeReadDirectory(join(directory, "snapshots"))).filter(isRevisionFile).length;
+    const assetCount = (await safeReadDirectory(join(directory, "assets"))).length;
+    const name = manifest?.name ?? (await this.projectName(projectId)) ?? "";
+    return {
+      projectId,
+      projectName: name,
+      snapshotBytes,
+      journalBytes,
+      assetBytes,
+      totalBytes: snapshotBytes + journalBytes + assetBytes,
+      historyCount: Math.max(0, historyCount - 1),
+      assetCount,
+    };
+  }
+
+  /**
+   * 把历史版本裁到只剩最近 `keep` 份（当前版本不算在内）。
+   *
+   * 文件名上的 revision 越大越新，所以从旧到新删。
+   */
+  async trimSnapshots(projectId: string, keep: number): Promise<number> {
+    const snapshots = join(this.projectDirectory(projectId), "snapshots");
+    const files = (await safeReadDirectory(snapshots)).filter(isRevisionFile).sort().reverse();
+    const target = Math.max(0, keep);
+    // 当前版本是最新的一份，永远保留，所以能删的是它之后的那些。
+    const outdated = files.slice(target + 1);
+    for (const file of outdated) await rm(join(snapshots, file), { force: true });
+    return outdated.length;
+  }
+
+  /** 读不出 manifest 时回退到最新快照里的项目名。 */
+  private async projectName(projectId: string): Promise<string | undefined> {
+    const snapshots = join(this.projectDirectory(projectId), "snapshots");
+    const files = (await safeReadDirectory(snapshots)).filter(isRevisionFile).sort().reverse();
+    for (const file of files) {
+      const stored = await this.readSnapshotFile(join(snapshots, file));
+      if (stored) return stored.document.meta.name;
+    }
+    return undefined;
+  }
+
   private async readSnapshotFile(path: string): Promise<{ document: DesignDocument; schemaVersion: number } | undefined> {
     const raw = await readFile(path, "utf8").catch(() => undefined);
     if (raw === undefined) return undefined;
@@ -285,6 +339,17 @@ async function safeReadDirectory(directory: string): Promise<string[]> {
     if (error?.code === "ENOENT") return [];
     throw error;
   }
+}
+
+/** 目录下所有文件的字节数之和；目录不存在时算 0。 */
+async function sumFileSizes(directory: string): Promise<number> {
+  const files = await safeReadDirectory(directory);
+  let total = 0;
+  for (const file of files) {
+    const stats = await stat(join(directory, file)).catch(() => undefined);
+    if (stats?.isFile()) total += stats.size;
+  }
+  return total;
 }
 
 async function readManifest(path: string): Promise<Manifest | undefined> {

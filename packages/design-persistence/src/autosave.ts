@@ -118,6 +118,9 @@ export function withAutosave(repository: ProjectRepository, options: AutosaveOpt
     appendTransactions: (entries: TransactionEntry[]) => repository.appendTransactions(entries),
     listSnapshots: (projectId: string) => repository.listSnapshots(projectId),
     readSnapshot: (projectId: string, revision: number) => repository.readSnapshot(projectId, revision),
+    // 存储统计与历史裁剪是可选能力：底层仓库不支持时就不假装支持。
+    ...(repository.inspectStorage ? { inspectStorage: (projectId: string) => repository.inspectStorage!(projectId) } : {}),
+    ...(repository.trimSnapshots ? { trimSnapshots: (projectId: string, keep: number) => repository.trimSnapshots!(projectId, keep) } : {}),
 
     async saveSnapshot(document: DesignDocument): Promise<void> {
       // 第一个项目的第一份快照必须立刻落盘，否则新建的项目在落盘前关闭就找不回来了。
