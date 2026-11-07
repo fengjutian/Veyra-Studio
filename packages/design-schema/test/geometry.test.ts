@@ -3,10 +3,12 @@ import test from "node:test";
 import {
   absolutePath,
   closedPolygonPath,
+  flattenPath,
   hitTestVectorPath,
   isClosedPath,
   isValidVectorPath,
   parseVectorPath,
+  pathBounds,
   pathDataFromCommands,
   regularPolygonPathData,
   starPathData,
@@ -30,11 +32,36 @@ test("accepts decimals, commas, exponents and repeated M", () => {
   assert.ok(isValidVectorPath("M 0 0 L 1 0 M 0 1 L 1 1"));
 });
 
-test("rejects every command outside M/L/Z", () => {
-  // 曲线与圆弧留给钢笔工具那一轮，现在写进来会让画布和导出各画一半。
-  for (const d of ["M 0 0 C 0 1 1 1 1 0", "M 0 0 Q 1 0 1 1", "M 0 0 A 1 1 0 0 0 1 1", "M 0 0 H 1", "M 0 0 V 1", "m 0 0 l 1 0"]) {
+test("rejects every command outside M/L/C/Q/Z", () => {
+  // 圆弧 A 与相对命令留给更后面的阶段，现在混进来会让画布和导出各画一半。
+  for (const d of ["M 0 0 A 1 1 0 0 0 1 1", "M 0 0 H 1", "M 0 0 V 1", "m 0 0 l 1 0", "M 0 0 S 1 1 1 0"]) {
     assert.equal(isValidVectorPath(d), false, d);
   }
+});
+
+test("parses cubic and quadratic segments", () => {
+  assert.deepEqual(parseVectorPath("M 0 0 C 0.2 0 0.8 1 1 1"), [
+    { command: "M", point: { x: 0, y: 0 } },
+    { command: "C", control1: { x: 0.2, y: 0 }, control2: { x: 0.8, y: 1 }, point: { x: 1, y: 1 } },
+  ]);
+  assert.deepEqual(parseVectorPath("M 0 0 Q 0.5 1 1 0 Z"), [
+    { command: "M", point: { x: 0, y: 0 } },
+    { command: "Q", control: { x: 0.5, y: 1 }, point: { x: 1, y: 0 } },
+    { command: "Z" },
+  ]);
+});
+
+test("allows control points outside the unit box but not on-curve points", () => {
+  // 向外鼓的弧必然把控制点甩到盒外；端点越界则说明包围盒算错了。
+  assert.ok(isValidVectorPath("M 0 0.5 C -0.6 0 1.6 1 1 0.5"));
+  assert.equal(isValidVectorPath("M 0 0.5 C 0.2 0 0.8 1 1.4 0.5"), false);
+  assert.equal(isValidVectorPath("M 0 0 Q 1.5 1 1 0"), true);
+  assert.equal(isValidVectorPath("M 0 0 Q 0.5 1 2 0"), false);
+});
+
+test("a curve survives a round trip through the serializer", () => {
+  const d = "M 0 0 C 0.2 0 0.8 1 1 1 Z";
+  assert.equal(pathDataFromCommands(parseVectorPath(d)!), d);
 });
 
 test("rejects malformed paths", () => {
@@ -124,5 +151,27 @@ test("caches parsed paths instead of reparsing on every hit test", () => {
 
 test("an invalid path degrades to an empty command list", () => {
   // 文档经过 schema 校验不会走到这里；渲染层仍然不能因为坏数据抛异常。
-  assert.deepEqual(vectorPathCommands("M 0 0 C 1 1 1 0 0 0"), []);
+  assert.deepEqual(vectorPathCommands("M 0 0 C 1 1 1 0 0 0 A 1 1 0 0 0 1 1"), []);
+});
+
+test("flattens curves into a polyline", () => {
+  const points = flattenPath(parseVectorPath("M 0 0 Q 0.5 1 1 0")!, 8);
+  assert.equal(points.length, 9);
+  assert.deepEqual(points[0], { x: 0, y: 0 });
+  assert.deepEqual(points[8], { x: 1, y: 0 });
+  // 对称二次曲线在 t=0.5 处到达 (0.5, 0.5)
+  const mid = points[4]!;
+  assert.ok(Math.abs(mid.x - 0.5) < 1e-9 && Math.abs(mid.y - 0.5) < 1e-9);
+});
+
+test("bounds follow the curve, not the control points", () => {
+  // 控制点 y=2 在盒外，曲线最高只到 y=1；包围盒按曲线算，不按控制点。
+  const bounds = pathBounds(parseVectorPath("M 0 0 Q 0.5 2 1 0")!)!;
+  assert.ok(Math.abs(bounds.height - 1) < 1e-6, String(bounds.height));
+});
+
+test("hits inside a region bounded by a curve", () => {
+  const shape = parseVectorPath("M 0 0 C 0 0.6 1 0.6 1 0 L 1 1 L 0 1 Z")!;
+  assert.equal(hitTestVectorPath(shape, BOX, { x: 200, y: 100 }), true);
+  assert.equal(hitTestVectorPath(shape, BOX, { x: 200, y: 40 }), false);
 });

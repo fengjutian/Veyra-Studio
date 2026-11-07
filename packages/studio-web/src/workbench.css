@@ -547,7 +547,11 @@
 /* 图元工具下指针变成十字：先看到"要画东西"，再拖出尺寸。 */
 .canvas.tool-frame,
 .canvas.tool-rectangle,
-.canvas.tool-ellipse {
+.canvas.tool-ellipse,
+.canvas.tool-line,
+.canvas.tool-polygon,
+.canvas.tool-star,
+.canvas.tool-pen {
   cursor: crosshair;
 }
 

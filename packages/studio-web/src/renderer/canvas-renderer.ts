@@ -116,15 +116,17 @@ function shapePath(context: CanvasRenderingContext2D, node: SceneNode): void {
 /**
  * 把归一化路径描到画布上。
  *
- * 坐标在发出 `moveTo`/`lineTo` 之前就换算成绝对坐标，而不是用 `ctx.scale()`：
- * 缩放上下文会把描边也拉粗，非等比缩放时竖线比横线粗，看起来像渲染 bug。
+ * 坐标在发出 `moveTo`/`lineTo`/`bezierCurveTo` 之前就换算成绝对坐标，而不是用
+ * `ctx.scale()`：缩放上下文会把描边也拉粗，非等比缩放时竖线比横线粗，看起来像渲染 bug。
  */
 function tracePath(context: CanvasRenderingContext2D, commands: ReturnType<typeof vectorPathCommands>, box: SceneBox): void {
   context.beginPath();
   for (const command of absolutePath(commands, box)) {
     if (command.command === "Z") context.closePath();
     else if (command.command === "M") context.moveTo(command.point.x, command.point.y);
-    else context.lineTo(command.point.x, command.point.y);
+    else if (command.command === "L") context.lineTo(command.point.x, command.point.y);
+    else if (command.command === "Q") context.quadraticCurveTo(command.control.x, command.control.y, command.point.x, command.point.y);
+    else if (command.command === "C") context.bezierCurveTo(command.control1.x, command.control1.y, command.control2.x, command.control2.y, command.point.x, command.point.y);
   }
 }
 

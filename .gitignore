@@ -25,3 +25,5 @@ packages/studio-web/visual/.cache/
 packages/studio-web/visual/canvas.diff.png
 # 本地起 dev server 的日志
 .devserver.log
+# TypeScript incremental build cache（不应进仓库）
+*.tsbuildinfo

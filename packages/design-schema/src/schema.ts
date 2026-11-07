@@ -33,14 +33,15 @@ const appearanceSchema = z.object({
 });
 
 /**
- * 矢量几何只接受归一化、只含 M/L/Z 的路径。
+ * 矢量几何只接受归一化、只含 M/L/C/Q/Z 的路径。
  *
- * 校验放在这里而不是渲染层：一条含 `C` 的路径如果被放进来，画布会少画一段、
+ * 校验放在这里而不是渲染层：一条含 `A` 的路径如果被放进来，画布会少画一段、
  * 导出会输出另一段，两边悄悄不一致。宁可写入时就拒绝。
+ * 在曲线上的点必须在 [0,1]；控制点允许越界（曲线向外鼓时必然如此）。
  */
 const vectorGeometrySchema = z.object({
   kind: z.literal("path"),
-  d: z.string().min(1).refine(isValidVectorPath, { message: "Vector path must contain only M/L/Z with coordinates in [0,1]" }),
+  d: z.string().min(1).refine(isValidVectorPath, { message: "Vector path must contain only M/L/C/Q/Z, with on-curve points in [0,1]" }),
 });
 
 const baseNodeShape = {

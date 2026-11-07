@@ -47,6 +47,7 @@ import {
   PanelLeft,
   PanelRight,
   Pencil,
+  PenTool,
   Pentagon,
   Plus,
   Redo2,
@@ -105,6 +106,7 @@ export const ICONS = {
   addLine: Slash,
   addPolygon: Pentagon,
   addStar: Star,
+  addPen: PenTool,
 
   // 图层编辑
   copy: Copy,

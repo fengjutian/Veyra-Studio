@@ -40,6 +40,7 @@ import { CanvasSurface } from "./renderer/canvas-surface";
 import { buildScene } from "./renderer/scene";
 import { hitTest, pointFromEvent, type HitPoint } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
+import { usePenTool, type PenCommit } from "./renderer/use-pen-tool";
 import { TOOLS, clampRect, defaultRectFor, isDrawTool, isVectorTool, nextToolAfterDraw, shortcutTool, toolSpec, type DrawToolId, type ToolId, type VectorToolId } from "./tools";
 import { buildVectorShape, type VectorShape } from "./shapes";
 import type { VectorGeometry } from "@ufira/design-schema";
@@ -352,6 +353,15 @@ function App() {
     onDraw: (rect, info) => createNodeFromDraw(info.tool, rect, info),
   });
 
+  // 钢笔独立于拖拽手势：一次路径跨多次点击，草稿留在 hook 里，结束时只提交一条事务。
+  const pen = usePenTool({
+    active: tool === "pen",
+    busy,
+    zoom,
+    pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
+    onCommit: result => commitPenPath(result),
+  });
+
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[activePageId!]!;
   const selected = selectedIds.length ? document.nodes[selectedIds.at(-1)!] : undefined;
@@ -551,6 +561,26 @@ function App() {
       await execute([{ type: "node.create", payload: { node } }]);
       setSelectedIds([node.id]);
       setMessage(`已添加${toolSpec(drawTool).label} · ${box.width}×${box.height}`);
+    });
+  };
+  /**
+   * 钢笔结束时的提交。
+   *
+   * 整条路径只发一条 `node.create`，所以一次路径 = 一次撤销；闭合路径给填充，
+   * 开放路径只给描边——否则一条不闭合的曲线会被填成一块奇怪的面。
+   */
+  const commitPenPath = (result: PenCommit) => {
+    const box = {
+      x: Math.round(result.box.x),
+      y: Math.round(result.box.y),
+      width: Math.max(1, Math.round(result.box.width)),
+      height: Math.max(1, Math.round(result.box.height)),
+    };
+    const node = makePenNode(page.id, box, result.geometry, result.closed);
+    void run(async () => {
+      await execute([{ type: "node.create", payload: { node } }]);
+      setSelectedIds([node.id]);
+      setMessage(`已添加${result.closed ? "闭合路径" : "开放路径"} · ${box.width}×${box.height}`);
     });
   };
   /**
@@ -1273,8 +1303,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}`} style={{ zoom }} {...canvasDrag.handlers} onClick={selectFromCanvas} onDoubleClick={editTextAtCanvasPoint}>
-                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } editTextAtCanvasPoint(event); }}>
+                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
               {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
                 <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>
@@ -1556,6 +1586,30 @@ function makeVectorNode(tool: VectorToolId, parentId: string, box: { x: number; 
     id: `vector:${crypto.randomUUID().slice(0, 8)}`,
     type: "vector",
     name: names[tool],
+    parentId,
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: { ...defaultLayout(), ...box },
+    appearance,
+    geometry,
+  };
+}
+
+/**
+ * 钢笔提交出来的路径节点。
+ *
+ * 闭合路径给填充、开放路径只给描边：一条不闭合的曲线被填充后会变成一块奇怪的面，
+ * 用户很难理解那是自己画出来的。
+ */
+function makePenNode(parentId: string, box: { x: number; y: number; width: number; height: number }, geometry: VectorGeometry, closed: boolean): DesignNode {
+  const appearance = closed
+    ? { ...defaultAppearance(), fill: "#8b5cf6" }
+    : { ...defaultAppearance(), stroke: "#8b5cf6", strokeWidth: 2 };
+  return {
+    id: `vector:${crypto.randomUUID().slice(0, 8)}`,
+    type: "vector",
+    name: closed ? "闭合路径" : "开放路径",
     parentId,
     childIds: [],
     visible: true,

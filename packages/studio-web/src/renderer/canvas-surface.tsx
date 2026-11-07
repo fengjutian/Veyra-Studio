@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { DesignDocument, AssetMetadata } from "@ufira/design-schema";
+import type { DesignDocument, AssetMetadata, PathCommand } from "@ufira/design-schema";
 import type { ProjectRepository } from "@ufira/design-persistence";
 import { loadAssetUrl } from "../asset-url";
 import { buildScene, type SceneBox, type SceneNode } from "./scene";
 import { cullScene, type CullViewport } from "./culling";
-import { paintDrawPreview, paintMarquee, paintSelectionOverlay, paintSnapGuides } from "./selection-overlay";
+import { paintDrawPreview, paintMarquee, paintPathAnchors, paintPathPreview, paintSelectionOverlay, paintSnapGuides } from "./selection-overlay";
 import type { SnapGuide } from "./snapping";
 import { selectedBoxes, selectionBounds, type Rect } from "./selection";
 import { applyBoxOverrides } from "./selection-drag";
@@ -36,11 +36,16 @@ export interface CanvasSurfaceProps {
   /** 绘制中的临时矩形（场景坐标）与它的形状。 */
   drawRect?: Rect;
   drawShape?: "rectangle" | "ellipse" | "frame" | "text" | "line" | "polygon" | "star";
+  /** 钢笔草稿：绝对场景坐标的路径与已落下的锚点。 */
+  penPath?: PathCommand[];
+  penAnchors?: Array<{ x: number; y: number }>;
+  /** 指针停在起点上，提示「点击会闭合」。 */
+  penClosing?: boolean;
   /** 拖动时的对齐辅助线。 */
   guides?: SnapGuide[];
 }
 
-export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, guides }: CanvasSurfaceProps) {
+export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, guides }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
@@ -91,13 +96,15 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
         // 之前把两者都放在 `selection` 判空之后，导致选框一直画不出来。
         if (marquee) paintMarquee(context, marquee, { zoom });
         if (drawRect) paintDrawPreview(context, drawRect, { zoom, shape: drawShape });
+        if (penPath?.length) paintPathPreview(context, penPath, { zoom });
+        if (penAnchors?.length) paintPathAnchors(context, penAnchors, { zoom, closing: penClosing });
         if (!selection?.length) return;
         const bounds = selectionBounds(selectedBoxes(paintedScene, selection));
         if (bounds) paintSelectionOverlay(context, bounds, { zoom });
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
       },
     });
-  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, guides]);
+  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, guides]);
 
   return <canvas ref={canvasRef} className="canvas-surface" aria-hidden="true" />;
 }

@@ -12,7 +12,7 @@ import type { Rect } from "./renderer/selection";
  * 这个模块是纯函数层：没有 React、没有 DOM，图标只以名字引用（type-only import），
  * 因此可以在 node 环境里直接跑单测。
  */
-export type ToolId = "select" | "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "text" | "hand";
+export type ToolId = "select" | "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "pen" | "text" | "hand";
 
 /** 能用拖拽「画出来」的工具，也就是会创建节点的工具。 */
 export type DrawToolId = Extract<ToolId, "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "text">;
@@ -41,6 +41,7 @@ export const TOOLS: readonly ToolSpec[] = [
   { id: "line", label: "直线", shortcut: "l", icon: "addLine", cursor: "crosshair", creates: "line" },
   { id: "polygon", label: "多边形", shortcut: "g", icon: "addPolygon", cursor: "crosshair", creates: "polygon" },
   { id: "star", label: "星形", shortcut: "s", icon: "addStar", cursor: "crosshair", creates: "star" },
+  { id: "pen", label: "钢笔", shortcut: "p", icon: "addPen", cursor: "crosshair" },
   { id: "text", label: "文本", shortcut: "t", icon: "addText", cursor: "text", creates: "text" },
   { id: "hand", label: "抓手", shortcut: "h", icon: "pan", cursor: "grab" },
 ];
