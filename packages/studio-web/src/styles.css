@@ -191,3 +191,5 @@ button.icon-only{padding:5px;min-width:26px}
 .canvas.canvas-rendered .node{background:transparent!important;border-color:transparent!important;box-shadow:none!important;color:transparent!important}
 .canvas.canvas-rendered .node img{opacity:0}
 .canvas.canvas-rendered textarea{color:#e5e7eb;background:#111318}
+.canvas.canvas-pointer .node{pointer-events:none}
+.canvas-text-edit{position:absolute;z-index:30;border:1px solid #8b5cf6;border-radius:4px;background:#fff;color:#111;padding:2px;resize:none;outline:none;overflow:hidden}

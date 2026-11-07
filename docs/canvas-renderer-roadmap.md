@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | 像素级验证 | ✅ 已完成（Phase A）：独立 harness + Chrome 截图 + PNG diff | — |
 | 绘制性能 | ✅ 已完成（Phase B）：根节点级视口裁剪 + 绘制基线 + 预算门禁；浏览器光栅化耗时待测 | — |
-| 命中测试 | 🟡 Phase C 进行中：`hitTest`、双跑对比、选择框绘制、Canvas 拖拽/缩放（`?selection=drag`）已完成；Moveable 尚未移除 | 移除 Moveable 与 DOM 节点副本 |
+| 命中测试 | 🟡 Phase C 接近完成：`hitTest`、双跑对比、选择框、拖拽/缩放、框选、吸附、Canvas 单击/双击编辑（`?selection=canvas`，DOM 副本不再渲染） | 把 canvas 模式设为默认并删除旧交互层 |
 
 ## Phase A：画布像素回归（✅ 已完成）
 
@@ -103,6 +103,15 @@
 - 对齐吸附：`renderer/snapping.ts`（左/中/右、上/中/下对齐线，阈值内取最近，输出位移与
   辅助线）+ `paintSnapGuides`；拖动时的位移会叠加吸附修正，辅助线随拖动绘制，松手后
   按吸附后的位置提交。像素基线里也画了两条固定辅助线，覆盖该绘制路径；
+- `?selection=canvas`：DOM 节点关闭指针事件（只保留视觉与文本编辑入口），单击选中、
+  双击文本编辑与右键菜单全部走 Canvas 命中：
+  - 单击/Shift 单击由 `hitTest` 决定，空白处清空选择；
+  - 双击文本节点在它的布局盒上盖一个 `<textarea>`（输入法/选择交给浏览器），提交仍走
+    `text.patch`；
+  - 右键菜单在 DOM 命中为空时回退到 `hitTest`；
+  - 文本覆盖层会阻止拖动手势，避免在输入框里拖动节点；
+  - DOM 节点副本在这个模式下**完全不渲染**（`{!canvasPointer && page.childIds.map(...)}`），
+    画布上只有一个 `<canvas>` 和按需出现的文本编辑框。
 - `?selection=drag` 时不再挂载 `CanvasInteractionLayer`：Moveable/Selecto 整个跳过，
   选择框、拖拽、缩放、框选全部由 Canvas 接管；默认路径仍然挂载（可随时回退）。
 
@@ -110,8 +119,8 @@
 
 1. 在浏览器里实际跑一段双跑对比与拖拽，确认没有系统性偏差；
 2. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖（当前由开关切换）；
-3. 移除透明 DOM 节点副本与 `canvas-rendered` 隐藏规则；
-4. 保留 `<textarea>` 文本编辑覆盖层。
+3. 把 `?selection=canvas` 变成默认（DOM 副本在该模式下已完全不渲染），并删掉旧交互层代码；
+4. 在浏览器里验证单击/双击/右键/框选/拖拽的组合。
 
 ### 风险与回退
 

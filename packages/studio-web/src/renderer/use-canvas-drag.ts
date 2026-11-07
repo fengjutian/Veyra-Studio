@@ -67,6 +67,8 @@ export function useCanvasDrag(options: CanvasDragOptions): {
 
   const onPointerDownCapture = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!options.enabled || options.busy || event.button !== 0) return;
+    // 文本编辑覆盖层自己处理输入，不要触发拖动。
+    if ((event.target as HTMLElement | null)?.closest?.(".canvas-text-edit")) return;
     const point = options.pointOf(event);
     const bounds = selectionBounds(selectedBoxes(options.scene, options.selectedIds));
     const handle = bounds && options.selectedIds.length === 1
