@@ -291,7 +291,9 @@ AI 原型：
   用 `UPDATE_GOLDEN=1` 重新生成；基线首次运行就抓出 SVG token 变量前缀重复、
   `var()` 取不到值的缺陷并修复。
 
-仍未完成：像素级视觉回归（当前只有产物文本与布局盒基线，没有截图对比）、
+像素级视觉回归已完成：导出产物与画布 harness 各有基线（`visual:check` / `visual:canvas:check`）。
+
+仍未完成：跨浏览器像素基线（当前基线绑定本机字体）、
 可访问性检查、设计 lint、资产打包与字体策略；预览还是一次性弹窗，没有并排对比与
 跨版本预览。
 
@@ -323,7 +325,7 @@ AI 原型：
 
 本轮已完成的部分：
 
-- 视觉回归：本机 Chrome/Edge headless 渲染 golden HTML，与提交的基线 PNG 做像素比较
+- 视觉回归：本机 Chrome/Edge headless 渲染 golden HTML 与画布 harness，与提交的基线 PNG 做像素比较
   （`npm run visual:check`），默认 0.5% 阈值，差异图落盘；PNG 编解码与 diff 用
   `node:zlib` 自实现，没有原生依赖。找不到浏览器时跳过，`--require-browser` 让 CI 明确失败。
 - 性能预算门禁：`npm run bench:layout:budget` 在 200/500/1000/2000 节点超预算时非零退出，

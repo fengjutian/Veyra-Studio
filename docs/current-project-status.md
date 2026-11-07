@@ -188,7 +188,11 @@
 - 视觉回归：`npm run visual:baseline` 用本机 Chrome/Edge headless 渲染 golden HTML，把
   截图存成 `test/golden/page.png`；`npm run visual:check` 重新截图并按像素比较，默认
   允许 0.5% 差异，超出则非零退出，并把差异图标红写到 `page.diff.png`。PNG 编解码与
-  像素对比用 `node:zlib` 自实现，不引入原生图像库；找不到浏览器时 check 会跳过并提示，
+  像素对比用 `node:zlib` 自实现，不引入原生图像库；画布另有像素回归：
+  `npm run visual:canvas:baseline` / `visual:canvas:check` 用 esbuild 打包一个不依赖后端的
+  harness（直接调用 scene + 渲染器，fixture 覆盖换行/对齐/圆角/裁剪/椭圆/图片/缺图/透明度），
+  Chrome 截图后与 `packages/studio-web/visual/canvas.png` 比较，连续两次实测 0 差异；
+  找不到浏览器时 check 会跳过并提示，
   加 `--require-browser` 则明确失败。基线绑定本机字体，跨机器更新需要显式
   `--update`；
 - 可访问性（对比度）：`collectContrastIssues()` 从文档解析文本色与最近的背景色，

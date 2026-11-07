@@ -19,11 +19,11 @@
 
 | 缺口 | 现状 | 目标 |
 | --- | --- | --- |
-| 像素级验证 | 只有场景/绘制调用的单元测试，没有真实浏览器截图对比 | 独立 harness：同一份 fixture 分别用 Canvas 与 DOM 渲染，截图像素对比，纳入 `visual:check` |
+| 像素级验证 | ✅ 已完成（Phase A）：独立 harness + Chrome 截图 + PNG diff | — |
 | 绘制性能 | 整页全量绘制，无裁剪，绘制耗时未纳入预算 | 视口裁剪（culling）+ 绘制耗时基线 + `check:budgets` 门禁 |
 | 命中测试 | 依赖透明 DOM 副本，节点上限仍受 DOM 限制 | 自研命中测试与选择手柄，移除 DOM 节点副本 |
 
-## Phase A：画布像素回归（先做）
+## Phase A：画布像素回归（✅ 已完成）
 
 ### 目标
 
@@ -41,11 +41,14 @@
    - `npm run visual:canvas:check` 重新截图并比较，默认阈值 0.5%，差异图落盘。
 4. **DOM 对照**：同一 fixture 另有一份 DOM 渲染页（复用现有 `.node` 结构与样式），用于人工并排确认；像素对比只针对 Canvas 基线（DOM 版本跨机器字体差异更大，不作为门禁）。
 
-### 验收
+### 验收结果
 
-- 基线可重复生成，二次 check 差异为 0；
-- 修改 `scene.ts` / 绘制逻辑导致视觉变化时 check 失败；
-- 没有 Chrome/Edge 时跳过并提示，`--require-browser` 时明确失败。
+- `npm run visual:canvas:baseline` 生成 `packages/studio-web/visual/canvas.png`；
+- `npm run visual:canvas:check` 连续两次都是 `0/652800（0.000%）`，最大通道差 0；
+- fixture 覆盖文本换行/对齐/字重、圆角、描边、椭圆、嵌套裁剪、透明度、隐藏节点、
+  图片 cover、缺图占位；
+- 没有 Chrome/Edge 时跳过并提示，`--require-browser` 时明确失败；
+- `npm run check:visual` 把导出基线与画布基线一起跑。
 
 ## Phase B：视口裁剪 + 绘制耗时
 
