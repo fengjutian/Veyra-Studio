@@ -11,7 +11,17 @@ import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipbo
 import { planGroup, planUngroup } from "./grouping";
 import { allLocked, deletableRoots, editableNodes } from "./selection-policy";
 import { arrangeNodes, nudgeNodes, nudgeReorder, type Arrangement } from "./node-arrangement";
-import { detectImportConflict, prepareImportedDocument } from "./project-import";
+import {
+  detectImportConflict,
+  planBatchImport,
+  prepareImportedDocument,
+  readImportSource,
+  uniqueProjectName,
+  validateBatchNames,
+  validateImportName,
+  type BatchImportFailure,
+  type BatchImportSource,
+} from "./project-import";
 import { buildRecoveryReport, missingAssetNotice, recoveryReportFileName, recoveryReportRows, type RecoveryReport } from "./recovery-report";
 import { formatSnapshotTime, restoreConfirmation, restoreSnapshotEnvelope, snapshotRows, type SnapshotRow } from "./snapshot-history";
 import { safeFilename } from "./file-name";
@@ -52,7 +62,7 @@ import { StoragePanel } from "./storage-panel";
 import { inspectorTabs, type InspectorTabId } from "./inspector-tabs";
 import { forgetAssetUrl } from "./asset-url";
 import { Icon } from "./icons";
-import { DialogProvider, useChoice, useConfirm, usePrompt } from "./ui/dialogs";
+import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/dialogs";
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
@@ -124,6 +134,7 @@ function App() {
   const askText = usePrompt();
   const askConfirm = useConfirm();
   const askChoice = useChoice();
+  const askForm = useForm();
   // 自动保存状态：待保存 / 保存中 / 已保存 / 失败（含存储配额耗尽）。
   const autosave = useSyncExternalStore(subscribeAutosave, currentAutosaveStatus);
   // 最近一次打开项目的恢复报告。
@@ -649,9 +660,26 @@ function App() {
     setPreviewOpen(true);
   });
   const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
-  const importJson = (file: File) => void run(async () => {
+  /**
+   * 导入时的重名处理：让用户自己起名。
+   *
+   * 以前只能接受自动编号的建议名（"原名（2）"），用户想换个说法做不到——所以这里
+   * 给一个输入框，默认值仍是建议名，但可以直接改。校验挡住空名字和重名。
+   */
+  const askImportName = async (defaultName: string, taken: string[]): Promise<string | undefined> => {
+    const name = await askText({
+      title: "项目名称已被占用",
+      description: `本地已有同名项目。给导入的项目起个名字，默认是「${defaultName}」。`,
+      defaultValue: defaultName,
+      validate: value => validateImportName(value, taken),
+    });
+    return name?.trim() || undefined;
+  };
+  /** 导入一个文件：可能是新项目，也可能覆盖同一个项目的另一个版本。 */
+  const importSingle = async (file: File) => {
     const raw = JSON.parse(await file.text());
     const existing = await repository.listProjects();
+    const taken = existing.map(item => item.name);
     const probe = prepareImportedDocument(raw);
     // 冲突按导入文件**原本的 id** 判定：copy 模式下的新 id 谁也不匹配；
     // 名字比较用导入后会落到的名字，否则会漏掉"上次导入的副本也叫这个名字"。
@@ -668,18 +696,21 @@ function App() {
         ],
       });
       if (choice === null) { setMessage("已取消导入"); return; }
-      prepared = choice === "replace"
-        ? prepareImportedDocument(raw, { mode: "replace", id: conflict.projectId })
-        : prepareImportedDocument(raw, { mode: "copy" });
+      if (choice === "replace") {
+        prepared = prepareImportedDocument(raw, { mode: "replace", id: conflict.projectId });
+      } else {
+        // 作为新项目导入：副本名（"原名（导入）"）本身也可能撞上已有的副本。
+        prepared = prepareImportedDocument(raw, { mode: "copy" });
+        if (taken.includes(prepared.document.meta.name)) {
+          const name = await askImportName(uniqueProjectName(prepared.document.meta.name, taken), taken);
+          if (!name) { setMessage("已取消导入"); return; }
+          prepared = prepareImportedDocument(raw, { mode: "copy", name });
+        }
+      }
     } else if (conflict?.kind === "name") {
-      // 只是重名：内容是另一个项目，导入安全，但要让用户确认改后的名字。
-      const name = conflict.suggestedName ?? probe.document.meta.name;
-      const choice = await askChoice({
-        title: "项目名称已被占用",
-        description: `本地已有项目「${conflict.projectName}」。导入的文件会以「${name}」存成一个新项目，原有项目不受影响。`,
-        options: [{ value: "rename", label: `以「${name}」导入` }],
-      });
-      if (choice === null) { setMessage("已取消导入"); return; }
+      // 只是重名：内容是另一个项目，导入安全，但要确认改后的名字。
+      const name = await askImportName(conflict.suggestedName ?? probe.document.meta.name, taken);
+      if (!name) { setMessage("已取消导入"); return; }
       prepared = prepareImportedDocument(raw, { mode: "copy", name });
     }
     if (prepared.mode === "replace") await repository.replaceProject(prepared.document.id, prepared.document);
@@ -690,6 +721,55 @@ function App() {
     // 文档里带着资源元数据，字节却不会跟着 JSON 走，所以导入后要逐份核对。
     const missing = await findMissingAssets(repository, prepared.document);
     setMessage(`项目已导入${mode}${upgrade}${missingAssetNotice(missing)}`);
+  };
+  /**
+   * 批量导入：一次导入多个文件。
+   *
+   * 批量场景下一律按新项目导入，**不覆盖**任何现有项目——逐个弹窗问"要不要覆盖"
+   * 既烦又危险。名字由程序先去重，用户可以在确认表格里逐个改名。
+   */
+  const importBatch = async (files: File[]) => {
+    const existing = await repository.listProjects();
+    const taken = existing.map(item => item.name);
+    const sources: BatchImportSource[] = [];
+    const failures: BatchImportFailure[] = [];
+    for (const file of files) {
+      const parsed = readImportSource(file.name, await file.text());
+      if ("reason" in parsed) failures.push(parsed);
+      else sources.push(parsed);
+    }
+    const planned = planBatchImport(sources, existing);
+    failures.push(...planned.failures);
+    if (!planned.plans.length) {
+      setMessage(failures.length ? `没有可导入的文件：${failures[0]?.reason ?? "文件格式不对"}` : "没有可导入的文件");
+      return;
+    }
+    const values = await askForm({
+      title: `导入 ${planned.plans.length} 个项目`,
+      description: "确认每个项目的名字；重名的已经自动加过编号，可以直接改成你想要的名字。",
+      fields: planned.plans.map((plan, index) => ({ key: `name:${index}`, label: plan.fileName, defaultValue: plan.name })),
+      validate: next => validateBatchNames(planned.plans.map((_, index) => next[`name:${index}`] ?? ""), taken),
+    });
+    if (!values) { setMessage("已取消导入"); return; }
+    let missingAssets = 0;
+    for (const [index, plan] of planned.plans.entries()) {
+      const name = values[`name:${index}`]?.trim() || plan.name;
+      const document = { ...plan.document, meta: { ...plan.document.meta, name } };
+      await repository.saveSnapshot(document);
+      // 资源字节不会跟着 JSON 走，逐个核对有没有缺图。
+      const missing = await findMissingAssets(repository, document);
+      if (missing.length) missingAssets += missing.length;
+    }
+    setProjects(await repository.listProjects());
+    const imported = planned.plans.length;
+    const skipped = failures.length ? `，${failures.length} 个文件没导入` : "";
+    const missingNotice = missingAssets ? `，${missingAssets} 个图片资源缺失` : "";
+    setMessage(`已导入 ${imported} 个项目${skipped}${missingNotice}`);
+  };
+  const importJsonFiles = (files: File[]) => void run(async () => {
+    if (!files.length) return;
+    if (files.length === 1) await importSingle(files[0]);
+    else await importBatch(files);
   });
   const saveAiSettings = (next: AiSettings) => {
     writeAiSettings(next);
@@ -1037,9 +1117,9 @@ function App() {
         <Tooltip label="导出 SVG"><button className="icon-only" aria-label="导出 SVG" disabled={busy} onClick={exportSvg}><Icon name="exportSvg" /></button></Tooltip>
         <Tooltip label="导出 PNG"><button className="icon-only" aria-label="导出 PNG" disabled={busy} onClick={exportPng}><Icon name="exportPng" /></button></Tooltip>
         <Tooltip label="导出 JSON"><button className="icon-only" aria-label="导出 JSON" disabled={busy} onClick={exportJson}><Icon name="exportJson" /></button></Tooltip>
-        <Tooltip label="导入 JSON"><button className="icon-only" aria-label="导入 JSON" disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" /></button></Tooltip>
+        <Tooltip label="导入 JSON（可多选）"><button className="icon-only" aria-label="导入 JSON" disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" /></button></Tooltip>
       </div>
-      <input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" onChange={event => { const file = event.target.files?.[0]; if (file) importJson(file); event.target.value = ""; }} />
+      <input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" multiple onChange={event => { const files = [...(event.target.files ?? [])]; event.target.value = ""; if (files.length) importJsonFiles(files); }} />
       <span className="toolbar-separator" aria-hidden="true" />
       <Tooltip label="删除当前项目"><button className="icon-only header-danger" aria-label="删除当前项目" disabled={busy} onClick={deleteCurrentProject}><Icon name="trash" /></button></Tooltip>
       <span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span>

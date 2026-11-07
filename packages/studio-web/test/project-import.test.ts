@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDocument } from "@ufira/design-schema";
-import { detectImportConflict, prepareImportedDocument, uniqueProjectName } from "../src/project-import";
+import {
+  detectImportConflict,
+  planBatchImport,
+  prepareImportedDocument,
+  readImportSource,
+  uniqueProjectName,
+  validateBatchNames,
+  validateImportName,
+} from "../src/project-import";
 
 test("validates and isolates imported documents as new projects", () => {
   const source = createDocument("project:source", "Source", "page:1");
@@ -121,4 +129,84 @@ test("a previously imported copy collides by its stored name, not the source nam
   ]);
   assert.equal(conflict?.kind, "name");
   assert.equal(conflict?.suggestedName, "首页（导入）（2）");
+});
+
+test("a user-provided name is accepted when it is free", () => {
+  assert.equal(validateImportName("  我的新项目 ", ["首页"]), undefined);
+});
+
+test("an empty or duplicate user-provided name is rejected", () => {
+  assert.match(validateImportName("   ", []) ?? "", /请输入项目名称/);
+  assert.match(validateImportName("首页", ["首页"]) ?? "", /重名|已经有同名/);
+  assert.match(validateImportName("首页", [" 首页 "]) ?? "", /重名|已经有同名/);
+});
+
+test("batch names are rejected when they clash with each other or with existing projects", () => {
+  assert.equal(validateBatchNames(["A", "B"], ["首页"]), undefined);
+  assert.match(validateBatchNames(["A", "A"], []) ?? "", /重名/);
+  assert.match(validateBatchNames(["首页"], ["首页"]) ?? "", /重名/);
+  assert.match(validateBatchNames(["A", ""], []) ?? "", /请输入项目名称/);
+});
+
+test("a malformed file becomes a failure instead of breaking the whole batch", () => {
+  const parsed = readImportSource("broken.json", "{ 不是 json");
+  assert.ok(parsed && "reason" in parsed);
+  assert.match(parsed.reason, /不是合法的 JSON/);
+});
+
+test("a valid file becomes a batch source with its raw content", () => {
+  const source = createDocument("project:1", "首页", "page:1");
+  const parsed = readImportSource("ok.json", JSON.stringify(source));
+  assert.ok(parsed && "raw" in parsed);
+  assert.equal(parsed.fileName, "ok.json");
+});
+
+test("a batch import plans one new project per file and never overwrites", () => {
+  const first = createDocument("project:1", "首页", "page:1");
+  const second = createDocument("project:2", "详情页", "page:1");
+  const result = planBatchImport(
+    [{ fileName: "a.json", raw: first }, { fileName: "b.json", raw: second }],
+    [{ id: "project:9", name: "其他" }],
+  );
+
+  assert.equal(result.failures.length, 0);
+  assert.equal(result.plans.length, 2);
+  for (const plan of result.plans) {
+    assert.notEqual(plan.document.id, plan.sourceId, "批量导入必须换新 id，不能覆盖原项目");
+    assert.equal(plan.document.revision, 0);
+  }
+  assert.deepEqual(result.plans.map(plan => plan.name), ["首页（导入）", "详情页（导入）"]);
+});
+
+test("a batch import de-duplicates names against existing projects and within the batch", () => {
+  const first = createDocument("project:1", "首页", "page:1");
+  const second = createDocument("project:2", "首页", "page:1");
+  const result = planBatchImport(
+    [{ fileName: "a.json", raw: first }, { fileName: "b.json", raw: second }],
+    [{ id: "project:9", name: "首页（导入）" }],
+  );
+
+  assert.deepEqual(result.plans.map(plan => plan.name), ["首页（导入）（2）", "首页（导入）（3）"]);
+  assert.equal(result.plans[0]?.renamed, true);
+});
+
+test("a batch import reports the files it cannot read", () => {
+  const good = createDocument("project:1", "首页", "page:1");
+  const result = planBatchImport(
+    [{ fileName: "good.json", raw: good }, { fileName: "bad.json", raw: { id: "broken" } }],
+    [],
+  );
+
+  assert.equal(result.plans.length, 1);
+  assert.equal(result.failures.length, 1);
+  assert.equal(result.failures[0]?.fileName, "bad.json");
+  assert.match(result.failures[0]?.reason ?? "", /schemaVersion/);
+});
+
+test("a batch import flags a file that is another version of an existing project", () => {
+  const source = createDocument("project:1", "首页", "page:1");
+  const result = planBatchImport([{ fileName: "a.json", raw: source }], [{ id: "project:1", name: "首页" }]);
+
+  assert.equal(result.plans[0]?.conflict?.kind, "id");
+  assert.equal(result.plans[0]?.document.id !== "project:1", true);
 });

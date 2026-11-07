@@ -18,6 +18,7 @@ let teardown: () => void;
 interface DialogApi {
   confirm(request: { title: string; description?: string; confirmLabel?: string; cancelLabel?: string; destructive?: boolean }): Promise<boolean>;
   choice(request: { title: string; description?: string; options: { value: string; label: string; destructive?: boolean }[]; cancelLabel?: string }): Promise<string | null>;
+  form(request: { title: string; description?: string; fields: { key: string; label: string; defaultValue?: string }[]; validate?: (values: Record<string, string>) => string | undefined }): Promise<Record<string, string> | null>;
 }
 
 let api: DialogApi;
@@ -71,6 +72,7 @@ function Harness() {
   api = {
     confirm: dialogs.useConfirm(),
     choice: dialogs.useChoice?.(),
+    form: dialogs.useForm?.(),
   } as DialogApi;
   return null;
 }
@@ -150,4 +152,42 @@ test("三选一弹窗点「取消」返回 null", async () => {
   await tick();
   click("取消");
   assert.equal(await withTimeout(pending, "三选一弹窗"), null);
+});
+
+test("表单弹窗返回各字段的值", async () => {
+  mount();
+  let pending!: Promise<Record<string, string> | null>;
+  react.act(() => {
+    pending = api.form({
+      title: "导入 2 个项目",
+      fields: [
+        { key: "name:0", label: "a.json", defaultValue: "首页" },
+        { key: "name:1", label: "b.json", defaultValue: "详情页" },
+      ],
+    });
+  });
+  await tick();
+  click("确定");
+  const values = await withTimeout(pending, "表单弹窗");
+  assert.deepEqual(values, { "name:0": "首页", "name:1": "详情页" });
+});
+
+test("表单弹窗校验不通过时不提交", async () => {
+  mount();
+  let pending!: Promise<Record<string, string> | null>;
+  let settled = false;
+  react.act(() => {
+    pending = api.form({
+      title: "导入 1 个项目",
+      fields: [{ key: "name:0", label: "a.json", defaultValue: "首页" }],
+      validate: values => (values["name:0"] === "首页" ? "已经有同名项目了" : undefined),
+    }).then(value => { settled = true; return value; });
+  });
+  await tick();
+  click("确定");
+  await tick();
+  assert.equal(settled, false, "校验不通过时弹窗不应关闭");
+  assert.ok(dom.window.document.querySelector(".dialog-error"), "应该显示错误文案");
+  click("取消");
+  assert.equal(await withTimeout(pending, "表单弹窗"), null);
 });
