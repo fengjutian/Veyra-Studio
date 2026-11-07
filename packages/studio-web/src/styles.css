@@ -17,6 +17,7 @@ button.icon-only{padding:5px;min-width:26px}
 .dialog-description{margin:0;font-size:12px;color:#98a2b3;line-height:1.5}
 .dialog-description-empty{display:none}
 .dialog-field{display:grid;gap:6px}
+.dialog-form-fields{display:grid;gap:10px;max-height:min(50vh,320px);overflow:auto;padding-right:2px}
 .dialog-field-label{font-size:11px;color:#98a2b3}
 .dialog-input{width:100%;border:1px solid #363d4b;border-radius:7px;background:#111318;color:#fff;padding:8px;font-size:12px}
 .dialog-input:focus{outline:none;border-color:#8b5cf6}

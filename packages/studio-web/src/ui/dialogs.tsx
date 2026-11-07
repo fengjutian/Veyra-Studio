@@ -52,16 +52,38 @@ export interface ChoiceRequest {
   cancelLabel?: string;
 }
 
+/** 表单弹窗里的一个字段。 */
+export interface FormField {
+  /** 提交时返回的键。 */
+  key: string;
+  label: string;
+  defaultValue?: string;
+  placeholder?: string;
+}
+
+export interface FormRequest {
+  title: string;
+  description?: string;
+  fields: FormField[];
+  confirmLabel?: string;
+  cancelLabel?: string;
+  /** 返回错误文案表示校验不通过；返回 undefined 表示通过。 */
+  validate?: (values: Record<string, string>) => string | undefined;
+}
+
 type Pending =
   | { kind: "prompt"; request: PromptRequest }
   | { kind: "confirm"; request: ConfirmRequest }
-  | { kind: "choice"; request: ChoiceRequest };
+  | { kind: "choice"; request: ChoiceRequest }
+  | { kind: "form"; request: FormRequest };
 
 interface DialogApi {
   prompt(request: PromptRequest): Promise<string | null>;
   confirm(request: ConfirmRequest): Promise<boolean>;
   /** 返回被选项的 value；取消或关闭返回 null。 */
   choice(request: ChoiceRequest): Promise<string | null>;
+  /** 返回各字段的值；取消或关闭返回 null。 */
+  form(request: FormRequest): Promise<Record<string, string> | null>;
 }
 
 const DialogContext = createContext<DialogApi | null>(null);
@@ -87,13 +109,23 @@ export function useChoice(): DialogApi["choice"] {
   return api.choice;
 }
 
+/** 打开一个表单弹窗；返回各字段的值，取消或关闭返回 null。 */
+export function useForm(): DialogApi["form"] {
+  const api = useContext(DialogContext);
+  if (!api) throw new Error("useForm 必须在 <DialogProvider> 内使用");
+  return api.form;
+}
+
 export function DialogProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Pending | null>(null);
   const [draft, setDraft] = useState("");
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [error, setError] = useState<string>();
   const inputRef = useRef<HTMLInputElement>(null);
   // resolve 存在 ref 里：setState 的 updater 可能是不可信的副作用位置（StrictMode 会调用两次）。
   const resolveRef = useRef<((value: string | null | boolean) => void) | null>(null);
+  // 表单弹窗要一次拿到整个对象，用独立的 resolve 通道，避免和标量通道串味。
+  const formResolveRef = useRef<((value: Record<string, string> | null) => void) | null>(null);
 
   const prompt = useCallback((request: PromptRequest) => new Promise<string | null>(resolve => {
     resolveRef.current = resolve as (value: string | null | boolean) => void;
@@ -112,11 +144,26 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     setPending({ kind: "choice", request });
   }), []);
 
-  const api = useMemo<DialogApi>(() => ({ prompt, confirm, choice }), [prompt, confirm, choice]);
+  const form = useCallback((request: FormRequest) => new Promise<Record<string, string> | null>(resolve => {
+    formResolveRef.current = resolve;
+    setFormValues(Object.fromEntries(request.fields.map(field => [field.key, field.defaultValue ?? ""])));
+    setError(undefined);
+    setPending({ kind: "form", request });
+  }), []);
+
+  const api = useMemo<DialogApi>(() => ({ prompt, confirm, choice, form }), [prompt, confirm, choice, form]);
 
   const settle = (value: string | null | boolean) => {
     const resolve = resolveRef.current;
     resolveRef.current = null;
+    setPending(null);
+    setError(undefined);
+    resolve?.(value);
+  };
+
+  const settleForm = (value: Record<string, string> | null) => {
+    const resolve = formResolveRef.current;
+    formResolveRef.current = null;
     setPending(null);
     setError(undefined);
     resolve?.(value);
@@ -133,9 +180,21 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     settle(draft);
   };
 
+  const submitForm = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!pending || pending.kind !== "form") return;
+    const message = pending.request.validate?.(formValues);
+    if (message) {
+      setError(message);
+      return;
+    }
+    settleForm(formValues);
+  };
+
   const promptRequest = pending?.kind === "prompt" ? pending.request : undefined;
   const confirmRequest = pending?.kind === "confirm" ? pending.request : undefined;
   const choiceRequest = pending?.kind === "choice" ? pending.request : undefined;
+  const formRequest = pending?.kind === "form" ? pending.request : undefined;
 
   return (
     <DialogContext.Provider value={api}>
@@ -247,6 +306,54 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           </AlertDialogPrimitive.Content>
         </AlertDialogPrimitive.Portal>
       </AlertDialogPrimitive.Root>
+
+      <DialogPrimitive.Root
+        open={Boolean(formRequest)}
+        onOpenChange={open => { if (!open) settleForm(null); }}
+      >
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="dialog-overlay" />
+          <DialogPrimitive.Content
+            className="dialog-content"
+            onOpenAutoFocus={event => {
+              event.preventDefault();
+              inputRef.current?.focus();
+              inputRef.current?.select();
+            }}
+          >
+            <DialogPrimitive.Title className="dialog-title">
+              {formRequest?.title ?? ""}
+            </DialogPrimitive.Title>
+            {formRequest?.description
+              ? <DialogPrimitive.Description className="dialog-description">{formRequest.description}</DialogPrimitive.Description>
+              : <DialogPrimitive.Description className="dialog-description dialog-description-empty" />}
+            <form onSubmit={submitForm}>
+              <div className="dialog-form-fields">
+                {formRequest?.fields.map((field, index) => (
+                  <label className="dialog-field" key={field.key}>
+                    <span className="dialog-field-label">{field.label}</span>
+                    <input
+                      ref={index === 0 ? inputRef : undefined}
+                      className="dialog-input"
+                      value={formValues[field.key] ?? ""}
+                      placeholder={field.placeholder}
+                      onChange={event => {
+                        setFormValues(current => ({ ...current, [field.key]: event.target.value }));
+                        setError(undefined);
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+              {error ? <p className="dialog-error" role="alert">{error}</p> : null}
+              <div className="dialog-actions">
+                <button type="button" onClick={() => settleForm(null)}>{formRequest?.cancelLabel ?? "取消"}</button>
+                <button type="submit" className="dialog-primary">{formRequest?.confirmLabel ?? "确定"}</button>
+              </div>
+            </form>
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </DialogContext.Provider>
   );
 }
