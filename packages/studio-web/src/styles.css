@@ -97,6 +97,18 @@ button.icon-only{padding:5px;min-width:26px}
 .storage-advice-critical{color:#ff9b9b}
 .storage-actions{display:flex;gap:6px}
 .storage-actions button{padding:5px 8px;font-size:11px}
+.storage-subtitle{margin:4px 0 0;font-size:11px;font-weight:600;color:#98a2b3;text-transform:none}
+.storage-project-list{display:grid;gap:6px}
+.storage-project{display:grid;gap:3px;padding:6px 8px;border:1px solid #2b303b;border-radius:6px;background:#171a21}
+.storage-project-current{border-color:#3f6ea8}
+.storage-project-head{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.storage-project-name{color:#e7e9ee;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.storage-project-total{color:#c8ccd6;font-variant-numeric:tabular-nums}
+.storage-project-breakdown{display:flex;flex-wrap:wrap;gap:8px;font-size:10px;color:#98a2b3}
+.storage-project-action{justify-self:start;padding:3px 7px;font-size:10px}
+.storage-cleanup-list{display:grid;gap:5px;margin:0;padding:0;list-style:none}
+.storage-cleanup-item{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:#c8ccd6}
+.storage-cleanup-label{flex:1;min-width:0}
 .backup-list{display:grid;gap:6px;margin-bottom:8px}
 .backup-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#c8ccd6}
 .backup-time{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e7e9ee}

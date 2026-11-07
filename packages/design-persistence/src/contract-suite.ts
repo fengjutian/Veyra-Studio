@@ -271,6 +271,41 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
       assert.equal(document.meta.name, "Legacy");
     });
   });
+
+  test(`${name}: 存储占用按项目统计，版本/日志/资源分开算`, async () => {
+    await withRepository(async ({ repository }) => {
+      await repository.saveSnapshot(snapshotAt("project:1", 0, "占用统计"));
+      await repository.saveSnapshot(snapshotAt("project:1", 1, "占用统计"));
+      await repository.appendTransactions([transactionAt("project:1", 1)]);
+      await repository.putAsset("project:1", { hash: ASSET_HASH, bytes: new Uint8Array(64) });
+
+      assert.ok(repository.inspectStorage, "后端应支持存储占用统计");
+      const usage = await repository.inspectStorage!("project:1");
+      assert.equal(usage.projectId, "project:1");
+      assert.equal(usage.projectName, "占用统计");
+      assert.ok(usage.snapshotBytes > 0, "快照应占空间");
+      assert.ok(usage.journalBytes > 0, "事务日志应占空间");
+      assert.equal(usage.assetBytes, 64);
+      assert.equal(usage.totalBytes, usage.snapshotBytes + usage.journalBytes + usage.assetBytes);
+      assert.equal(usage.assetCount, 1);
+    });
+  });
+
+  test(`${name}: 裁历史版本只保留指定份数，当前版本不动`, async () => {
+    await withRepository(async ({ repository }) => {
+      for (let revision = 0; revision <= 4; revision += 1) {
+        await repository.saveSnapshot(snapshotAt("project:1", revision, `v${revision}`));
+      }
+      assert.ok(repository.trimSnapshots, "后端应支持裁历史版本");
+      const removed = await repository.trimSnapshots!("project:1", 2);
+      assert.ok(removed > 0, "应删掉多余的历史版本");
+
+      const snapshots = await repository.listSnapshots("project:1");
+      assert.ok(snapshots.length <= 3, `裁剪后最多剩 3 份，实际 ${snapshots.length}`);
+      assert.equal(snapshots[0]?.revision, 4, "当前版本必须保留");
+      assert.equal(snapshots[0]?.current, true);
+    });
+  });
 }
 
 /** 造一份停在某个修订号上的文档，用来模拟历史版本。 */
@@ -280,6 +315,22 @@ function snapshotAt(id: string, revision: number, name: string): DesignDocument 
   document.meta.updatedAt = new Date(Date.UTC(2026, 10, 5, 0, 0, revision)).toISOString();
   return document;
 }
+
+/** 造一条已提交的事务，用来做日志占用的统计。 */
+function transactionAt(documentId: string, revision: number): TransactionEntry {
+  return {
+    commandId: `cmd:${revision}`,
+    documentId,
+    revision,
+    committedAt: new Date(Date.UTC(2026, 10, 5, 0, 0, revision)).toISOString(),
+    actor: { type: "human", id: "user:1" },
+    commands: [{ type: "token.upsert", payload: { name: `color.${revision}`, token: { type: "color", value: "#3366ff" } } }],
+    warnings: [],
+  };
+}
+
+/** 64 字节零数组的哈希；资源写入要校验哈希，所以必须是真哈希。 */
+const ASSET_HASH = createHash("sha256").update(new Uint8Array(64)).digest("hex");
 
 /** 生成一份 v1 文档，供各后端播种旧数据。 */
 export function legacyDocumentPayload(id = "project:1"): Record<string, unknown> {
