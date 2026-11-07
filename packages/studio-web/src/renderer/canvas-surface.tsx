@@ -4,7 +4,8 @@ import type { ProjectRepository } from "@ufira/design-persistence";
 import { loadAssetUrl } from "../asset-url";
 import { buildScene, type SceneBox, type SceneNode } from "./scene";
 import { cullScene, type CullViewport } from "./culling";
-import { paintMarquee, paintSelectionOverlay } from "./selection-overlay";
+import { paintMarquee, paintSelectionOverlay, paintSnapGuides } from "./selection-overlay";
+import type { SnapGuide } from "./snapping";
 import { selectedBoxes, selectionBounds, type Rect } from "./selection";
 import { applyBoxOverrides } from "./selection-drag";
 import { createCanvas2DRenderer, type SceneRenderer } from "./canvas-renderer";
@@ -34,9 +35,11 @@ export interface CanvasSurfaceProps {
   previewBoxes?: Record<string, SceneBox>;
   /** 框选矩形（场景坐标）。 */
   marquee?: Rect;
+  /** 拖动时的对齐辅助线。 */
+  guides?: SnapGuide[];
 }
 
-export function CanvasSurface({ enabled, repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee }: CanvasSurfaceProps) {
+export function CanvasSurface({ enabled, repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, guides }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
@@ -88,9 +91,10 @@ export function CanvasSurface({ enabled, repository, projectId, document, pageId
         if (marquee) paintMarquee(context, marquee, { zoom });
         const bounds = selectionBounds(selectedBoxes(paintedScene, selection));
         if (bounds) paintSelectionOverlay(context, bounds, { zoom });
+        if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
       },
     });
-  }, [enabled, paintedScene, zoom, images, width, height, selection, marquee]);
+  }, [enabled, paintedScene, zoom, images, width, height, selection, marquee, guides]);
 
   if (!enabled) return null;
   return <canvas ref={canvasRef} className="canvas-surface" aria-hidden="true" />;

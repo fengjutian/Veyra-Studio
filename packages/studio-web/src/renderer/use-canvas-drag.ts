@@ -4,6 +4,7 @@ import { hitTest, type HitPoint } from "./hit-test";
 import { hitTestHandle, selectedBoxes, selectionBounds, type HandleId } from "./selection";
 import { offsetSubtreeBoxes, resizeBox } from "./selection-drag";
 import { nodesInRect, rectFromPoints } from "./marquee";
+import { snapBox, snapTargetsFromScene, type SnapGuide } from "./snapping";
 import type { Rect } from "./selection";
 import type { SceneBox, SceneNode } from "./scene";
 
@@ -44,12 +45,15 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   previewBoxes: Record<string, SceneBox>;
   /** 框选中的矩形（场景坐标）。 */
   marquee: Rect | undefined;
+  /** 对齐辅助线。 */
+  guides: SnapGuide[];
   handlers: CanvasDragHandlers;
   /** 刚刚完成过拖拽时置 true，用于抑制随后的 click 清除选择。 */
   consumedClick(): boolean;
 } {
   const [previewBoxes, setPreviewBoxes] = useState<Record<string, SceneBox>>({});
   const [marquee, setMarquee] = useState<Rect | undefined>(undefined);
+  const [guides, setGuides] = useState<SnapGuide[]>([]);
   const marqueeRef = useRef<Rect | undefined>(undefined);
   const previewRef = useRef<Record<string, SceneBox>>({});
   const gestureRef = useRef<Gesture | null>(null);
@@ -97,7 +101,15 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     const deltaX = point.x - gesture.start.x;
     const deltaY = point.y - gesture.start.y;
     if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) movedRef.current = true;
-    if (gesture.kind === "move") updatePreview(offsetSubtreeBoxes(options.scene, gesture.ids, deltaX, deltaY));
+    if (gesture.kind === "move") {
+      const bounds = selectionBounds(selectedBoxes(options.scene, gesture.ids));
+      const targets = snapTargetsFromScene(options.scene, gesture.ids);
+      const snap = bounds
+        ? snapBox({ ...bounds, x: bounds.x + deltaX, y: bounds.y + deltaY }, targets, { threshold: 6 / Math.max(options.zoom, 0.01) })
+        : { deltaX: 0, deltaY: 0, guides: [] };
+      setGuides(snap.guides);
+      updatePreview(offsetSubtreeBoxes(options.scene, gesture.ids, deltaX + snap.deltaX, deltaY + snap.deltaY));
+    }
     else if (gesture.kind === "resize") updatePreview({ [gesture.id]: resizeBox(gesture.box, gesture.handle, deltaX, deltaY) });
     else {
       const rect = rectFromPoints(gesture.start, point);
@@ -129,6 +141,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       if (changes.length) options.onCommit(changes);
     }
     updatePreview({});
+    setGuides([]);
     marqueeRef.current = undefined;
     setMarquee(undefined);
   };
@@ -136,6 +149,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   return {
     previewBoxes,
     marquee,
+    guides,
     consumedClick: () => consumedRef.current,
     handlers: {
       onPointerDownCapture,

@@ -55,3 +55,29 @@ export function paintMarquee(context: CanvasRenderingContext2D, rect: { x: numbe
   context.strokeRect(rect.x, rect.y, rect.width, rect.height);
   context.restore();
 }
+
+/** 对齐辅助线：贯穿画布视口的 1px 线（按 zoom 换算保持屏幕宽度）。 */
+export function paintSnapGuides(
+  context: CanvasRenderingContext2D,
+  guides: Array<{ orientation: "vertical" | "horizontal"; position: number }>,
+  extent: { width: number; height: number },
+  options: { color?: string; zoom?: number } = {},
+): void {
+  if (!guides.length) return;
+  const zoom = options.zoom && options.zoom > 0 ? options.zoom : 1;
+  context.save();
+  context.strokeStyle = options.color ?? "#f472b6";
+  context.lineWidth = 1 / zoom;
+  context.beginPath();
+  for (const guide of guides) {
+    if (guide.orientation === "vertical") {
+      context.moveTo(guide.position, 0);
+      context.lineTo(guide.position, extent.height);
+    } else {
+      context.moveTo(0, guide.position);
+      context.lineTo(extent.width, guide.position);
+    }
+  }
+  context.stroke();
+  context.restore();
+}

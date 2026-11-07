@@ -99,13 +99,17 @@
   同时启动、`consumedClick` 抑制拖拽后的误清除选择）。开关 `?selection=drag`：拖动已选
   节点或拖手柄时由 Canvas 接管，提交仍走现有 `node.patch` 事务。
 - 框选：`renderer/marquee.ts`（拖拽矩形归一化、与顶层节点求交）+ Canvas 半透明框选绘制；
-  `?selection=drag` 下空白处拖动即开始框选，松手后直接设置选中集合，空白框选不再依赖
-  Selecto（Selecto 仍装载，属于对比阶段）。
+  `?selection=drag` 下空白处拖动即开始框选，松手后直接设置选中集合。
+- 对齐吸附：`renderer/snapping.ts`（左/中/右、上/中/下对齐线，阈值内取最近，输出位移与
+  辅助线）+ `paintSnapGuides`；拖动时的位移会叠加吸附修正，辅助线随拖动绘制，松手后
+  按吸附后的位置提交。像素基线里也画了两条固定辅助线，覆盖该绘制路径；
+- `?selection=drag` 时不再挂载 `CanvasInteractionLayer`：Moveable/Selecto 整个跳过，
+  选择框、拖拽、缩放、框选全部由 Canvas 接管；默认路径仍然挂载（可随时回退）。
 
 ### 剩余工作
 
 1. 在浏览器里实际跑一段双跑对比与拖拽，确认没有系统性偏差；
-2. 移除 Moveable/Selecto（`?selection=drag` 稳定后；框选已具备替代实现）；
+2. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖（当前由开关切换）；
 3. 移除透明 DOM 节点副本与 `canvas-rendered` 隐藏规则；
 4. 保留 `<textarea>` 文本编辑覆盖层。
 

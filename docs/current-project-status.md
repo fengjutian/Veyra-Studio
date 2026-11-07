@@ -115,7 +115,10 @@
   工作台用 `?selection=overlay` 与 Moveable 并排对比。`?selection=drag` 下由 Canvas 接管
   拖动与单节点缩放：预览盒子覆盖绘制、指针在捕获阶段处理并阻断 Moveable，松手后按现有
   `node.patch` 事务提交；空白处拖动可框选（Canvas 绘制选框、与顶层节点求交），
-  松手直接更新选中集合。Moveable/Selecto 仍在页面上，尚未移除。
+  松手直接更新选中集合。`?selection=drag` 下不再挂载 Moveable/Selecto，选择、拖拽、
+  缩放、框选全部由 Canvas 接管；默认路径仍保留旧交互层以便回退。拖动时会按
+  左/中/右、上/中/下对齐线做 6px（按 zoom 换算）吸附并绘制辅助线，松手按吸附后的
+  位置提交。
   场景构建与绘制调用都有单元测试
   （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
   像素验证，也没有做视口裁剪（culling）；

@@ -3,7 +3,7 @@ import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, 
 import { buildScene } from "../src/renderer/scene";
 import { createCanvas2DRenderer } from "../src/renderer/canvas-renderer";
 import { cullScene } from "../src/renderer/culling";
-import { paintSelectionOverlay } from "../src/renderer/selection-overlay";
+import { paintSelectionOverlay, paintSnapGuides } from "../src/renderer/selection-overlay";
 import { selectedBoxes, selectionBounds } from "../src/renderer/selection";
 import { fixtureDocument } from "./fixture";
 
@@ -52,6 +52,8 @@ async function main(): Promise<void> {
     ...options,
     onAfterPaint: context => {
       if (demoSelection) paintSelectionOverlay(context, demoSelection, { zoom: 1 });
+      // 固定两条辅助线，让像素基线也覆盖吸附线的绘制。
+      paintSnapGuides(context, [{ orientation: "vertical", position: 470 }, { orientation: "horizontal", position: 320 }], { width: WIDTH, height: HEIGHT }, { zoom: 1 });
     },
   });
 
