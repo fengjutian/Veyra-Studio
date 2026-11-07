@@ -114,7 +114,8 @@
   缩放后的盒子，`renderer/selection-overlay.ts` 负责轮廓/手柄绘制（随 zoom 保持屏幕尺寸）；
   工作台用 `?selection=overlay` 与 Moveable 并排对比。`?selection=drag` 下由 Canvas 接管
   拖动与单节点缩放：预览盒子覆盖绘制、指针在捕获阶段处理并阻断 Moveable，松手后按现有
-  `node.patch` 事务提交；Moveable 仍在页面上，尚未移除。
+  `node.patch` 事务提交；空白处拖动可框选（Canvas 绘制选框、与顶层节点求交），
+  松手直接更新选中集合。Moveable/Selecto 仍在页面上，尚未移除。
   场景构建与绘制调用都有单元测试
   （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
   像素验证，也没有做视口裁剪（culling）；
