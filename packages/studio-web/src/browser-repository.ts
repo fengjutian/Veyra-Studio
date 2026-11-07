@@ -266,9 +266,13 @@ export class DexieProjectRepository implements ProjectRepository {
   async inspectStorage(projectId: string): Promise<ProjectStorageUsage> {
     const current = await this.database.snapshots.get(projectId);
     const history = await this.database.snapshotHistory.where("projectId").equals(projectId).toArray();
+    const baseline = await this.database.baselines.get(projectId);
     const entries = await this.database.transactions.where("documentId").equals(projectId).toArray();
     const assets = await this.database.assets.where("projectId").equals(projectId).toArray();
-    const snapshotBytes = estimateJsonBytes(current?.document) + history.reduce((sum, record) => sum + estimateJsonBytes(record.document), 0);
+    // 基线也算版本占用：它是一份实实在在存着的文档。
+    const snapshotBytes = estimateJsonBytes(current?.document)
+      + history.reduce((sum, record) => sum + estimateJsonBytes(record.document), 0)
+      + (baseline ? estimateJsonBytes(baseline.document) : 0);
     const journalBytes = entries.reduce((sum, entry) => sum + estimateJsonBytes(entry), 0);
     const assetBytes = assets.reduce((sum, record) => sum + record.bytes.byteLength, 0);
     return {

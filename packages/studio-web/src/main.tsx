@@ -391,6 +391,8 @@ function App() {
     setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined);
     await refreshHistory(id);
     setBackups(await backupStore.list(id));
+    // 存储占用按项目统计：切项目就得跟着换，否则面板上还挂着上一个项目的数字。
+    setStorageUsage(await loadStorageUsage(id));
     const missing = await refreshMissingAssets(snapshot);
     setRecovery(buildRecoveryReport({
       projectId: snapshot.id,
