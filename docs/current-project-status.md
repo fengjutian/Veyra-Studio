@@ -121,7 +121,9 @@
   位置提交。`?selection=canvas` 进一步把 DOM 节点的指针事件关掉：单击/Shift 单击、
   双击文本编辑（在布局盒上覆盖 `<textarea>`，提交走 `text.patch`）与右键菜单都改用
   Canvas 命中；该模式下 DOM 节点副本完全不渲染，画布上只有 `<canvas>` 与按需出现的
-  文本编辑框。默认路径仍渲染旧 DOM 交互层，便于回退。
+  文本编辑框。为了不丢键盘与屏幕阅读器，`?selection=canvas` 同时挂载一个视觉隐藏的
+  `listbox`（按图层顺序、支持上下/Home/End 移动并同步选中、Delete 删除、
+  `aria-selected`/`aria-level`/`aria-disabled`）。默认路径仍渲染旧 DOM 交互层，便于回退。
   场景构建与绘制调用都有单元测试
   （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
   像素验证，也没有做视口裁剪（culling）；

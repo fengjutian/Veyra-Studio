@@ -111,7 +111,11 @@
   - 右键菜单在 DOM 命中为空时回退到 `hitTest`；
   - 文本覆盖层会阻止拖动手势，避免在输入框里拖动节点；
   - DOM 节点副本在这个模式下**完全不渲染**（`{!canvasPointer && page.childIds.map(...)}`），
-    画布上只有一个 `<canvas>` 和按需出现的文本编辑框。
+    画布上只有一个 `<canvas>` 和按需出现的文本编辑框；
+  - 可访问性层：`renderer/a11y-tree.ts`（按图层顺序生成带层级的扁平列表）+ 
+    `renderer/a11y-layer.tsx`（视觉隐藏的 `listbox`，上下箭头/Home/End 移动并同步选中，
+    Delete 删除，`aria-selected`/`aria-level`/`aria-disabled` 齐全），保证纯 Canvas 画布
+    仍然能用键盘和屏幕阅读器操作。
 - `?selection=drag` 时不再挂载 `CanvasInteractionLayer`：Moveable/Selecto 整个跳过，
   选择框、拖拽、缩放、框选全部由 Canvas 接管；默认路径仍然挂载（可随时回退）。
 
@@ -119,7 +123,7 @@
 
 1. 在浏览器里实际跑一段双跑对比与拖拽，确认没有系统性偏差；
 2. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖（当前由开关切换）；
-3. 把 `?selection=canvas` 变成默认（DOM 副本在该模式下已完全不渲染），并删掉旧交互层代码；
+3. 把 `?selection=canvas` 变成默认（DOM 副本已完全不渲染、可访问性列表已就位），并删掉旧交互层代码；
 4. 在浏览器里验证单击/双击/右键/框选/拖拽的组合。
 
 ### 风险与回退
