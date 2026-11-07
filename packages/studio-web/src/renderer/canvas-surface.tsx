@@ -13,12 +13,10 @@ import { createCanvas2DRenderer, type SceneRenderer } from "./canvas-renderer";
 /**
  * Canvas 画布层。
  *
- * 只负责"画"：DOM 里的节点仍然保留，用作命中测试、Moveable/Selecto 的手柄和
- * 文本编辑入口（tldraw 的文本编辑也是 DOM overlay）。这样渲染器替换是渐进的：
- * 画布视觉走 Canvas，交互仍走现有 DOM 层。
+ * 只负责"画"：命中、选择、拖拽都由 Canvas 命中测试与指针手势接管，文本编辑是盖在
+ * 节点位置上的 DOM overlay（tldraw 同样做法）。画布上不再保留 DOM 节点副本。
  */
 export interface CanvasSurfaceProps {
-  enabled: boolean;
   repository: ProjectRepository;
   projectId: string;
   document: DesignDocument;
@@ -39,19 +37,19 @@ export interface CanvasSurfaceProps {
   guides?: SnapGuide[];
 }
 
-export function CanvasSurface({ enabled, repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, guides }: CanvasSurfaceProps) {
+export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, guides }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
   const scene = useMemo(
-    () => (enabled ? cullScene(buildScene(document, pageId, boxes), viewport) : []),
-    [enabled, document, pageId, boxes, viewport],
+    () => cullScene(buildScene(document, pageId, boxes), viewport),
+    [document, pageId, boxes, viewport],
   );
   const paintedScene = useMemo(() => applyBoxOverrides(scene, previewBoxes ?? {}), [scene, previewBoxes]);
   const assetIds = useMemo(() => collectAssetIds(scene), [scene]);
 
   useEffect(() => {
-    if (!enabled || assetIds.length === 0) return;
+    if (assetIds.length === 0) return;
     let cancelled = false;
     void Promise.all(assetIds.map(async assetId => {
       const asset: AssetMetadata | undefined = document.assets[assetId];
@@ -73,10 +71,9 @@ export function CanvasSurface({ enabled, repository, projectId, document, pageId
       });
     });
     return () => { cancelled = true; };
-  }, [enabled, assetIds, document.assets, projectId, repository]);
+  }, [assetIds, document.assets, projectId, repository]);
 
   useEffect(() => {
-    if (!enabled) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     rendererRef.current ??= createCanvas2DRenderer(canvas);
@@ -94,9 +91,8 @@ export function CanvasSurface({ enabled, repository, projectId, document, pageId
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
       },
     });
-  }, [enabled, paintedScene, zoom, images, width, height, selection, marquee, guides]);
+  }, [paintedScene, zoom, images, width, height, selection, marquee, guides]);
 
-  if (!enabled) return null;
   return <canvas ref={canvasRef} className="canvas-surface" aria-hidden="true" />;
 }
 

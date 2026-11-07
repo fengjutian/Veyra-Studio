@@ -98,24 +98,6 @@ function buildTree(props: { onSelect?: () => void; disabled?: boolean }) {
   );
 }
 
-test("resolveContextNodeId returns the closest node id for a hit", () => {
-  const node = dom.window.document.createElement("div");
-  node.dataset.nodeId = "rectangle:1";
-  const child = dom.window.document.createElement("span");
-  node.append(child);
-  assert.equal(menu.resolveContextNodeId(child), "rectangle:1");
-});
-
-test("resolveContextNodeId returns undefined on empty canvas", () => {
-  const canvas = dom.window.document.createElement("div");
-  assert.equal(menu.resolveContextNodeId(canvas), undefined);
-});
-
-test("resolveContextNodeId tolerates a target without closest", () => {
-  assert.equal(menu.resolveContextNodeId({} as unknown as EventTarget), undefined);
-  assert.equal(menu.resolveContextNodeId(null), undefined);
-});
-
 test("a contextmenu event opens the menu", () => {
   paint(buildTree({}));
   assert.equal(dom.window.document.querySelector('[role="menu"]'), null);

@@ -1,24 +1,23 @@
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, resolveRadius, resolveStroke, TEXT_DEFAULTS, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
+import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
 import { planGroup, planUngroup } from "./grouping";
-import { allLocked, canvasSelectable, deletableRoots, editableNodes } from "./selection-policy";
+import { allLocked, deletableRoots, editableNodes } from "./selection-policy";
 import { arrangeNodes, nudgeNodes, nudgeReorder, type Arrangement } from "./node-arrangement";
-import { flattenNodeTrees } from "./node-tree";
 import { detectImportConflict, prepareImportedDocument } from "./project-import";
 import { buildRecoveryReport, missingAssetNotice, recoveryReportFileName, recoveryReportRows, type RecoveryReport } from "./recovery-report";
 import { formatSnapshotTime, restoreConfirmation, restoreSnapshotEnvelope, snapshotRows, type SnapshotRow } from "./snapshot-history";
 import { safeFilename } from "./file-name";
 import { LayerTree } from "./layer-tree";
 import { planReparent, type DropPosition } from "./layer-reorder";
-import { resolveBox, useCanvasLayout, type CanvasLayout } from "./canvas-layout";
+import { useCanvasLayout } from "./canvas-layout";
 import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
 import { collectFontFamilies, prepareFonts } from "./font-loading";
 import { CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
@@ -29,21 +28,19 @@ import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
 import { CanvasSurface } from "./renderer/canvas-surface";
 import { buildScene } from "./renderer/scene";
-import { hitTest } from "./renderer/hit-test";
-import { compareHits, pointFromEvent } from "./renderer/hit-test-compare";
+import { hitTest, pointFromEvent } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
 import { TextEditOverlay } from "./renderer/text-edit-overlay";
 import { CanvasA11yLayer } from "./renderer/a11y-layer";
 import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
-import { commitText, textEditAction } from "./text-edit";
 import { exportPageToPng, downloadDataUrl } from "./png-export";
 import type { ExportDiagnostic } from "@ufira/design-export";
 import { ExportDiagnosticsPanel } from "./export-panel";
 import type { ExportFormat } from "./export-report";
 import { ExportPreviewDialog } from "./export-preview-dialog";
 import { fitPreviewSize, previewTitle, svgPreviewDataUrl, type ExportPreview } from "./export-preview";
-import { assetIdForHash, fitImageBox, imageBackgroundStyle, imageFileError, readImageSize, sha256Hex } from "./assets";
+import { assetIdForHash, fitImageBox, imageFileError, readImageSize, sha256Hex } from "./assets";
 import { assetLabel, formatBytes, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
 import { AssetPanel } from "./asset-panel";
 import { backupRestoreConfirmation, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
@@ -52,18 +49,17 @@ import { HistoryPanel } from "./history-panel";
 import { readStorageEstimate, storagePercent, type StorageEstimate } from "./storage-estimate";
 import { StoragePanel } from "./storage-panel";
 import { inspectorTabs, type InspectorTabId } from "./inspector-tabs";
-import { assetUrlCacheVersion, forgetAssetUrl, loadAssetUrl } from "./asset-url";
+import { forgetAssetUrl } from "./asset-url";
 import { Icon } from "./icons";
 import { DialogProvider, useChoice, useConfirm, usePrompt } from "./ui/dialogs";
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
-import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger, resolveContextNodeId } from "./ui/context-menu";
+import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
 import { AiSettingsPanel } from "./ai-settings-panel";
 import "./styles.css";
 import "./workbench.css";
 
 const PROJECT_ID = "studio:local";
-const CanvasInteractionLayer = lazy(() => import("./canvas-interaction-layer"));
 
 function App() {
   const [project, setProject] = useState<StudioProject>();
@@ -88,19 +84,6 @@ function App() {
   const [zoom, setZoom] = useState(1);
   // 抓手模式与左右面板开合同样只是视图状态。
   const [panMode, setPanMode] = useState(false);
-  // 默认用 Canvas 2D 绘制；加 `?renderer=dom` 回退到旧的 DOM 渲染，便于对比排查。
-  const canvasRenderer = useMemo(() => new URLSearchParams(window.location.search).get("renderer") !== "dom", []);
-  // `?hittest=compare`：Canvas 命中与 DOM 命中同时跑，只记录差异，不改变行为。
-  const hitTestCompare = useMemo(() => new URLSearchParams(window.location.search).get("hittest") === "compare", []);
-  // 画布交互默认全部交给 Canvas：单击选中、拖拽/缩放、框选、双击编辑、选择框。
-  // `?selection=dom` 保留旧的 DOM 交互层（Moveable/Selecto）用于对照排查；
-  // `?renderer=dom` 同时回退到旧的 DOM 绘制，两者一起就是完整的旧路径。
-  const legacyDomSelection = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("selection") === "dom" || params.get("renderer") === "dom";
-  }, []);
-  /** Canvas 交互是否接管画布：默认接管，旧 DOM 路径下让位。 */
-  const canvasSelection = !legacyDomSelection;
   const [canvasEditingId, setCanvasEditingId] = useState<string | null>(null);
   // 可视区域（场景坐标）：滚动 + 缩放变化时更新，Canvas 只画相交的根节点。
   const [canvasViewport, setCanvasViewport] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -263,18 +246,9 @@ function App() {
   }, [syncCanvasViewport]);
   const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch);
   const hitTestScene = useMemo(
-    () => (hitTestCompare || canvasSelection) && document && activePageId ? buildScene(document, activePageId, canvasLayout.boxes) : [],
-    [hitTestCompare, canvasSelection, document, activePageId, canvasLayout.boxes],
+    () => (document && activePageId) ? buildScene(document, activePageId, canvasLayout.boxes) : [],
+    [document, activePageId, canvasLayout.boxes],
   );
-  /** 双跑对比：只告警，不接管选择。 */
-  const compareHitTest = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!hitTestCompare || !canvas) return;
-    const point = pointFromEvent(canvas.getBoundingClientRect(), event.clientX, event.clientY, zoom);
-    const canvasId = hitTest(hitTestScene, point);
-    const domId = (event.target as HTMLElement).closest?.("[data-node-id]")?.getAttribute("data-node-id") ?? undefined;
-    const comparison = compareHits(canvasId, domId);
-    if (!comparison.matches) console.warn("[hittest] canvas/DOM mismatch", comparison, point);
-  };
   // 导出范围：整页用画布尺寸；选区用选中节点的包围盒，并只导出与选中节点相关的分支。
   const exportTarget = useMemo(() => {
     if (exportScope === "selection") {
@@ -310,7 +284,6 @@ function App() {
   // 这个 hook 必须在提前 return 之前调用：加载态渲染的 hook 数量要和项目加载后
   // 完全一致，否则 React 会直接抛「渲染了比上次更多的 hook」，整棵 App 崩掉。
   const canvasDrag = useCanvasDrag({
-    enabled: canvasSelection,
     busy,
     zoom,
     scene: hitTestScene,
@@ -323,7 +296,6 @@ function App() {
 
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[activePageId!]!;
-  const pageNodes = flattenNodeTrees(document, page.childIds);
   const selected = selectedIds.length ? document.nodes[selectedIds.at(-1)!] : undefined;
   const selectedRootIds = copyNodeTrees(document, selectedIds).roots;
   const selectedNodes = selectedRootIds.map(id => document.nodes[id]!).filter(Boolean);
@@ -568,14 +540,13 @@ function App() {
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
   /** 单击选中完全由 Canvas 命中决定。 */
   const selectFromCanvas = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!canvasSelection || canvasDrag.consumedClick()) return;
+    if (canvasDrag.consumedClick()) return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (!hit) setSelectedIds([]);
     else setSelectedIds(current => event.shiftKey ? toggleId(current, hit) : [hit]);
   };
   /** 双击文本节点打开覆盖层编辑。 */
   const editTextAtCanvasPoint = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!canvasSelection) return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (hit && document?.nodes[hit]?.type === "text") {
       setCanvasEditingId(hit);
@@ -848,7 +819,7 @@ function App() {
   const arrangeSelection = (arrangement: Arrangement) => { if (!selectionLocked && selectionSameParent) patchLayouts(arrangeNodes(selectedNodes, arrangement)); };
   // 右键命中节点时沿用 Excalidraw 的行为：未选中的节点被选中，已在选区内的则保留原多选。
   const handleCanvasContextMenu = (event: React.MouseEvent) => {
-    const nodeId = resolveContextNodeId(event.target) ?? (canvasSelection ? hitTest(hitTestScene, canvasPointOf(event)) : undefined);
+    const nodeId = hitTest(hitTestScene, canvasPointOf(event));
     if (!nodeId) { setContextIds([]); return; }
     if (selectedIds.includes(nodeId)) { setContextIds(selectedIds); return; }
     setSelectedIds([nodeId]);
@@ -1109,10 +1080,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${canvasRenderer ? " canvas-rendered" : ""}${canvasSelection ? " canvas-pointer" : ""}${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClickCapture={compareHitTest} {...canvasDrag.handlers} onClick={canvasSelection ? selectFromCanvas : event => event.target === event.currentTarget && !canvasDrag.consumedClick() && setSelectedIds([])} onDoubleClick={editTextAtCanvasPoint}>
-                <CanvasSurface enabled={canvasRenderer} repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={canvasSelection ? selectedIds : undefined} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} guides={canvasDrag.guides} />{canvasSelection && canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}{canvasSelection && <CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />}{legacyDomSelection && page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}{legacyDomSelection && <Suspense fallback={null}>
-                  <CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={ids => setSelectedIds(ids.filter(id => { const node = document.nodes[id]; return !node || canvasSelectable(node); }))} onCommit={patchLayouts} />
-                </Suspense>}
+              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""}`} style={{ zoom }} {...canvasDrag.handlers} onClick={selectFromCanvas} onDoubleClick={editTextAtCanvasPoint}>
+                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
             </div>
           </ContextMenuTrigger>
@@ -1323,98 +1292,6 @@ function App() {
   </div>;
 }
 
-type AssetUrlState = { url?: string; state: "idle" | "loading" | "ready" | "missing" };
-
-/**
- * 把一个图片资源解析成可以直接画的对象 URL。
- *
- * 解析走 {@link loadAssetUrl} 的进程内缓存，所以同一张图被多个节点引用时只读
- * 一次盘；`state` 让画布能区分"还在加载"和"资源确实缺失"，后者要画占位框。
- */
-function useAssetUrl(projectId: string, asset: AssetMetadata | undefined): AssetUrlState {
-  const [value, setValue] = useState<AssetUrlState>({ state: asset ? "loading" : "idle" });
-  const hash = asset?.hash;
-  // 资源缺失是会被修复的（用户重新插入同一张图）。缓存版本变了就重新读一次，
-  // 否则已经渲染过的节点会一直停在"资源缺失"上。
-  const cacheVersion = assetUrlCacheVersion();
-  useEffect(() => {
-    if (!asset) { setValue({ state: "idle" }); return; }
-    let cancelled = false;
-    setValue({ state: "loading" });
-    void loadAssetUrl(repository, projectId, asset).then(url => {
-      if (!cancelled) setValue(url ? { url, state: "ready" } : { state: "missing" });
-    });
-    return () => { cancelled = true; };
-  }, [projectId, hash, cacheVersion]);
-  return value;
-}
-
-function CanvasNode({ projectId, document, node, selectedIds, layout, onSelect, onCommitText }: { projectId: string; document: DesignDocument; node: DesignNode; selectedIds: string[]; layout: CanvasLayout; onSelect(id: string, event: { shiftKey: boolean }): void; onCommitText(id: string, text: string): void }) {
-  const box = resolveBox(layout, node);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(node.type === "text" ? node.text : "");
-  // Guards a single edit session: committing and cancelling both end it, so a
-  // late blur event cannot commit the same text twice.
-  const editState = useRef<"idle" | "editing" | "done">("idle");
-  const asset = node.type === "image" ? document.assets[node.assetId] : undefined;
-  const assetUrl = useAssetUrl(projectId, asset);
-  const style: React.CSSProperties = {
-    display: node.visible ? "flex" : "none",
-    left: box.x,
-    top: box.y,
-    width: box.width,
-    height: box.height,
-    background: resolveFill(document, node),
-    borderRadius: node.type === "ellipse" ? "50%" : resolveRadius(document, node),
-    opacity: node.appearance.opacity,
-  };
-  const stroke = resolveStroke(document, node);
-  if (stroke || node.bindings?.stroke) style.border = `1px solid ${stroke ?? "transparent"}`;
-  // 锁定节点在画布上不接收指针事件：点击穿透到它下面/父级，只能从图层面板选中。
-  if (node.locked) style.pointerEvents = "none";
-  if (node.type === "image") {
-    if (assetUrl.url) {
-      style.backgroundImage = `url("${assetUrl.url}")`;
-      Object.assign(style, imageBackgroundStyle(node.fit));
-    } else {
-      // 资源缺失时给出能看懂的占位，而不是一个空白框。
-      style.background = "#f1f5f9";
-      style.border = "1px dashed #94a3b8";
-      style.color = "#64748b";
-      style.fontSize = 12;
-      style.alignItems = "center";
-      style.justifyContent = "center";
-    }
-  }
-  if (node.type === "text") {
-    style.fontFamily = node.fontFamily;
-    style.fontSize = node.fontSize;
-    style.lineHeight = `${node.lineHeight}px`;
-    style.fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
-    style.fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
-    style.letterSpacing = `${node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing}px`;
-    style.textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
-    style.alignItems = "flex-start";
-    style.justifyContent = "flex-start";
-    style.whiteSpace = "pre-wrap";
-  }
-  const startEditing = () => {
-    if (node.type !== "text" || node.locked) return;
-    editState.current = "editing";
-    setDraft(node.text);
-    setEditing(true);
-  };
-  const finishEditing = (commit: boolean) => {
-    if (editState.current !== "editing") return;
-    editState.current = "done";
-    setEditing(false);
-    if (!commit || node.type !== "text") return;
-    const next = commitText(node.text, draft);
-    if (next !== undefined) onCommitText(node.id, next);
-  };
-  return <div role="button" tabIndex={0} aria-label={node.type === "image" ? node.name : undefined} data-node-id={node.id} className={`${selectedIds.includes(node.id) ? "node selected" : "node"}${node.locked ? " locked" : ""}${node.type === "image" && !assetUrl.url ? " node-image-missing" : ""}`} style={style} onClick={event => { event.stopPropagation(); onSelect(node.id, event); }} onDoubleClick={event => { event.stopPropagation(); startEditing(); }} onKeyDown={event => { if (event.key === "Enter") onSelect(node.id, event); }}>{editing && node.type === "text" ? <textarea className="canvas-text-editor" autoFocus value={draft} onChange={event => setDraft(event.target.value)} onBlur={() => finishEditing(true)} onKeyDown={event => { const action = textEditAction(event.key, event.shiftKey); if (action === "cancel") { event.preventDefault(); event.stopPropagation(); finishEditing(false); } else if (action === "commit") { event.preventDefault(); finishEditing(true); } }} /> : node.type === "image" && assetUrl.url ? null : <span style={{ pointerEvents: "none", ...(node.type === "text" ? { width: "100%" } : {}) }}>{node.type === "text" ? node.text : node.type === "image" ? (assetUrl.state === "loading" ? "载入图片…" : "图片资源缺失") : node.name}</span>}{node.childIds.map(id => <CanvasNode key={id} projectId={projectId} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={layout} onSelect={onSelect} onCommitText={onCommitText} />)}</div>;
-}
-
 function Field({ label, value, type = "text", onCommit }: { label: string; value: string | number; type?: string; onCommit(value: string): void }) {
   const [draft, setDraft] = useState(String(value));
   useEffect(() => setDraft(String(value)), [value]);
@@ -1501,8 +1378,6 @@ function autosaveTitle(status: AutosaveStatus): string {
 }
 
 function toggleId(ids: string[], id: string): string[] { return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]; }
-
-function resolveFill(document: DesignDocument, node: DesignNode): string { const token = node.bindings?.fill ? document.tokens[node.bindings.fill] : undefined; return token?.type === "color" ? String(token.value) : node.appearance.fill ?? "transparent"; }
 
 function validateNumber(value: string): string | undefined {
   const parsed = Number(value.trim());

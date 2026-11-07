@@ -4,9 +4,8 @@ import type { SceneNode } from "./scene";
 /**
  * 画布命中测试。
  *
- * 语义与现有 DOM 实现一致：返回**最深**的命中节点（DOM 侧是 `closest("[data-node-id]")`），
- * 并且按绘制顺序取最上层（后画的在上）。这里不处理锁定（属于选择策略），只回答
- * "这个点落在哪个节点上"。
+ * 语义与原先的 DOM 实现一致：返回**最深**的命中节点，并且按绘制顺序取最上层
+ * （后画的在上）。这里不处理锁定（属于选择策略），只回答"这个点落在哪个节点上"。
  *
  * 命中判定对椭圆做精确判断（DOM 里 `border-radius: 50%` 同样会让角落不可点），
  * 圆角矩形暂按矩形处理——圆角只在四角几个像素上有差异，后续需要时再补。
@@ -53,4 +52,15 @@ export function containsPoint(node: SceneNode, point: HitPoint): boolean {
     return dx * dx + dy * dy <= 1;
   }
   return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height;
+}
+
+/**
+ * 把指针事件换算成场景坐标。
+ *
+ * `rect` 是画布元素的布局矩形（已被 CSS zoom 放大），所以除以 zoom 得到 960×680
+ * 场景里的坐标。
+ */
+export function pointFromEvent(rect: { left: number; top: number }, clientX: number, clientY: number, zoom: number): HitPoint {
+  const scale = zoom > 0 ? zoom : 1;
+  return { x: (clientX - rect.left) / scale, y: (clientY - rect.top) / scale };
 }

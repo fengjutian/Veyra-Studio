@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { containsPoint, hitTest, hitTestStack } from "../src/renderer/hit-test";
+import { containsPoint, hitTest, hitTestStack, pointFromEvent } from "../src/renderer/hit-test";
 import type { SceneNode } from "../src/renderer/scene";
 
 function node(id: string, x: number, y: number, width = 100, height = 100, overrides: Partial<SceneNode> = {}): SceneNode {
@@ -59,4 +59,12 @@ test("children outside a clipped parent are not hittable", () => {
 test("text leaves are hittable and return their own id", () => {
   const text = node("text", 10, 10, 120, 24, { type: "text" });
   assert.equal(hitTest([text], { x: 20, y: 20 }), "text");
+});
+
+test("pointFromEvent converts client coordinates through the zoom transform", () => {
+  const rect = { left: 100, top: 50 };
+  assert.deepEqual(pointFromEvent(rect, 200, 150, 1), { x: 100, y: 100 });
+  assert.deepEqual(pointFromEvent(rect, 300, 250, 2), { x: 100, y: 100 });
+  // zoom 为 0 或非法时按 1 处理，避免除零。
+  assert.deepEqual(pointFromEvent(rect, 120, 70, 0), { x: 20, y: 20 });
 });

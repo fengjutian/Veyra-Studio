@@ -32,8 +32,6 @@
     "lucide-react": "^1.69.0",
     "react": "latest",
     "react-dom": "latest",
-    "react-moveable": "^0.56.0",
-    "react-selecto": "^1.26.3",
     "vite": "latest"
   },
   "devDependencies": {

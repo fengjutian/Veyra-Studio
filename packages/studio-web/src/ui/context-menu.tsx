@@ -11,19 +11,6 @@ import type { MouseEvent, ReactElement, ReactNode } from "react";
 import * as RadixContextMenu from "@radix-ui/react-context-menu";
 import { Icon, type IconName } from "../icons";
 
-/**
- * 从右键事件的 target 反查命中的画布节点 id。
- *
- * 画布节点的根元素带 `data-node-id`，用 `closest` 向上找到最近的那个祖先；
- * 点在空白处返回 undefined。用 duck typing 而不是 `instanceof Element`，
- * 这样这个纯函数在没有 DOM 的测试环境里也能安全调用。
- */
-export function resolveContextNodeId(target: EventTarget | null): string | undefined {
-  const element = target as Element | null;
-  if (!element || typeof element.closest !== "function") return undefined;
-  return element.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
-}
-
 export function ContextMenuRoot({ children }: { children: ReactNode }) {
   return <RadixContextMenu.Root>{children}</RadixContextMenu.Root>;
 }

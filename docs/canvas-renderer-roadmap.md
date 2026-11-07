@@ -10,10 +10,11 @@
 - `packages/studio-web/src/renderer/scene.ts`：把文档 + 布局盒压成纯数据的 `SceneNode` 树；
 - `packages/studio-web/src/renderer/canvas-renderer.ts`：Canvas 2D 绘制（`zoom × dpr` 分辨率、圆角、裁剪、文本换行、图片 fit）；
 - `packages/studio-web/src/renderer/canvas-surface.tsx`：React 挂载、图片按需加载、随文档/缩放重绘；
-- 交互层已默认交给 Canvas（命中、选择框、拖拽/缩放、框选、文本编辑），DOM 节点副本默认不渲染；
-- 逃生开关：`?selection=dom`（旧 DOM 交互层）/ `?renderer=dom`（旧 DOM 绘制）。
+- 交互层完全由 Canvas 承担（命中、选择框、拖拽/缩放、框选、文本编辑），**画布上不再有任何 DOM 节点副本**；
+- 旧的 DOM 交互层（Moveable/Selecto）与 DOM 绘制回退已删除，`react-moveable` /
+  `react-selecto` 依赖也一并移除。
 
-这是 tldraw / Excalidraw 的分层：**形状描述是纯函数，绘制与交互各自实现**。默认启用，但还有三个明确缺口。
+这是 tldraw / Excalidraw 的分层：**形状描述是纯函数，绘制与交互各自实现**。三个缺口已全部关闭。
 
 ## 缺口与目标
 
@@ -21,7 +22,7 @@
 | --- | --- | --- |
 | 像素级验证 | ✅ 已完成（Phase A）：独立 harness + Chrome 截图 + PNG diff | — |
 | 绘制性能 | ✅ 已完成（Phase B）：根节点级视口裁剪 + 绘制基线 + 预算门禁；浏览器光栅化耗时待测 | — |
-| 命中测试 | 🟡 Phase C 接近完成：`hitTest`、双跑对比、选择框、拖拽/缩放、框选、吸附、Canvas 单击/双击编辑；**已设为默认**（DOM 副本不再渲染） | 删除旧交互层与 Moveable/Selecto 依赖 |
+| 命中测试 | ✅ 已完成（Phase C）：`hitTest`、选择框、拖拽/缩放、框选、吸附、单击/双击编辑；交互层与 DOM 副本已全部清掉 | — |
 
 ## Phase A：画布像素回归（✅ 已完成）
 
@@ -33,7 +34,7 @@
 
 1. **独立 fixture harness**（`packages/studio-web/harness/`）：
    - `harness/fixture.ts`：用 `createDocument` 构造一份覆盖全部绘制分支的文档——文本（换行/对齐/字重）、圆角、描边、透明度、嵌套裁剪、图片（cover/contain/缺图）、隐藏节点、实例覆盖后的文本；
-   - `harness/main.ts`：调用 `buildScene` + `createCanvas2DRenderer` 把 fixture 画到 960×680 的 canvas 上，并把文档中每个节点的 id 写到 `data-node-id` 列表（便于断言）；
+   - `harness/main.ts`：调用 `buildScene` + `createCanvas2DRenderer` 把 fixture 画到 960×680 的 canvas 上，并把绘制统计写到页面上（便于断言）；
    - `harness/index.html`：只引用打包后的单文件 JS。
 2. **打包**：用 esbuild（Vite 的既有依赖）把 `harness/main.ts` 打成 IIFE 单文件，内联进 HTML，`file://` 直接可加载，不依赖 dev server。
 3. **截图与对比**：复用 `packages/design-export/visual/` 的 PNG 编解码、diff、Chrome headless 截图逻辑：
@@ -74,7 +75,7 @@
 
 仍未完成：更激进的子节点级裁剪、GPU/合成层级别的耗时分析。
 
-## Phase C：命中测试迁移（🟡 进行中）
+## Phase C：命中测试迁移（✅ 已完成）
 
 ### 设计
 
@@ -86,46 +87,45 @@
 ### 已完成（2026-11-07）
 
 - `renderer/hit-test.ts`：最深命中 + 由深到外的命中栈；处理透明度、容器裁剪与椭圆精确命中；
-- `renderer/hit-test-compare.ts`：`compareHits` 与 `pointFromEvent`（把指针坐标经 `zoom` 换算成场景坐标）；
-- 工作台开关 `?hittest=compare`：Canvas 命中与 DOM `closest("[data-node-id]")` 同时跑，不一致只
-  `console.warn`，不改变选择行为；
+  另含 `pointFromEvent`（把指针坐标经 `zoom` 换算成场景坐标）；
+- 迁移期的双跑对比（Canvas 命中 vs DOM `closest("[data-node-id]")`）：实测零差异后
+  随 DOM 副本一起删除，对应代码见历史提交；
 - 单元测试覆盖重叠顺序、父子优先级、透明穿透、椭圆角落、裁剪容器与坐标换算。
 - 选择框几何与绘制：`renderer/selection.ts`（包围盒合并、8 个手柄、手柄命中、拖拽后的
   盒子、光标映射）+ `renderer/selection-overlay.ts`（Canvas 绘制轮廓与手柄，手柄按
   `zoom` 保持屏幕像素大小）；harness 基线里已叠加双选选择框，像素基线同时覆盖它；
-- 选择框绘制：默认由 Canvas 画选中框与手柄（旧路径 `?selection=dom` 下仍由 Moveable 画）；
+- 选择框绘制：由 Canvas 画选中框与手柄；
 - 拖拽/缩放接管：`renderer/selection-drag.ts`（子树偏移、单节点缩放、预览覆盖、布局补丁）
-  与 `renderer/use-canvas-drag.ts`（捕获阶段指针手势、`stopPropagation` 防止旧交互层
-  同时启动、`consumedClick` 抑制拖拽后的误清除选择）。默认路径下拖动已选节点或拖手柄
-  由 Canvas 接管，提交仍走现有 `node.patch` 事务。
+  与 `renderer/use-canvas-drag.ts`（捕获阶段指针手势、`stopPropagation` 防止手势冒泡、
+  `consumedClick` 抑制拖拽后的误清除选择）。拖动已选节点或拖手柄由 Canvas 接管，
+  提交仍走现有 `node.patch` 事务；
 - 框选：`renderer/marquee.ts`（拖拽矩形归一化、与顶层节点求交）+ Canvas 半透明框选绘制；
-  默认路径下空白处拖动即开始框选，松手后直接设置选中集合。
+  空白处拖动即开始框选，松手后直接设置选中集合；
 - 对齐吸附：`renderer/snapping.ts`（左/中/右、上/中/下对齐线，阈值内取最近，输出位移与
   辅助线）+ `paintSnapGuides`；拖动时的位移会叠加吸附修正，辅助线随拖动绘制，松手后
   按吸附后的位置提交。像素基线里也画了两条固定辅助线，覆盖该绘制路径；
-- **默认路径（不带开关）**：DOM 节点副本**完全不渲染**，单击选中、双击文本编辑与右键菜单
-  全部走 Canvas 命中：
+- **交互层全部由 Canvas 承担**：单击选中、双击文本编辑与右键菜单都走 Canvas 命中：
   - 单击/Shift 单击由 `hitTest` 决定，空白处清空选择；
   - 双击文本节点在它的布局盒上盖一个 `<textarea>`（输入法/选择交给浏览器），提交仍走
     `text.patch`；
-  - 右键菜单在 DOM 命中为空时回退到 `hitTest`；
+  - 右键菜单直接用 `hitTest` 找命中的节点；
   - 文本覆盖层会阻止拖动手势，避免在输入框里拖动节点；
-  - DOM 节点副本在默认路径下**完全不渲染**（`{legacyDomSelection && page.childIds.map(...)}`），
-    画布上只有一个 `<canvas>` 和按需出现的文本编辑框；
+  - 画布上只有 `<canvas class="canvas-surface">` 和按需出现的文本编辑框，**没有任何
+    `[data-node-id]` DOM 副本**；
   - 可访问性层：`renderer/a11y-tree.ts`（按图层顺序生成带层级的扁平列表）+ 
     `renderer/a11y-layer.tsx`（视觉隐藏的 `listbox`，上下箭头/Home/End 移动并同步选中，
     Delete 删除，`aria-selected`/`aria-level`/`aria-disabled` 齐全），保证纯 Canvas 画布
-    仍然能用键盘和屏幕阅读器操作。
-- 默认路径**不挂载** `CanvasInteractionLayer`：Moveable/Selecto 整个跳过，
-  选择框、拖拽、缩放、框选全部由 Canvas 接管。
-- 逃生开关 `?selection=dom`（或 `?renderer=dom`）保留旧的 DOM 交互层与 DOM 绘制，
-  用于对照排查；两者同时给上就是完整的旧路径。
+    仍然能用键盘和屏幕阅读器操作；
+- **旧交互层已删除**：`CanvasInteractionLayer`（Moveable/Selecto）、`CanvasNode`（DOM 副本）
+  与 `renderer/hit-test-compare.ts`（双跑对比模式）连同 `react-moveable` / `react-selecto`
+  依赖一起移除；`?selection=dom` / `?renderer=dom` / `?hittest=compare` 三个开关作废。
 
 ### 浏览器实跑验证（2026-11-07）
 
-在真实浏览器里跑完双跑对比与整套画布手势，结论：
+在真实浏览器里跑完双跑对比与整套画布手势，结论（**这一节记录的是迁移期带开关时的
+实测结果，相关开关现已随旧交互层一起删除**）：
 
-- `?hittest=compare`：点击画布节点，Canvas 命中与 DOM 命中**结果一致，控制台零
+- `?hittest=compare`（已删除）：点击画布节点，Canvas 命中与 DOM 命中**结果一致，控制台零
   `[hittest] canvas/DOM mismatch` 告警**——没有系统性偏差；
 - `?selection=canvas`（当时的开关模式，现已并入默认路径）：
   - 单击选中正确节点，隐藏的可访问性 listbox 同步 `aria-selected`；
@@ -143,7 +143,7 @@ return 之前。
 
 把 Canvas 交互切成默认后，在不带任何开关的地址上实测：
 
-- 画布容器的 class 是 `canvas-rendered canvas-pointer`；
+- 画布容器的 class 只剩 `canvas`（不再有 `canvas-rendered` / `canvas-pointer`）；
 - **没有** `[data-node-id]` DOM 副本、**没有** `.moveable-control` / `.selecto-selection`
   ——旧交互层确实没有挂载；
 - 隐藏的可访问性 listbox 正常挂载，9 个节点的顺序与类型正确；
@@ -154,19 +154,33 @@ return 之前。
 完全没反应。现在 `movedRef` / `consumedRef` 的重置挪到每次 pointerdown 的早退之后，
 `consumed` 只抑制拖拽结束后浏览器补发的那一次 click。
 
+### 纯 Canvas 实跑验证（2026-11-07，删掉旧交互层之后）
+
+把 Moveable/Selecto 交互层、DOM 节点副本和三个调试开关全部删掉后，在干净地址上实测：
+
+- 画布里只剩 `<canvas class="canvas-surface">`（960×680）与视觉隐藏的 a11y listbox，
+  **没有任何 DOM 节点副本**；
+- 单击矩形 → a11y listbox 里对应的 `矩形` 选项 `aria-selected="true"`，其余为 false；
+- 拖拽矩形 → revision **r7 → r8**，属性面板读到新的 X/Y（288 / 217.014…），Canvas 选择框
+  八只手柄正常绘制；
+- 双击文本节点 → 弹出 `<textarea class="canvas-text-edit">`，落在场景坐标
+  `left:48 top:48 width:160 height:48`，继承字体样式；
+- 空白处拖动框选 → 覆盖到的 4 个顶层节点全部 `aria-selected="true"`；
+- 右键菜单正常打开（复制/粘贴/重复/删除/对齐/编组）；
+- 控制台**零** warning / error。
+
 ### 剩余工作
 
-1. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖：默认切换**已完成**（默认路径不再挂载
-   `CanvasInteractionLayer`、DOM 副本默认不渲染），Moveable/Selecto 依赖与旧交互层代码待删；
-2. 删掉旧交互层代码：`CanvasInteractionLayer`、`CanvasNode` 与 `react-moveable` /
-   `react-selecto` 依赖；删 `CanvasNode` 会同时废掉 `?renderer=dom` 绘制回退，届时
-   `?selection=dom` 逃生开关只保留 DOM 交互层、画布仍走 Canvas 绘制。
+1. Phase C 的目标已全部达成：Canvas 是唯一渲染与交互路径，旧交互层与 DOM 副本已删除。
+2. 仍未做：更激进的子节点级裁剪、GPU/合成层级别的耗时分析（见「尚未实现」清单）。
 
 ### 风险与回退
 
-- 这是最大的一步：选择、拖拽、右键菜单、双击编辑都依赖现有 DOM 结构；
-- 分阶段：先让 `hitTest` 与 DOM 结果在测试里一致（双跑对比），再切换；
-- 保留 `?renderer=dom` 直到 Phase C 完成。
+- 这一步的风险是「选择、拖拽、右键菜单、双击编辑都依赖 DOM 结构」——现在不再依赖了；
+- 回退手段：Phase C 完成前的 `?selection=dom` / `?renderer=dom` 逃生开关已随旧层一起删除，
+  真正需要回退时靠 git 回滚提交；
+- 迁移前的安全网是双跑对比（Canvas 命中 vs DOM 命中），实测零差异后才切换，对比模式
+  随 DOM 副本一起删除。
 
 ## 测试策略
 
@@ -176,7 +190,7 @@ return 之前。
 | 绘制调用 | Node 单测：假 2D 上下文断言 fill/clip/drawImage/fillText 及参数 |
 | 像素 | Chrome headless 截图 + PNG diff（Phase A） |
 | 性能 | 假上下文 + 浏览器自报，纳入预算（Phase B） |
-| 命中 | 纯函数单测 + 与 DOM 结果对比（Phase C） |
+| 命中 | 纯函数单测 + 迁移前的 DOM 双跑对比（Phase C） |
 
 ## 不做的事
 
