@@ -305,6 +305,20 @@ function App() {
     return () => cancelAnimationFrame(frame);
   }, [scroller, document]);
 
+  // 这个 hook 必须在提前 return 之前调用：加载态渲染的 hook 数量要和项目加载后
+  // 完全一致，否则 React 会直接抛「渲染了比上次更多的 hook」，整棵 App 崩掉。
+  const canvasDrag = useCanvasDrag({
+    enabled: selectionDrag,
+    busy,
+    zoom,
+    scene: hitTestScene,
+    selectedIds,
+    pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
+    layoutOf: id => document?.nodes[id]?.layout,
+    onCommit: changes => patchLayouts(changes),
+    onMarquee: ids => setSelectedIds(ids),
+  });
+
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[activePageId!]!;
   const pageNodes = flattenNodeTrees(document, page.childIds);
@@ -548,17 +562,6 @@ function App() {
     switchPage(nextPageId);
   });
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
-  const canvasDrag = useCanvasDrag({
-    enabled: selectionDrag,
-    busy,
-    zoom,
-    scene: hitTestScene,
-    selectedIds,
-    pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
-    layoutOf: id => document?.nodes[id]?.layout,
-    onCommit: changes => patchLayouts(changes),
-    onMarquee: ids => setSelectedIds(ids),
-  });
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
   /** `?selection=canvas`：单击选中完全由 Canvas 命中决定。 */
