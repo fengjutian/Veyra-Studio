@@ -119,12 +119,28 @@
 - `?selection=drag` 时不再挂载 `CanvasInteractionLayer`：Moveable/Selecto 整个跳过，
   选择框、拖拽、缩放、框选全部由 Canvas 接管；默认路径仍然挂载（可随时回退）。
 
+### 浏览器实跑验证（2026-11-07）
+
+在真实浏览器里跑完双跑对比与整套画布手势，结论：
+
+- `?hittest=compare`：点击画布节点，Canvas 命中与 DOM 命中**结果一致，控制台零
+  `[hittest] canvas/DOM mismatch` 告警**——没有系统性偏差；
+- `?selection=canvas`（DOM 副本完全不渲染，纯 Canvas）：
+  - 单击选中正确节点，隐藏的可访问性 listbox 同步 `aria-selected`；
+  - 拖拽由 Canvas 接管，预览框与手柄跟手，松手提交事务（r74 → r75）；
+  - 空白处拖动框选，命中 8 个顶层节点（刚拖走的那一个不在框内）；
+  - 双击文本节点弹出 `<textarea>` 覆盖层，落在布局盒上并继承字体样式；
+  - 右键菜单在 DOM 命中为空时回退到 Canvas 命中，菜单正常打开。
+
+顺带修掉一个会让整个工作台打不开的缺陷：`useCanvasDrag` 原本挂在
+`if (!project || !document) return ...` 之后，加载态渲染的 hook 数量比加载后少，
+React 直接抛「渲染了比上次更多的 hook」并让整棵 App 崩溃。hook 已挪到提前
+return 之前。
+
 ### 剩余工作
 
-1. 在浏览器里实际跑一段双跑对比与拖拽，确认没有系统性偏差；
-2. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖（当前由开关切换）；
-3. 把 `?selection=canvas` 变成默认（DOM 副本已完全不渲染、可访问性列表已就位），并删掉旧交互层代码；
-4. 在浏览器里验证单击/双击/右键/框选/拖拽的组合。
+1. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖（当前由开关切换）；
+2. 把 `?selection=canvas` 变成默认（DOM 副本已完全不渲染、可访问性列表已就位），并删掉旧交互层代码。
 
 ### 风险与回退
 
