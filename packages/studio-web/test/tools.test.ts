@@ -7,7 +7,7 @@ const bounds = { width: 960, height: 680 };
 test("every tool has a unique shortcut and the draw tools are exhaustive", () => {
   const shortcuts = TOOLS.map(spec => spec.shortcut);
   assert.equal(new Set(shortcuts).size, shortcuts.length);
-  assert.deepEqual(TOOLS.filter(spec => isDrawTool(spec.id)).map(spec => spec.id), ["frame", "rectangle", "ellipse", "text"]);
+  assert.deepEqual(TOOLS.filter(spec => isDrawTool(spec.id)).map(spec => spec.id), ["frame", "rectangle", "ellipse", "line", "polygon", "star", "text"]);
   assert.equal(isDrawTool("select"), false);
   assert.equal(isDrawTool("hand"), false);
 });

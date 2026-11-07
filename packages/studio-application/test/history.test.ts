@@ -3,7 +3,7 @@ import test from "node:test";
 import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { SnapshotNotFoundError, type AssetWrite, type ProjectRepository, type ProjectSnapshot, type ProjectSummary, type SnapshotSummary } from "@ufira/design-persistence";
 import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
-import { HistoryReconstructionError, reconstructDocumentAt } from "../src/index";
+import { HistoryReconstructionError, canRestoreRevision, reconstructDocumentAt } from "../src/index";
 
 const frame = (id: string): DesignNode => ({
   id,
@@ -72,6 +72,34 @@ test("起点快照被清理时明确报 base-missing", async () => {
   );
 });
 
+test("起点快照被清理时用重建基线起步", async () => {
+  const { repository } = buildHistory(4);
+  // 只保留最新快照，但基线还在：日志没被裁，那几步就仍然重建得出来。
+  const latest = createDocument("project:1", "Demo");
+  latest.revision = 4;
+  repository.snapshots.clear();
+  repository.snapshots.set(4, latest);
+  repository.baseline = createDocument("project:1", "Demo");
+
+  const reconstructed = await reconstructDocumentAt(repository, "project:1", 2);
+  assert.equal(reconstructed.document.revision, 2);
+  assert.equal(reconstructed.baseRevision, 0);
+  assert.equal(reconstructed.replayedTransactions, 2);
+  assert.ok(reconstructed.document.nodes["frame:2"]);
+  assert.equal(reconstructed.document.nodes["frame:3"], undefined);
+});
+
+test("可回退判定按真实可达性来", () => {
+  // 基线 r0 加上连续日志：窗口里的每一版都能重建。
+  assert.equal(canRestoreRevision(3, [0, 5], [1, 2, 3, 4, 5]), true);
+  // 日志被裁到只剩 r4、r5：更早的版本没有日志，回退不了。
+  assert.equal(canRestoreRevision(3, [0, 5], [4, 5]), false);
+  // 没有不晚于目标的起点：同样回退不了。
+  assert.equal(canRestoreRevision(3, [5], [1, 2, 3, 4, 5]), false);
+  // 目标正好是起点：不需要重放，直接就是那一版。
+  assert.equal(canRestoreRevision(5, [0, 5], [1, 2, 3, 4, 5]), true);
+});
+
 test("事务日志断档时明确报 journal-gap", async () => {
   const { repository } = buildHistory(4);
   repository.transactions = repository.transactions.filter(entry => entry.revision !== 2);
@@ -91,11 +119,16 @@ test("拒绝非法修订号", async () => {
 class HistoryRepository implements ProjectRepository {
   snapshots = new Map<number, DesignDocument>();
   transactions: TransactionEntry[] = [];
+  /** 重建基线：有它就能给"只剩日志"的那段历史当起点。 */
+  baseline?: DesignDocument;
 
   async listSnapshots(): Promise<SnapshotSummary[]> {
     return [...this.snapshots.values()]
       .sort((left, right) => right.revision - left.revision)
       .map((document, index) => ({ revision: document.revision, updatedAt: document.meta.updatedAt, schemaVersion: document.schemaVersion, current: index === 0 }));
+  }
+  async readBaseline(): Promise<DesignDocument | undefined> {
+    return this.baseline ? structuredClone(this.baseline) : undefined;
   }
   async readSnapshot(projectId: string, revision: number): Promise<DesignDocument> {
     const document = this.snapshots.get(revision);

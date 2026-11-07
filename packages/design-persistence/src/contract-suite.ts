@@ -307,6 +307,36 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
       assert.equal(snapshots[0]?.current, true);
     });
   });
+
+  test(`${name}: 重建基线在项目建立时就存在，并且不被裁历史版本裁掉`, async () => {
+    await withRepository(async ({ repository }) => {
+      await repository.saveSnapshot(snapshotAt("project:1", 0, "v0"));
+      await repository.saveSnapshot(snapshotAt("project:1", 1, "v1"));
+      await repository.saveSnapshot(snapshotAt("project:1", 2, "v2"));
+
+      assert.ok(repository.readBaseline, "后端应支持重建基线");
+      assert.equal((await repository.readBaseline!("project:1"))?.revision, 0, "基线应是最初那一版");
+
+      assert.ok(repository.trimSnapshots, "后端应支持裁历史版本");
+      await repository.trimSnapshots!("project:1", 1);
+      assert.equal((await repository.readBaseline!("project:1"))?.revision, 0, "基线不能被裁掉");
+      assert.deepEqual((await repository.listSnapshots("project:1")).map(item => item.revision), [2]);
+    });
+  });
+
+  test(`${name}: 裁日志会把重建基线推进到新的日志起点前一版`, async () => {
+    await withRepository(async ({ repository }) => {
+      await repository.saveSnapshot(snapshotAt("project:1", 0, "v0"));
+      await repository.appendTransactions([1, 2, 3, 4, 5].map(revision => transactionAt("project:1", revision)));
+
+      const removed = await repository.pruneJournal("project:1", { keep: 2 });
+      assert.equal(removed, 3);
+      assert.deepEqual((await repository.listTransactions("project:1")).map(entry => entry.revision), [4, 5]);
+
+      assert.ok(repository.readBaseline, "后端应支持重建基线");
+      assert.equal((await repository.readBaseline!("project:1"))?.revision, 3, "基线应落在新日志起点的前一版");
+    });
+  });
 }
 
 /** 造一份停在某个修订号上的文档，用来模拟历史版本。 */

@@ -46,13 +46,30 @@ test("操作历史按修订号从新到旧，只保留最近几条", () => {
 test("最新一条不可回退，其余可以", () => {
   const rows = historyRows([entry(1, [{ type: "node.create" }]), entry(2, [{ type: "node.patch" }])], 2);
   assert.deepEqual(rows.map(row => row.restorable), [false, true]);
+  assert.deepEqual(rows.map(row => row.current), [true, false]);
 });
 
-test("早于保留快照的步骤不再提供回退，但记录仍在", () => {
-  const rows = historyRows([entry(1, [{ type: "node.create" }]), entry(5, [{ type: "node.patch" }])], 6, { oldestSnapshotRevision: 3 });
+test("起点接不上日志时不再提供回退，但记录仍在", () => {
+  // 日志只剩 r1 和 r5，中间断了：从起点 r3 重放不到 r5，这一步就回不去。
+  const rows = historyRows([entry(1, [{ type: "node.create" }]), entry(5, [{ type: "node.patch" }])], 6, { baseRevisions: [3] });
   assert.deepEqual(rows.map(row => row.revision), [5, 1]);
-  assert.equal(rows[1]?.restorable, false);
-  assert.equal(rows[0]?.restorable, true);
+  assert.deepEqual(rows.map(row => row.restorable), [false, false]);
+});
+
+test("有重建基线时，早于最老快照的步骤也能回退", () => {
+  // 基线 r0 加上连续日志：日志窗口里的每一版都能重建出来。
+  const entries = [1, 2, 3, 4, 5].map(revision => entry(revision, [{ type: "node.patch" }]));
+  const rows = historyRows(entries, 6, { baseRevisions: [0, 5] });
+  assert.deepEqual(rows.map(row => row.revision), [5, 4, 3, 2, 1]);
+  assert.deepEqual(rows.map(row => row.restorable), [true, true, true, true, true]);
+});
+
+test("日志被裁掉的那一段回退不了", () => {
+  // 日志只剩 r4、r5：从基线 r0 重放不到 r4，只有正好是起点的那一版还能回退。
+  const entries = [4, 5].map(revision => entry(revision, [{ type: "node.patch" }]));
+  const rows = historyRows(entries, 6, { baseRevisions: [0, 5] });
+  assert.deepEqual(rows.map(row => row.revision), [5, 4]);
+  assert.deepEqual(rows.map(row => row.restorable), [true, false]);
 });
 
 test("还原类事务单独标出来，AI 和本地用户的署名不同", () => {

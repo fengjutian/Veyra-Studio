@@ -103,6 +103,7 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
       <Section title="外观">
         <TextField label="填充" value={node.appearance.fill ?? ""} disabled={disabled} onCommit={fill => onPatch({ appearance: { ...node.appearance, fill: fill || undefined } })} />
         <TextField label="描边" value={node.appearance.stroke ?? ""} disabled={disabled} onCommit={stroke => onPatch({ appearance: { ...node.appearance, stroke: stroke || undefined } })} />
+        <NumberField label="描边宽度" value={node.appearance.strokeWidth ?? 1} min={0} disabled={disabled} onCommit={strokeWidth => onPatch({ appearance: { ...node.appearance, strokeWidth: strokeWidth > 0 ? strokeWidth : undefined } })} />
         <NumberField label="圆角" value={node.appearance.cornerRadius ?? 0} disabled={disabled} onCommit={cornerRadius => onPatch({ appearance: { ...node.appearance, cornerRadius } })} />
         <NumberField label="透明度" value={opacityToPercent(node.appearance.opacity)} disabled={disabled} onCommit={percent => onPatch({ appearance: { ...node.appearance, opacity: percentToOpacity(percent) } })} />
       </Section>

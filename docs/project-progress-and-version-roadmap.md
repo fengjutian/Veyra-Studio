@@ -206,9 +206,14 @@ AI 原型：
   编辑与右键菜单全部走 Canvas 命中，画布上不再有任何 DOM 节点副本，并配视觉隐藏的
   可访问性 listbox（上下/Home/End 移动并同步选中、Delete 删除、`aria-selected` 等齐全）；
 - 画布工具体系（P1）：创建入口从「瞬时插入」升级为「工具模式」（选择 / Frame / 矩形 /
-  椭圆 / 文本 / 抓手），图元工具可拖拽绘制，Shift 等比、Alt 从中心展开，松手提交一条
-  `node.create` 并自动回到选择工具；快捷键 `V/F/R/O/T/H`、`Esc` 回到选择。工具状态是纯
-  视图状态，不进文档也不涨 revision。相位与后续计划见 `editor-tooling-roadmap.md`；
+  椭圆 / 直线 / 多边形 / 星形 / 文本 / 抓手），图元工具可拖拽绘制，Shift 等比、Alt 从中心
+  展开，松手提交一条 `node.create` 并自动回到选择工具；快捷键 `V/F/R/O/L/G/S/T/H`、
+  `Esc` 回到选择。工具状态是纯视图状态，不进文档也不涨 revision；
+- 形状族与矢量基础（P2）：直线/多边形/星形落地为 `vector` + 归一化 `M/L/Z` 路径
+  （`design-schema/src/geometry.ts`），改宽高即缩放图形；命中按真实路径判定；SVG 输出
+  `<path>`、HTML 输出内联 `<svg>`，`vector` 支持等级升为 `exact`，无 geometry 的旧文档
+  导出产物不变；`AppearanceSpec.strokeWidth` 同时接入画布、导出与属性面板。
+  相位与后续计划见 `editor-tooling-roadmap.md`；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 
 ### `0.4.0`：布局、文本与视觉一致性

@@ -68,9 +68,9 @@ export async function prepareBaselinePrune(
     return cutoff;
   }
 
-  // 重放断档，基线到不了新的起点。只有基线还能接上当前日志起点时才值得少裁
-  // 一点——否则日志会被永久卡住，越积越多。
-  return baseline.revision >= front - 1 ? Math.min(cutoff, baseline.revision + 1) : cutoff;
+  // 重放断档，基线到不了新的起点：这条链本来就重建不出来，按数量裁即可。
+  // 下一轮裁剪会发现基线追不上日志起点，届时会换一份能接上的快照当基线。
+  return cutoff;
 }
 
 /**

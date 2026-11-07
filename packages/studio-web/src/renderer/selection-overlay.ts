@@ -65,7 +65,7 @@ export function paintMarquee(context: CanvasRenderingContext2D, rect: { x: numbe
 export function paintDrawPreview(
   context: CanvasRenderingContext2D,
   rect: { x: number; y: number; width: number; height: number },
-  options: { color?: string; zoom?: number; shape?: "rectangle" | "ellipse" | "frame" | "text" } = {},
+  options: { color?: string; zoom?: number; shape?: "rectangle" | "ellipse" | "frame" | "text" | "line" | "polygon" | "star" } = {},
 ): void {
   const zoom = options.zoom && options.zoom > 0 ? options.zoom : 1;
   const color = options.color ?? "#8b5cf6";

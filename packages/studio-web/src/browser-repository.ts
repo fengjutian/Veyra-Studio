@@ -97,7 +97,9 @@ export class DexieProjectRepository implements ProjectRepository {
   async replaceProject(projectId: string, document: DesignDocument): Promise<void> {
     const valid = assertSavableDocument(document);
     if (valid.id !== projectId) throw new Error(`Replacement document id ${valid.id} does not match project ${projectId}`);
-    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, this.database.baselines, async () => {
+    // 表数量超过 Dexie 变参重载的上限（5 张），改用数组形式。
+    const tables = [this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, this.database.baselines];
+    await this.database.transaction("rw", tables, async () => {
       await this.database.projects.delete(projectId);
       await this.database.snapshots.delete(projectId);
       await this.database.snapshotHistory.where("projectId").equals(projectId).delete();
@@ -172,7 +174,9 @@ export class DexieProjectRepository implements ProjectRepository {
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, this.database.baselines, async () => {
+    // 表数量超过 Dexie 变参重载的上限（5 张），改用数组形式。
+    const tables = [this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, this.database.baselines];
+    await this.database.transaction("rw", tables, async () => {
       await this.database.projects.delete(projectId);
       await this.database.snapshots.delete(projectId);
       await this.database.snapshotHistory.where("projectId").equals(projectId).delete();

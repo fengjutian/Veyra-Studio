@@ -38,9 +38,11 @@ import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
 import { CanvasSurface } from "./renderer/canvas-surface";
 import { buildScene } from "./renderer/scene";
-import { hitTest, pointFromEvent } from "./renderer/hit-test";
+import { hitTest, pointFromEvent, type HitPoint } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
-import { TOOLS, clampRect, defaultRectFor, isDrawTool, nextToolAfterDraw, shortcutTool, toolSpec, type DrawToolId, type ToolId } from "./tools";
+import { TOOLS, clampRect, defaultRectFor, isDrawTool, isVectorTool, nextToolAfterDraw, shortcutTool, toolSpec, type DrawToolId, type ToolId, type VectorToolId } from "./tools";
+import { buildVectorShape, type VectorShape } from "./shapes";
+import type { VectorGeometry } from "@ufira/design-schema";
 import type { Rect } from "./renderer/selection";
 import { TextEditOverlay } from "./renderer/text-edit-overlay";
 import { CanvasA11yLayer } from "./renderer/a11y-layer";
@@ -347,7 +349,7 @@ function App() {
     layoutOf: id => document?.nodes[id]?.layout,
     onCommit: changes => patchLayouts(changes),
     onMarquee: ids => setSelectedIds(ids),
-    onDraw: (rect, info) => createNodeFromDraw(info.tool, rect, info.dragged),
+    onDraw: (rect, info) => createNodeFromDraw(info.tool, rect, info),
   });
 
   if (!project || !document) return <main className="loading">{message}</main>;
@@ -517,10 +519,24 @@ function App() {
    * 所以拖到画板外不会生成一半在画布外的对象。提交后回到选择工具并选中新节点——
    * 和 Figma 的手感一致：画完立刻能调尺寸。
    */
-  const createNodeFromDraw = (drawTool: DrawToolId, rect: Rect, dragged: boolean) => {
-    const target = clampRect(dragged ? rect : defaultRectFor(drawTool, { x: rect.x, y: rect.y }), { width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
-    const box = { x: Math.round(target.x), y: Math.round(target.y), width: Math.round(target.width), height: Math.round(target.height) };
+  const createNodeFromDraw = (drawTool: DrawToolId, rect: Rect, info: { dragged: boolean; start: HitPoint; end: HitPoint }) => {
+    // 先收工具：无论下面建不建得成节点，画完都该回到选择工具。
     setTool(current => nextToolAfterDraw(current));
+    if (isVectorTool(drawTool)) {
+      // 直线/多边形/星形：几何由 start→end 决定（归一化矩形丢掉了方向），
+      // 先钳制端点再建几何，避免先建后裁导致路径与盒子错位。
+      const shape = vectorShapeFromDrag(drawTool, info);
+      const box = { x: Math.round(shape.box.x), y: Math.round(shape.box.y), width: Math.max(1, Math.round(shape.box.width)), height: Math.max(1, Math.round(shape.box.height)) };
+      const node = makeVectorNode(drawTool, page.id, box, shape.geometry);
+      void run(async () => {
+        await execute([{ type: "node.create", payload: { node } }]);
+        setSelectedIds([node.id]);
+        setMessage(`已添加${toolSpec(drawTool).label} · ${box.width}×${box.height}`);
+      });
+      return;
+    }
+    const target = clampRect(info.dragged ? rect : defaultRectFor(drawTool, { x: rect.x, y: rect.y }), { width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+    const box = { x: Math.round(target.x), y: Math.round(target.y), width: Math.round(target.width), height: Math.round(target.height) };
     // 整块拖到画板外：没有可建的面积，只把工具收回来。
     if (box.width < 1 || box.height < 1) return;
     const node = makeNode(drawTool, page.id, box);
@@ -1501,6 +1517,50 @@ function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: st
   if (type === "text") return { ...common, type: "text", text: "双击编辑文本", fontFamily: "Inter", fontSize: 20, lineHeight: 28 };
   return { ...common, type };
 }
+
+/**
+ * 直线 / 多边形 / 星形节点。
+ *
+ * 三者都是 `vector` + 归一化路径。直线不填色（填了就是一块色块），改用 2px 描边；
+ * 多边形和星形填充、不描边——这和用户对这两种形状的预期一致。
+ */
+function makeVectorNode(tool: VectorToolId, parentId: string, box: { x: number; y: number; width: number; height: number }, geometry: VectorGeometry): DesignNode {
+  const names = { line: "直线", polygon: "多边形", star: "星形" } as const;
+  const appearance = tool === "line"
+    ? { ...defaultAppearance(), stroke: "#8b5cf6", strokeWidth: 2 }
+    : { ...defaultAppearance(), fill: "#8b5cf6" };
+  return {
+    id: `vector:${crypto.randomUUID().slice(0, 8)}`,
+    type: "vector",
+    name: names[tool],
+    parentId,
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: { ...defaultLayout(), ...box },
+    appearance,
+    geometry,
+  };
+}
+
+/**
+ * 拖拽结果 → 矢量几何。
+ *
+ * 端点先钳制到画板内再建几何：如果先建后裁，路径坐标是相对旧盒子的，
+ * 裁完就会和盒子错位。单击（没有拖拽）时按默认长度补一个终点。
+ */
+function vectorShapeFromDrag(tool: VectorToolId, info: { dragged: boolean; start: HitPoint; end: HitPoint }): VectorShape {
+  const start = clampToCanvas(info.start);
+  const end = info.dragged ? clampToCanvas(info.end) : { x: Math.min(start.x + DEFAULT_VECTOR_LENGTH, CANVAS_WIDTH), y: tool === "line" ? start.y : Math.min(start.y + DEFAULT_VECTOR_LENGTH, CANVAS_HEIGHT) };
+  return buildVectorShape(tool, start, end);
+}
+
+function clampToCanvas(point: HitPoint): HitPoint {
+  return { x: Math.min(Math.max(point.x, 0), CANVAS_WIDTH), y: Math.min(Math.max(point.y, 0), CANVAS_HEIGHT) };
+}
+
+/** 单击创建矢量形状时的默认边长。 */
+const DEFAULT_VECTOR_LENGTH = 160;
 
 function collectSlotNodes(document: DesignDocument, rootId: string): DesignNode[] {
   const found: DesignNode[] = [];

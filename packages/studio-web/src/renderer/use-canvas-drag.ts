@@ -134,6 +134,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       // 修饰键每次移动都重新求值，所以可以边拖边按 Shift / Alt。
       const rect = rectFromDrag(gesture.start, point, { shift: event.shiftKey, alt: event.altKey });
       drawRectRef.current = rect;
+      drawEndRef.current = point;
       setDrawRect(rect);
       event.stopPropagation();
       return;
@@ -163,9 +164,10 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     if (gesture.kind === "draw") {
       const rect = drawRectRef.current ?? { x: gesture.start.x, y: gesture.start.y, width: 0, height: 0 };
       // 绘制是「松开即提交」；pointercancel 时不留半成品。
-      if (commit) options.onDraw?.(rect, { tool: gesture.tool, dragged: !isClickDraw(rect) });
+      if (commit) options.onDraw?.(rect, { tool: gesture.tool, dragged: !isClickDraw(rect), start: gesture.start, end: drawEndRef.current ?? gesture.start });
       consumedRef.current = true;
       drawRectRef.current = undefined;
+      drawEndRef.current = undefined;
       setDrawRect(undefined);
       return;
     }

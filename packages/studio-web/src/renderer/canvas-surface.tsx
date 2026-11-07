@@ -35,7 +35,7 @@ export interface CanvasSurfaceProps {
   marquee?: Rect;
   /** 绘制中的临时矩形（场景坐标）与它的形状。 */
   drawRect?: Rect;
-  drawShape?: "rectangle" | "ellipse" | "frame" | "text";
+  drawShape?: "rectangle" | "ellipse" | "frame" | "text" | "line" | "polygon" | "star";
   /** 拖动时的对齐辅助线。 */
   guides?: SnapGuide[];
 }
