@@ -144,6 +144,8 @@ function App() {
   const [recovery, setRecovery] = useState<RecoveryReport>();
   // 存储里保留的历史版本，用于回滚。
   const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
+  // 重建基线的版本号：它是事务日志的重放起点，决定了还能退到多早一步。
+  const [baselineRevision, setBaselineRevision] = useState<number>();
   // 自动备份列表与浏览器存储用量。
   const [backups, setBackups] = useState<BackupSummary[]>([]);
   const [storage, setStorage] = useState<StorageEstimate>();
@@ -176,7 +178,18 @@ function App() {
     setDocument(snapshot); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setMessage(`已${direction === "undo" ? "撤销" : "重做"} · r${committed.result.revision}`);
   };
 
-  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSnapshots(await repository.listSnapshots(snapshot.id)); setMissingAssets(await findMissingAssets(repository, snapshot)); setBackups(await backupStore.list(snapshot.id)); setStorage(await readStorageEstimate()); setStorageUsage(await loadStorageUsage(snapshot.id)); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  /**
+   * 刷新历史版本列表和重建基线。
+   *
+   * 两者一起决定"还能退到哪一步"：历史版本是可直接回退的快照，重建基线是事务
+   * 日志的重放起点——日志里早于最老快照的那些步骤，全靠它起步。
+   */
+  const refreshHistory = async (projectId: string) => {
+    setSnapshots(await repository.listSnapshots(projectId));
+    setBaselineRevision((await repository.readBaseline?.(projectId))?.revision);
+  };
+
+  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); await refreshHistory(snapshot.id); setMissingAssets(await findMissingAssets(repository, snapshot)); setBackups(await backupStore.list(snapshot.id)); setStorage(await readStorageEstimate()); setStorageUsage(await loadStorageUsage(snapshot.id)); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
   // 页面被关闭或切到后台时立刻把待写快照落盘，避免最后几次编辑留在内存里。
   useEffect(() => installAutosaveFlush(), []);
   // 历史版本列表和项目摘要：等自动保存真正落盘之后再刷新，否则看到的还是上一版。
@@ -186,8 +199,8 @@ function App() {
   useEffect(() => {
     if (autosave.state !== "saved" || !snapshotProjectId) return;
     let cancelled = false;
-    void Promise.all([repository.listSnapshots(snapshotProjectId), repository.listProjects()])
-      .then(([list, summary]) => { if (!cancelled) { setSnapshots(list); setProjects(summary); } })
+    void Promise.all([repository.listSnapshots(snapshotProjectId), repository.listProjects(), repository.readBaseline?.(snapshotProjectId)])
+      .then(([list, summary, baseline]) => { if (!cancelled) { setSnapshots(list); setProjects(summary); setBaselineRevision(baseline?.revision); } })
       .catch(() => undefined);
     return () => { cancelled = true; };
   }, [autosave.state, autosave.lastSavedAt, snapshotProjectId]);
@@ -366,7 +379,7 @@ function App() {
     const opened = await StudioProject.open(repository, id);
     const snapshot = opened.project.snapshot();
     setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined);
-    setSnapshots(await repository.listSnapshots(id));
+    await refreshHistory(id);
     setBackups(await backupStore.list(id));
     const missing = await refreshMissingAssets(snapshot);
     setRecovery(buildRecoveryReport({
@@ -388,7 +401,7 @@ function App() {
   const createProject = () => void run(async () => {
     const name = (await askText({ title: "新项目名称", defaultValue: "未命名设计" }))?.trim(); if (!name) return;
     const created = await StudioProject.create(repository, `project:${crypto.randomUUID()}`, name, `page:${crypto.randomUUID()}`);
-    const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSelectedIds([]); setPreview(undefined); setRecovery(undefined); setSnapshots(await repository.listSnapshots(snapshot.id)); setMessage("项目已创建");
+    const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSelectedIds([]); setPreview(undefined); setRecovery(undefined); await refreshHistory(snapshot.id); setMessage("项目已创建");
   });
   const renameProject = () => void run(async () => {
     const name = (await askText({ title: "项目名称", defaultValue: document.meta.name }))?.trim(); if (!name || name === document.meta.name) return;

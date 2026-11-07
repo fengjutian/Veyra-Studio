@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { detectSchemaVersion, type DesignDocument } from "@ufira/design-schema";
 import type { TransactionEntry } from "@ufira/design-runtime";
 import {
+  JOURNAL_RETENTION,
   ProjectNotFoundError,
   SNAPSHOT_RETENTION,
   SnapshotNotFoundError,
@@ -20,6 +21,7 @@ import {
   type ProjectSummary,
   type SnapshotSummary,
 } from "./contract";
+import { prepareBaselinePrune } from "./baseline";
 
 /**
  * 项目存储布局的版本。
@@ -29,6 +31,15 @@ import {
  * 文档格式写下来的"可以被查出来。
  */
 export const STORAGE_VERSION = 2;
+
+/**
+ * 基线快照的文件名。
+ *
+ * 它放在 snapshots 目录里，但**不叫版本号**：快照目录里只有 `^\d{12}\.json$`
+ * 才算一个版本，所以这份文件不会被版本列表算进去，也不会被裁剪策略删掉——
+ * 基线必须永远留着。
+ */
+const BASELINE_FILE = "baseline.json";
 
 interface Manifest {
   projectId: string;
@@ -64,6 +75,7 @@ export class FileSystemProjectRepository implements ProjectRepository {
       storageVersion: STORAGE_VERSION,
       documentSchemaVersion: valid.schemaVersion,
     } satisfies Manifest));
+    await this.ensureBaseline(valid.id, directory);
     await this.pruneSnapshots(directory);
   }
 
@@ -202,10 +214,34 @@ export class FileSystemProjectRepository implements ProjectRepository {
   async pruneJournal(projectId: string, options: JournalPruneOptions = {}): Promise<number> {
     const directory = join(this.projectDirectory(projectId), "transactions");
     const files = (await safeReadDirectory(directory)).filter(isRevisionFile).sort();
-    const keep = Math.max(0, options.keep ?? SNAPSHOT_RETENTION);
-    const outdated = files.slice(0, Math.max(0, files.length - keep));
+    const keep = Math.max(0, options.keep ?? JOURNAL_RETENTION);
+    if (files.length <= keep) return 0;
+    // 裁之前先把"新的日志起点前一版"固化成基线：日志敢裁，靠的是这份基线。
+    const entries = await this.listTransactions(projectId);
+    const front = await prepareBaselinePrune(this, projectId, entries, keep);
+    const outdated = files.filter(file => parseRevision(file) < front);
     for (const file of outdated) await rm(join(directory, file), { force: true });
     return outdated.length;
+  }
+
+  /** 读取重建基线；没有基线（老项目或后端不支持）时返回 undefined。 */
+  async readBaseline(projectId: string): Promise<DesignDocument | undefined> {
+    const raw = await readFile(this.baselinePath(projectId), "utf8").catch(() => undefined);
+    if (raw === undefined) return undefined;
+    try {
+      const { document } = loadDocumentPayload(JSON.parse(raw));
+      return document.id === projectId ? document : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 固化重建基线；这份文档永不被裁剪。 */
+  async writeBaseline(projectId: string, document: DesignDocument): Promise<void> {
+    const valid = assertSavableDocument(document);
+    const directory = join(this.projectDirectory(projectId), "snapshots");
+    await mkdir(directory, { recursive: true });
+    await replaceAtomic(join(directory, BASELINE_FILE), JSON.stringify(valid));
   }
 
   /**
@@ -287,6 +323,32 @@ export class FileSystemProjectRepository implements ProjectRepository {
     return undefined;
   }
 
+  /**
+   * 确保这个项目有一份重建基线。
+   *
+   * 基线只补一次：项目建立时的第一份快照就是最合适的起点，之后由裁日志的流程
+   * 往前推进。已经在更早版本里建过基线的项目，这里不会覆盖它。
+   */
+  private async ensureBaseline(projectId: string, directory: string): Promise<void> {
+    if (await fileExists(join(directory, "snapshots", BASELINE_FILE))) return;
+    // 用最老的那份保留快照当基线：越早的起点，能重建的步骤越多。
+    const oldest = await this.oldestSnapshotRevision(directory);
+    if (oldest === undefined) return;
+    const document = await this.readSnapshot(projectId, oldest).catch(() => undefined);
+    if (document) await this.writeBaseline(projectId, document);
+  }
+
+  /** 快照目录里最老的那个版本号。 */
+  private async oldestSnapshotRevision(directory: string): Promise<number | undefined> {
+    const files = (await safeReadDirectory(join(directory, "snapshots"))).filter(isRevisionFile);
+    if (!files.length) return undefined;
+    return files.map(parseRevision).sort((left, right) => left - right)[0];
+  }
+
+  private baselinePath(projectId: string): string {
+    return join(this.projectDirectory(projectId), "snapshots", BASELINE_FILE);
+  }
+
   private async readSnapshotFile(path: string): Promise<{ document: DesignDocument; schemaVersion: number } | undefined> {
     const raw = await readFile(path, "utf8").catch(() => undefined);
     if (raw === undefined) return undefined;
@@ -340,9 +402,18 @@ async function safeReadDirectory(directory: string): Promise<string[]> {
   }
 }
 
+/** 文件在不在；读不出来一律当"不在"。 */
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** 目录下所有文件的字节数之和；目录不存在时算 0。 */
-async function sumFileSizes(directory: string): Promise<number> {
-  const files = await safeReadDirectory(directory);
+async function sumFileSizes(directory: string): Promise<number> {  const files = await safeReadDirectory(directory);
   let total = 0;
   for (const file of files) {
     const stats = await stat(join(directory, file)).catch(() => undefined);

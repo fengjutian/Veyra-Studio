@@ -2,7 +2,7 @@
 
 > 文档状态：生效中的工具能力基线
 > 最后更新：2026-11-07
-> 当前阶段：P1（工具模式与拖拽绘制）
+> 当前阶段：P1（工具模式与拖拽绘制）已完成，P2 待启动
 > 关联文档：`current-project-status.md`、`project-progress-and-version-roadmap.md`、`canvas-renderer-roadmap.md`
 
 ## 1. 问题：不是「按钮太少」
@@ -68,7 +68,7 @@
 
 ## 5. 分阶段计划
 
-### P1：工具模式与拖拽绘制（本次实现）
+### P1：工具模式与拖拽绘制（✅ 已完成）
 
 **目标**：把「插入按钮」升级成「工具」，让图元可以拉出来画出来。
 
@@ -99,38 +99,81 @@
 
 **不做**：绘制时按住 Alt 复制、绘入 Frame 的内部嵌套、按住空格临时切换抓手。
 
-### P2：形状族与选中态工具条
+**验收结果（2026-11-07）**：
 
-- 长按「矩形」展开形状子菜单：矩形、椭圆、直线、多边形、星形。
-- 直线/多边形/星形需要几何表达，见 §6 的 `vector.geometry` 草案；直线可以先落到
-  `vector` + 两段 `M/L`。
-- `AppearanceSpec` 增加 `cornerRadii?: [number, number, number, number]` 与
-  `strokeWidth?: number`（都可选，旧文档不受影响；画布、HTML/SVG 导出各补一处）。
-- 对齐/分布：右键菜单已有对齐，补等距分布，并在多选时浮出选中态工具条——这是
-  「有功能但找不到」的修复，比继续往顶栏堆图标更有效。
+- `packages/studio-web/src/tools.ts`：`ToolId`、`TOOLS`、`rectFromDrag`、`clampRect`、
+  `defaultRectFor`、`shortcutTool`、`nextToolAfterDraw` 全部为纯函数，不依赖 React/DOM；
+- `renderer/use-canvas-drag.ts` 新增 `draw` 手势：图元工具按下即绘制，修饰键逐帧求值，
+  松手回调 `onDraw(rect, { dragged })`，`pointercancel` 不留半成品；
+- `renderer/selection-overlay.ts` 新增 `paintDrawPreview`（虚线 + 半透明填充，线宽与
+  虚线段长按 zoom 换算；椭圆工具画椭圆预览，与最终形状一致）；
+- 顺带修复 `canvas-surface` 的绘制顺序缺陷：此前 `onAfterPaint` 在选区为空时提前
+  return，导致「从空白处开始框选」时选框根本不画；现在框选与绘制预览在选区判空之前绘制；
+- `main.tsx`：`panMode` 布尔收敛为 `tool` 状态（抓手成为工具之一），绘制提交后创建节点、
+  选中、自动回到选择工具；`V/F/R/O/T/H/Esc` 快捷键；图元工具下单击不再改变选中态、
+  双击不再进入文本编辑；拖出范围钳制在 960×680 画板内；
+- 测试：`test/tools.test.ts`（13 条）与 `test/renderer-draw-preview.test.ts`（4 条），
+  `npx tsx --test test/*.test.ts` 全量 311 条通过，`tsc -b` 通过。
 
-### P3：矢量与路径编辑
+### P2：形状族与描边宽度
 
-文档格式升到 v3（`migrate.ts` 登记 v2 → v3）：
+**目标**：让「形状」不再只有矩形和椭圆——补上直线、多边形、星形，并让描边有真实宽度。
+
+**几何契约（本次定稿，取代原 §P3 草案）**：
 
 ```ts
-// 草案
 export interface VectorGeometry {
   kind: "path";
-  /** SVG path data；只接受 M/L/C/Q/Z，不解析 A（各实现椭圆弧差异太大）。 */
+  /** 归一化路径：坐标落在 [0,1]，相对节点布局盒；只允许 M/L/Z。 */
   d: string;
 }
 export interface VectorNode extends BaseNode {
   type: "vector";
-  geometry?: VectorGeometry; // 缺省时沿用现有圆角矩形回退
+  /** 缺省时沿用旧的「按圆角矩形画」回退 + 导出诊断，保证旧文档不变。 */
+  geometry?: VectorGeometry;
 }
 ```
 
-需要同时改：`scene.ts`（构造 `Path2D`）、`canvas-renderer.ts`（`fill(path)`）、
-`hit-test.ts`（`isPointInPath`，并做包围盒快路径）、`design-export`（SVG 直接输出 `d`，
-HTML 输出内联 `<svg>`）、选择框（按包围盒，暂不做顶点级编辑）。
-钢笔（多次点击、贝塞尔手柄）与直接选择工具（拖锚点）是这一阶段最贵也最有价值的交互，
-建议单独一轮迭代。
+三个决定，理由写在 `design-schema/src/geometry.ts` 里：
+
+1. **坐标归一化到 [0,1]**，而不是绝对像素。这样改宽高就是缩放图形——和 Figma 里拉
+   多边形一样；否则每次 resize 都要重写路径。
+2. **只允许 M/L/Z**。贝塞尔（C/Q）与圆弧（A）留给 P3：它们需要手柄编辑和一整套
+   拟合/布尔算法，先把多边形做完比半成品曲线更有价值。
+3. **不引入 `polygon` / `star` / `line` 节点类型**。三者都是 `vector` + 一段路径，
+   否则类型数会随形状数线性增长，导出、命中、复制粘贴每处都要加分支。
+
+**落地范围（本轮）**：
+
+- `design-schema/src/geometry.ts`：路径解析/校验/绝对化/命中（点在多边形内 + 到线段
+  距离，直线因此不会「点哪儿都选中」），以及带缓存的解析结果；
+- 新工具 `line` / `polygon` / `star`。工具栏平铺而不是长按子菜单：5 个图元仍然一屏
+  可辨，子菜单在数量到 8 以后再说；
+- 直线用 `M/L` 两段表达，节点盒子取两点包围盒并保证至少 1px 高（水平线否则无法命中）；
+- `AppearanceSpec.strokeWidth?: number`：画布、SVG、HTML、属性面板各补一处；
+- 导出：SVG 直接输出 `<path d>`，HTML 输出内联 `<svg viewBox>`；`vector` 的支持等级
+  从 `unsupported` 升为 `exact`，但**没有 geometry 的旧节点仍发诊断**。
+
+**不做（顺延）**：四角独立圆角 `cornerRadii`、等距分布、多选浮出的选中态工具条、
+几何编辑（拖锚点）。
+
+**验收**：拖出直线/多边形/星形后画布形状与命中一致；改宽高时图形随之缩放；SVG/HTML
+导出含同一条路径；`supportFor("vector", "svg") === "exact"`；旧文档（无 geometry 的
+vector）导出产物逐字不变，golden 不破。
+
+### P3：钢笔与路径编辑
+
+几何契约已经在 P2 落地（`vector.geometry`，M/L/Z、归一化坐标），P3 只在这上面加交互：
+
+- 路径表达扩展 `C`（三次贝塞尔）与 `Q`（二次），仍不支持 `A`——圆弧交给贝塞尔近似，
+  避免各实现椭圆弧参数化不一致；
+- 钢笔：多次点击落锚点、点击首点闭合、拖拽拉出手柄，实时预览；
+- 直接选择工具：拖锚点、拖手柄、加减锚点；这一步需要把「路径编辑」做成独立工具状态，
+  不是复用现有的移动手势；
+- 选择框仍按包围盒（顶点级高亮单独画），不改命中模型。
+
+这一阶段最贵的是交互而不是数据：锚点命中、手柄约束、闭合判定、撤销粒度都要单独设计，
+建议单独一轮迭代，不要和形状族混在一起。
 
 ### P4：布尔运算与蒙版
 

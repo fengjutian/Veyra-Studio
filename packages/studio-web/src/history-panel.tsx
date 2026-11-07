@@ -32,7 +32,7 @@ export function HistoryPanel({ rows, disabled, onRestore }: HistoryPanelProps) {
                 </button>
               </Tooltip>
             )
-            : <span className="history-current">当前</span>}
+            : <span className="history-current">{row.current ? "当前" : "无法回退"}</span>}
         </div>
       ))}
     </div>

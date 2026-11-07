@@ -1,4 +1,5 @@
 import type { TransactionEntry } from "@ufira/design-runtime";
+import { canRestoreRevision } from "@ufira/studio-application";
 
 /**
  * 操作历史面板的展示层。
@@ -18,6 +19,8 @@ export interface HistoryRow {
   actor: string;
   /** 已经是最新版本、或者早于保留快照时没有可回退的基线。 */
   restorable: boolean;
+  /** 是不是当前正在使用的版本。 */
+  current: boolean;
 }
 
 const COMMAND_LABELS: Record<string, string> = {
@@ -59,17 +62,19 @@ export function commandSummary(commands: Array<{ type: string }>): string {
 export interface HistoryRowOptions {
   limit?: number;
   /**
-   * 存储里保留的最早快照版本。
+   * 可以当重放起点的版本号：保留的历史版本 + 重建基线。
    *
-   * 回退需要一份"不晚于目标版本"的快照作为起点；比它更早的事务还留在日志里，
-   * 但已经没有可以重建的基线了，所以面板上不提供回退按钮。
+   * 回退要一份"不晚于目标版本"的起点，加上从起点到目标之间完整的事务日志，
+   * 两者缺一不可。所以这里按真实可达性判断，而不是简单比大小——日志被裁过的
+   * 那一段没有日志，回退按钮就不该出现。
    */
-  oldestSnapshotRevision?: number;
+  baseRevisions?: number[];
 }
 
 /** 事务日志 → 面板行；按 revision 从新到旧，只取最近 `options.limit` 条。 */
 export function historyRows(entries: TransactionEntry[], currentRevision: number, options: HistoryRowOptions = {}): HistoryRow[] {
   const limit = options.limit ?? 20;
+  const journalRevisions = entries.map(entry => entry.revision);
   return [...entries]
     .sort((left, right) => right.revision - left.revision)
     .slice(0, Math.max(0, limit))
@@ -81,6 +86,7 @@ export function historyRows(entries: TransactionEntry[], currentRevision: number
       kind: entry.commands.some(command => command.type === "history.restore") ? "restore" : "edit",
       actor: ACTOR_LABELS[entry.actor.type] ?? entry.actor.id,
       restorable: entry.revision < currentRevision
-        && (options.oldestSnapshotRevision === undefined || entry.revision >= options.oldestSnapshotRevision),
+        && (options.baseRevisions === undefined || canRestoreRevision(entry.revision, options.baseRevisions, journalRevisions)),
+      current: entry.revision === currentRevision,
     }));
 }

@@ -23,7 +23,8 @@ test("导出器会发出的每一种诊断都能在矩阵里找到对应行", ()
 test("查询某个特性在某个格式下的支持程度", () => {
   assert.equal(supportFor("image-asset", "html"), "exact");
   assert.equal(supportFor("image-asset", "png"), "rasterized");
-  assert.equal(supportFor("vector", "svg"), "unsupported");
+  assert.equal(supportFor("vector", "svg"), "exact");
+  assert.equal(supportFor("vector", "png"), "rasterized");
   assert.equal(supportFor("png-rasterize", "png"), "rasterized");
   assert.equal(supportFor("png-rasterize", "html"), "n/a");
   assert.equal(supportFor("unknown-feature", "png"), undefined);

@@ -29,7 +29,7 @@ export const EXPORT_SUPPORT_MATRIX: ExportSupportEntry[] = [
   { feature: "image-asset", html: "exact", svg: "exact", png: "rasterized", note: "Requires a resolvable asset; the workbench inlines data URLs. Remote URLs are rejected as unsafe." },
   { feature: "component-instance", html: "approximated", svg: "approximated", png: "approximated", note: "Only the materialized instance children are exported; slots are not re-evaluated." },
   { feature: "component-override", html: "exact", svg: "exact", png: "exact", note: "Overrides are applied to the materialized children before export, so text and appearance already include them." },
-  { feature: "vector", html: "unsupported", svg: "unsupported", png: "unsupported", note: "Schema v2 has no path data, so vector nodes export as an empty container." },
+  { feature: "vector", html: "exact", svg: "exact", png: "rasterized", note: "Normalized M/L/Z paths are written as SVG path data (HTML uses an inline <svg>). Vector nodes without geometry keep the legacy empty-container diagnostic." },
   { feature: "layout", html: "approximated", svg: "approximated", png: "approximated", note: "Fallback to declared positions when the layout engine cannot resolve the page; geometry may drift from the canvas." },
   { feature: "hidden-node", html: "exact", svg: "exact", png: "exact", note: "Hidden nodes are skipped and reported as a diagnostic instead of silently disappearing." },
   { feature: "png-rasterize", html: "n/a", svg: "n/a", png: "rasterized", note: "PNG is produced by rasterizing the SVG in the browser; external images taint the canvas." },

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidVectorPath } from "./geometry";
 
 const nonNegative = z.number().finite().nonnegative();
 const id = z.string().min(1);
@@ -25,7 +26,20 @@ const appearanceSchema = z.object({
   opacity: z.number().min(0).max(1),
   fill: z.string().optional(),
   stroke: z.string().optional(),
+  // 缺省按 1px；0 没有意义（画不出线），所以要求为正数。
+  strokeWidth: z.number().finite().positive().optional(),
   cornerRadius: nonNegative.optional(),
+});
+
+/**
+ * 矢量几何只接受归一化、只含 M/L/Z 的路径。
+ *
+ * 校验放在这里而不是渲染层：一条含 `C` 的路径如果被放进来，画布会少画一段、
+ * 导出会输出另一段，两边悄悄不一致。宁可写入时就拒绝。
+ */
+const vectorGeometrySchema = z.object({
+  kind: z.literal("path"),
+  d: z.string().min(1).refine(isValidVectorPath, { message: "Vector path must contain only M/L/Z with coordinates in [0,1]" }),
 });
 
 const baseNodeShape = {
@@ -53,7 +67,7 @@ const genericNodeShape = { ...baseNodeShape };
 const frameNodeSchema = z.object({ ...genericNodeShape, type: z.literal("frame") });
 const rectangleNodeSchema = z.object({ ...genericNodeShape, type: z.literal("rectangle") });
 const ellipseNodeSchema = z.object({ ...genericNodeShape, type: z.literal("ellipse") });
-const vectorNodeSchema = z.object({ ...genericNodeShape, type: z.literal("vector") });
+const vectorNodeSchema = z.object({ ...genericNodeShape, type: z.literal("vector"), geometry: vectorGeometrySchema.optional() });
 const componentNodeSchema = z.object({ ...genericNodeShape, type: z.literal("component") });
 
 const textNodeSchema = z.object({

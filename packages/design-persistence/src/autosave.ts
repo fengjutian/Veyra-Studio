@@ -118,6 +118,9 @@ export function withAutosave(repository: ProjectRepository, options: AutosaveOpt
     appendTransactions: (entries: TransactionEntry[]) => repository.appendTransactions(entries),
     listSnapshots: (projectId: string) => repository.listSnapshots(projectId),
     readSnapshot: (projectId: string, revision: number) => repository.readSnapshot(projectId, revision),
+    // 重建基线是可选能力：底层仓库不支持时就不假装支持。
+    ...(repository.readBaseline ? { readBaseline: (projectId: string) => repository.readBaseline!(projectId) } : {}),
+    ...(repository.writeBaseline ? { writeBaseline: (projectId: string, document: DesignDocument) => repository.writeBaseline!(projectId, document) } : {}),
     // 存储统计与历史裁剪是可选能力：底层仓库不支持时就不假装支持。
     ...(repository.inspectStorage ? { inspectStorage: (projectId: string) => repository.inspectStorage!(projectId) } : {}),
     ...(repository.trimSnapshots ? { trimSnapshots: (projectId: string, keep: number) => repository.trimSnapshots!(projectId, keep) } : {}),

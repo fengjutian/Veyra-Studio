@@ -150,6 +150,15 @@
   原来把全部区块堆进一条长滚动列的布局；分段交互用 `@radix-ui/react-tabs`（RovingFocus），
   方向键 / Home / End 切换、`aria-selected` / `aria-controls` 与焦点归还都由 Radix 负责，
   不再需要手写 tablist；
+- 画布工具体系（P1）：创建入口从「瞬时插入按钮」升级为「工具模式」——`select` / `frame` /
+  `rectangle` / `ellipse` / `text` / `hand`（`packages/studio-web/src/tools.ts`，纯函数层）。
+  图元工具下在画布上拖拽即绘制（Shift 等比、Alt 以按下点为中心展开），松手提交一条
+  `node.create`、选中新节点并自动回到选择工具；不拖拽的单击按默认尺寸创建；拖出范围会
+  钳制在画板内。工具状态是纯视图状态：不进文档、不涨 revision、不写快照。快捷键
+  `V/F/R/O/T/H`，`Esc` 回到选择（再按一次清空选区）。绘制预览是 Canvas 上的虚线框，
+  与框选共用绘制流程，因此也修掉了此前「选区为空时框选矩形不绘制」的缺陷
+  （`canvas-surface` 原先在选区判空之后才画选框）。后续相位（形状族、矢量、布尔、
+  旋转/约束、渐变/阴影）见 `editor-tooling-roadmap.md`；
 - 工作台外壳重做，布局对标 Figma / Penpot 一类编辑器：48px 顶栏把「创建工具、撤销重做、
   项目操作、导出/导入、自动保存状态」分组并用分隔线隔开；左侧栏拆成「页面」和「图层」两段，
   页面改用列表而不是下拉框，图层工具收成两行图标条（复制/粘贴/重复/编组/取消编组，以及
@@ -366,6 +375,10 @@
 
 ## 尚未实现或尚未达到可用状态
 
+- 矢量与高级图形能力尚未实现：`vector` 节点类型已存在但没有路径几何（渲染器对非椭圆
+  一律按圆角矩形画），因此直线、多边形、星形、钢笔、路径编辑和布尔运算都还没有入口；
+  旋转、约束、蒙版、渐变、阴影、模糊、描边宽度同样未实现。相位划分见
+  `editor-tooling-roadmap.md`；
 - 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
 - 生产可用的渲染系统；画布已切到 Canvas 2D 场景渲染（`renderer/scene.ts` +
   `renderer/canvas-renderer.ts`），有根节点级视口裁剪、像素回归和绘制耗时基线，
@@ -406,9 +419,10 @@
 
 1. 本文：确认当前实际能力；
 2. `project-progress-and-version-roadmap.md`：确认功能对应的软件版本和发布门槛；
-3. 根级 `AGENTS.md`：开发约束和当前边界；
-4. 各包源码、测试及包级 `AGENTS.md`：确认实现细节；
-5. `ai-design-studio-architecture-analysis.md`：了解目标架构和未来路线。
+3. `editor-tooling-roadmap.md`：确认编辑器工具能力的现状与后续相位；
+4. 根级 `AGENTS.md`：开发约束和当前边界；
+5. 各包源码、测试及包级 `AGENTS.md`：确认实现细节；
+6. `ai-design-studio-architecture-analysis.md`：了解目标架构和未来路线。
 
 架构文档中的 V1 功能、目标目录和 Phase 1—5 都是规划内容。名称出现在文档中，不代表
 相应目录、包或能力已经存在。

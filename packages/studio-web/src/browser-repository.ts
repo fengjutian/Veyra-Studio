@@ -8,6 +8,7 @@ import {
   estimateJsonBytes,
   loadDocumentPayload,
   normalizeAssetHash,
+  prepareBaselinePrune,
   replayJournal,
   snapshotSummary,
   type AssetWrite,
@@ -24,6 +25,8 @@ import { detectSchemaVersion, type DesignDocument } from "@ufira/design-schema";
 interface ProjectRecord { id: string; revision: number; updatedAt: string; name: string }
 interface SnapshotRecord { projectId: string; revision: number; document: DesignDocument }
 interface AssetRecord { projectId: string; hash: string; bytes: Uint8Array }
+/** 重建基线：每个项目一份，永不被裁剪。 */
+interface BaselineRecord { projectId: string; document: DesignDocument }
 
 /** 项目列表摘要；与仓库契约里的 {@link ProjectSummary} 是同一个形状。 */
 export type StoredProjectSummary = ProjectSummary;
@@ -34,6 +37,7 @@ interface StudioDatabase extends Dexie {
   snapshotHistory: Table<SnapshotRecord, [string, number]>;
   transactions: Table<TransactionEntry, [string, number]>;
   assets: Table<AssetRecord, [string, string]>;
+  baselines: EntityTable<BaselineRecord, "projectId">;
 }
 
 export interface DexieRepositoryOptions { databaseName?: string; indexedDB?: IDBFactory; IDBKeyRange?: typeof IDBKeyRange }
@@ -49,8 +53,11 @@ export class BrowserProjectNotFoundError extends ProjectNotFoundError {
  * 2 新增 `snapshotHistory` 表：当前快照仍在 `snapshots` 里，旧版本留在历史表，
  * 于是同一项目可以保留最近几份快照用于回滚，旧格式的原始快照也不会被迁移
  * 覆盖掉。IndexedDB 不允许在升级时改表的主键，所以新增表而不是改主键。
+ *
+ * 3 新增 `baselines` 表：每项目一份重建基线，给事务日志当重放起点。它和历史
+ * 版本不是一回事——历史版本会被裁，基线永远留着。
  */
-export const BROWSER_STORAGE_VERSION = 2;
+export const BROWSER_STORAGE_VERSION = 3;
 
 export class DexieProjectRepository implements ProjectRepository {
   private readonly database: StudioDatabase;
@@ -59,6 +66,7 @@ export class DexieProjectRepository implements ProjectRepository {
     const database = new Dexie(options.databaseName ?? "ufira-design-studio", options.indexedDB ? { indexedDB: options.indexedDB, IDBKeyRange: options.IDBKeyRange } : undefined) as StudioDatabase;
     database.version(1).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash" });
     database.version(2).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", snapshotHistory: "[projectId+revision], projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash" });
+    database.version(3).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", snapshotHistory: "[projectId+revision], projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash", baselines: "&projectId" });
     this.database = database;
   }
 
@@ -66,7 +74,7 @@ export class DexieProjectRepository implements ProjectRepository {
 
   async saveSnapshot(document: DesignDocument): Promise<void> {
     const valid = assertSavableDocument(document);
-    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, async () => {
+    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.baselines, async () => {
       // 覆盖前先把上一份快照挪进历史表：迁移升级和普通保存都因此留有退路。
       const previous = await this.database.snapshots.get(valid.id);
       if (previous) await this.database.snapshotHistory.put({ projectId: valid.id, revision: previous.revision, document: previous.document });
@@ -76,6 +84,7 @@ export class DexieProjectRepository implements ProjectRepository {
       for (const stale of history.slice(0, Math.max(0, history.length - (SNAPSHOT_RETENTION - 1)))) {
         await this.database.snapshotHistory.delete([stale.projectId, stale.revision]);
       }
+      await this.ensureBaseline(valid.id);
     });
   }
 
@@ -88,14 +97,17 @@ export class DexieProjectRepository implements ProjectRepository {
   async replaceProject(projectId: string, document: DesignDocument): Promise<void> {
     const valid = assertSavableDocument(document);
     if (valid.id !== projectId) throw new Error(`Replacement document id ${valid.id} does not match project ${projectId}`);
-    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, async () => {
+    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, this.database.baselines, async () => {
       await this.database.projects.delete(projectId);
       await this.database.snapshots.delete(projectId);
       await this.database.snapshotHistory.where("projectId").equals(projectId).delete();
       await this.database.transactions.where("documentId").equals(projectId).delete();
       await this.database.assets.where("projectId").equals(projectId).delete();
+      await this.database.baselines.delete(projectId);
       await this.database.projects.put({ id: valid.id, revision: valid.revision, updatedAt: valid.meta.updatedAt, name: valid.meta.name });
       await this.database.snapshots.put({ projectId: valid.id, revision: valid.revision, document: structuredClone(valid) });
+      // 覆盖之后旧历史全部作废，基线换成新内容这一版。
+      await this.database.baselines.put({ projectId, document: structuredClone(valid) });
     });
   }
 
@@ -106,7 +118,7 @@ export class DexieProjectRepository implements ProjectRepository {
     await this.database.transaction("rw", this.database.transactions, async () => { for (const entry of entries) await this.database.transactions.add(structuredClone(entry)); });
   }
 
-  async listTransactions(projectId: string, afterRevision = 0): Promise<TransactionEntry[]> {
+  async listTransactions(projectId: string, afterRevision = -1): Promise<TransactionEntry[]> {
     return this.database.transactions.where("documentId").equals(projectId).filter(entry => entry.revision > afterRevision).sortBy("revision");
   }
 
@@ -160,12 +172,13 @@ export class DexieProjectRepository implements ProjectRepository {
   }
 
   async deleteProject(projectId: string): Promise<void> {
-    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, async () => {
+    await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.transactions, this.database.assets, this.database.baselines, async () => {
       await this.database.projects.delete(projectId);
       await this.database.snapshots.delete(projectId);
       await this.database.snapshotHistory.where("projectId").equals(projectId).delete();
       await this.database.transactions.where("documentId").equals(projectId).delete();
       await this.database.assets.where("projectId").equals(projectId).delete();
+      await this.database.baselines.delete(projectId);
     });
   }
 
@@ -173,8 +186,44 @@ export class DexieProjectRepository implements ProjectRepository {
     const keep = Math.max(0, options.keep ?? JOURNAL_RETENTION);
     const entries = await this.listTransactions(projectId);
     if (entries.length <= keep) return 0;
-    const cutoff = entries[entries.length - keep]!.revision;
-    return this.database.transactions.where("documentId").equals(projectId).and(entry => entry.revision < cutoff).delete();
+    // 裁之前先把"新的日志起点前一版"固化成基线：日志敢裁，靠的是这份基线。
+    const front = await prepareBaselinePrune(this, projectId, entries, keep);
+    return this.database.transactions.where("documentId").equals(projectId).and(entry => entry.revision < front).delete();
+  }
+
+  /** 读取重建基线；没有基线（老项目或后端不支持）时返回 undefined。 */
+  async readBaseline(projectId: string): Promise<DesignDocument | undefined> {
+    const record = await this.database.baselines.get(projectId);
+    if (!record) return undefined;
+    try {
+      const { document } = loadDocumentPayload(record.document);
+      return document.id === projectId ? document : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 固化重建基线；这份文档永不被裁剪。 */
+  async writeBaseline(projectId: string, document: DesignDocument): Promise<void> {
+    const valid = assertSavableDocument(document);
+    await this.database.baselines.put({ projectId, document: structuredClone(valid) });
+  }
+
+  /**
+   * 确保这个项目有一份重建基线。
+   *
+   * 基线只补一次：项目建立时的第一份快照就是最合适的起点，之后由裁日志的流程
+   * 往前推进。已经在更早版本里建过基线的项目，这里不会覆盖它。
+   */
+  private async ensureBaseline(projectId: string): Promise<void> {
+    const existing = await this.database.baselines.get(projectId);
+    if (existing) return;
+    // 用最老的那份保留快照当基线：越早的起点，能重建的步骤越多。
+    const history = await this.database.snapshotHistory.where("projectId").equals(projectId).sortBy("revision");
+    const current = await this.database.snapshots.get(projectId);
+    const oldest = history[0] ?? current;
+    if (!oldest) return;
+    await this.database.baselines.put({ projectId, document: structuredClone(oldest.document) });
   }
 
   /**

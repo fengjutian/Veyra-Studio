@@ -4,6 +4,8 @@ export type NodeId = string;
 export type ComponentId = string;
 export type AssetId = string;
 
+import type { VectorGeometry } from "./geometry";
+
 export interface DocumentMeta {
   name: string;
   createdAt: string;
@@ -36,6 +38,8 @@ export interface AppearanceSpec {
   opacity: number;
   fill?: string;
   stroke?: string;
+  /** 描边宽度（px）。缺省按 1px，与旧文档和 DOM 默认边框一致。 */
+  strokeWidth?: number;
   cornerRadius?: number;
 }
 
@@ -128,11 +132,17 @@ export interface InstanceNode extends BaseNode {
   overrides: Record<string, unknown>;
 }
 
-export interface GenericNode extends BaseNode {
-  type: Exclude<NodeType, "text" | "image" | "instance">;
+export interface VectorNode extends BaseNode {
+  type: "vector";
+  /** 归一化路径几何；缺省时沿用「按圆角矩形画」的旧回退，导出会给出诊断。 */
+  geometry?: VectorGeometry;
 }
 
-export type DesignNode = TextNode | ImageNode | InstanceNode | GenericNode;
+export interface GenericNode extends BaseNode {
+  type: Exclude<NodeType, "text" | "image" | "instance" | "vector">;
+}
+
+export type DesignNode = TextNode | ImageNode | InstanceNode | VectorNode | GenericNode;
 
 export interface ComponentDefinition {
   id: ComponentId;

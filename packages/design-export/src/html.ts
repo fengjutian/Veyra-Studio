@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, resolveGap, resolveRadius, resolveStroke, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -64,7 +64,12 @@ function renderNode(
     return `<img ${common} src="${escapeAttribute(url)}" alt="${escapeAttribute(node.name)}">`;
   }
   if (node.type === "vector") {
-    diagnostics.push({ nodeId, feature: "vector", support: "unsupported", message: "Structured vector path data is not available in schema v1" });
+    const commands = node.geometry ? vectorPathCommands(node.geometry.d) : [];
+    if (!commands.length) {
+      diagnostics.push({ nodeId, feature: "vector", support: "unsupported", message: "Vector node has no path geometry and is exported as an empty container" });
+    } else {
+      return renderVectorPath(document, node, common, commands, tokenVariables);
+    }
   }
   if (node.type === "instance") {
     diagnostics.push({ nodeId, feature: "component-instance", support: "approximated", message: "Instance export currently uses only materialized instance children" });
@@ -81,9 +86,37 @@ function renderNode(
   return `<div ${common}>${children ? `\n${indent(children)}\n` : ""}</div>`;
 }
 
+/**
+ * 矢量节点在 HTML 里输出内联 `<svg>`。
+ *
+ * 外层仍是标准的 `.design-node` div（负责定位与尺寸），内层 svg 用 `viewBox` 撑满，
+ * 路径坐标是归一化的，所以父 div 被布局引擎改变尺寸时图形跟着缩放。
+ * 填充与描边直接写在 `<path>` 上：token 绑定已经在 `boundValue` 里变成 `var(--x)`。
+ */
+function renderVectorPath(
+  document: DesignDocument,
+  node: DesignNode & { type: "vector" },
+  common: string,
+  commands: ReturnType<typeof vectorPathCommands>,
+  tokenVariables: Record<string, string>,
+): string {
+  const width = Math.max(node.layout.width, 1);
+  const height = Math.max(node.layout.height, 1);
+  const d = pathDataFromCommands(absolutePath(commands, { x: 0, y: 0, width, height }));
+  const fill = node.appearance.fill ? boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables) : "none";
+  const hasStroke = Boolean(resolveStroke(document, node) || node.bindings?.stroke);
+  const stroke = hasStroke ? boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables) : "none";
+  const strokeWidth = node.appearance.strokeWidth ?? 1;
+  const attributes = [`d="${escapeAttribute(d)}"`, `fill="${escapeAttribute(fill)}"`, `stroke="${escapeAttribute(stroke)}"`];
+  if (hasStroke) attributes.push(`stroke-width="${num(strokeWidth)}"`);
+  return `<div ${common}><svg viewBox="0 0 ${num(width)} ${num(height)}" preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:visible"><path ${attributes.join(" ")} /></svg></div>`;
+}
+
 function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
   const declarations: string[] = [];
   const inStack = parent?.layout.mode === "stack";
+  // 有几何的矢量节点自己画路径，不能再给它铺一块背景矩形（否则线宽 1px 的直线会变成色块）。
+  const pathVector = node.type === "vector" && Boolean(node.geometry);
   if (!inStack) {
     // 只有页面直属的节点用页面坐标定位，导出原点只影响它们；
     // 嵌套节点的坐标相对父节点，会跟着父节点一起平移。
@@ -97,11 +130,11 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   addSize(declarations, "height", node.layout.heightMode, node.layout.height, parent);
   declarations.push(`opacity:${node.appearance.opacity}`);
   if (!node.visible) declarations.push("display:none");
-  if (node.appearance.fill) declarations.push(`background:${boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables)}`);
+  if (node.appearance.fill && !pathVector) declarations.push(`background:${boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables)}`);
   // 描边和圆角都可以由 token 驱动；绑定存在但节点没写 fallback 时同样要输出。
-  if (resolveStroke(document, node) || node.bindings?.stroke) declarations.push(`border:1px solid ${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
+  if ((resolveStroke(document, node) || node.bindings?.stroke) && !pathVector) declarations.push(`border:${num(node.appearance.strokeWidth ?? 1)}px solid ${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
   const radius = resolveRadius(document, node);
-  if (radius !== undefined) declarations.push(`border-radius:${px(radius)}`);
+  if (radius !== undefined && !pathVector) declarations.push(`border-radius:${px(radius)}`);
 
   if (node.type === "text") {
     declarations.push(`font-family:${cssString(node.fontFamily)}`, `font-size:${px(node.fontSize)}`, `line-height:${px(node.lineHeight)}`, "white-space:pre-wrap", "margin:0");

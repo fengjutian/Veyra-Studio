@@ -118,6 +118,25 @@ export interface ProjectRepository {
    */
   readSnapshot(projectId: string, revision: number): Promise<DesignDocument>;
   /**
+   * 读取这个项目的重建基线。
+   *
+   * 基线是一份**永不被裁剪**的文档，位置落在"事务日志起点的前一版"：有了它，
+   * 日志窗口里的每一步都能从它连续重放出来，哪怕起点快照早被保留策略裁掉。
+   * 没有基线时，日志里早于最老快照的那些步骤就只剩日志、没法重建。
+   *
+   * 可选能力：后端不支持时调用方跳过，回退只用常规快照。
+   */
+  readBaseline?(projectId: string): Promise<DesignDocument | undefined>;
+  /**
+   * 固化重建基线。
+   *
+   * 由裁剪日志的流程在裁之前调用（见 {@link prepareBaselinePrune}）：把"新的
+   * 日志起点前一版"存下来，日志才敢裁。调用方也可以主动推进基线。
+   *
+   * 可选能力：后端不支持时调用方跳过。
+   */
+  writeBaseline?(projectId: string, document: DesignDocument): Promise<void>;
+  /**
    * 统计这个项目占用的存储空间。
    *
    * 可选能力：后端不支持计数时调用方应跳过这一项，而不是把 0 当成"没占空间"。

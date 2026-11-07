@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, resolveRadius, resolveStroke, validateDocument, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -115,7 +115,18 @@ function renderNode(
   }
 
   if (node.type === "vector") {
-    diagnostics.push({ nodeId, feature: "vector", support: "unsupported", message: "Structured vector path data is not available in schema v1" });
+    const commands = node.geometry ? vectorPathCommands(node.geometry.d) : [];
+    if (!commands.length) {
+      // 旧文档里的 vector 只有类型、没有几何：保持「空容器 + 诊断」的既有行为，
+      // 导出产物因此与升级前逐字一致。
+      diagnostics.push({ nodeId, feature: "vector", support: "unsupported", message: "Vector node has no path geometry and is exported as an empty container" });
+    } else {
+      // 路径坐标是归一化的，先换算成导出坐标系里的绝对坐标再写 d，
+      // 这样导出结果与画布/命中用的是同一套几何，不依赖 `<g>` 的 transform。
+      const d = pathDataFromCommands(absolutePath(commands, box));
+      const vectorChildren = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep);
+      return `<g ${common}><path d="${escapeXml(d)}" />${vectorChildren ? `\n${indent(vectorChildren, 2)}\n` : ""}</g>`;
+    }
   }
   if (node.type === "instance") {
     diagnostics.push({ nodeId, feature: "component-instance", support: "approximated", message: "Instance export uses the materialized instance children" });
@@ -163,7 +174,7 @@ function nodeStyle(document: DesignDocument, node: DesignNode, tokenVariables: R
   declarations.push(`fill:${node.appearance.fill ? boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables) : "none"}`);
   if (resolveStroke(document, node) || node.bindings?.stroke) {
     declarations.push(`stroke:${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
-    declarations.push("stroke-width:1");
+    declarations.push(`stroke-width:${num(node.appearance.strokeWidth ?? 1)}`);
   }
   if (node.type === "text") {
     declarations.push(`font-family:${cssString(node.fontFamily)}`);
