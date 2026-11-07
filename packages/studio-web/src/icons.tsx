@@ -43,6 +43,7 @@ import {
   Link2,
   Lock,
   LockOpen,
+  MousePointer2,
   PanelLeft,
   PanelRight,
   Pencil,
@@ -89,6 +90,9 @@ export const ICONS = {
   page: FilePlus,
   pageAdd: Plus,
   pageDelete: Trash,
+
+  // 画布工具
+  select: MousePointer2,
 
   // 新建节点
   addFrame: FrameIcon,

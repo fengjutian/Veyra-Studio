@@ -56,6 +56,37 @@ export function paintMarquee(context: CanvasRenderingContext2D, rect: { x: numbe
   context.restore();
 }
 
+/**
+ * 绘制预览：正在拉出来的图形轮廓。
+ *
+ * 用虚线与框选的实线区分开——框选是在「选已有对象」，绘制是在「造新对象」，
+ * 两者的视觉语言不该一样。线宽与虚线段长都按 zoom 换算，保持屏幕像素恒定。
+ */
+export function paintDrawPreview(
+  context: CanvasRenderingContext2D,
+  rect: { x: number; y: number; width: number; height: number },
+  options: { color?: string; zoom?: number; shape?: "rectangle" | "ellipse" | "frame" | "text" } = {},
+): void {
+  const zoom = options.zoom && options.zoom > 0 ? options.zoom : 1;
+  const color = options.color ?? "#8b5cf6";
+  const width = Math.max(rect.width, 0);
+  const height = Math.max(rect.height, 0);
+  context.save();
+  context.fillStyle = "rgba(139, 92, 246, 0.08)";
+  context.strokeStyle = color;
+  context.lineWidth = 1.5 / zoom;
+  context.setLineDash([4 / zoom, 3 / zoom]);
+  context.beginPath();
+  if (options.shape === "ellipse") {
+    context.ellipse(rect.x + width / 2, rect.y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
+  } else {
+    context.rect(rect.x, rect.y, width, height);
+  }
+  context.fill();
+  context.stroke();
+  context.restore();
+}
+
 /** 对齐辅助线：贯穿画布视口的 1px 线（按 zoom 换算保持屏幕宽度）。 */
 export function paintSnapGuides(
   context: CanvasRenderingContext2D,

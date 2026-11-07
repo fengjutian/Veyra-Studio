@@ -40,6 +40,8 @@ import { CanvasSurface } from "./renderer/canvas-surface";
 import { buildScene } from "./renderer/scene";
 import { hitTest, pointFromEvent } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
+import { TOOLS, clampRect, defaultRectFor, isDrawTool, nextToolAfterDraw, shortcutTool, toolSpec, type DrawToolId, type ToolId } from "./tools";
+import type { Rect } from "./renderer/selection";
 import { TextEditOverlay } from "./renderer/text-edit-overlay";
 import { CanvasA11yLayer } from "./renderer/a11y-layer";
 import { BatchPanel } from "./batch-panel";
@@ -91,10 +93,11 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
-  // 缩放只是视图状态：它不写进文档，也不涨 revision。
+  // 缩放与抓手都是视图状态：不写进文档，也不涨 revision。
   const [zoom, setZoom] = useState(1);
-  // 抓手模式与左右面板开合同样只是视图状态。
-  const [panMode, setPanMode] = useState(false);
+  // 当前画布工具。和缩放一样只是视图状态：切工具不改文档，也不进快照。
+  const [tool, setTool] = useState<ToolId>("select");
+  const panMode = tool === "hand";
   const [canvasEditingId, setCanvasEditingId] = useState<string | null>(null);
   // 可视区域（场景坐标）：滚动 + 缩放变化时更新，Canvas 只画相交的根节点。
   const [canvasViewport, setCanvasViewport] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -238,6 +241,27 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
   }, [project]);
+  // 工具快捷键：V/F/R/O/T/H 切工具，Esc 回到选择（已经是选择工具时清空选区）。
+  // 与上面的编辑快捷键分开：工具切换不涉及文档，也不该被 busy 拦住。
+  useEffect(() => {
+    if (!project) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "Escape") {
+        if (tool !== "select") setTool("select");
+        else setSelectedIds([]);
+        return;
+      }
+      const next = shortcutTool(event.key);
+      if (!next) return;
+      event.preventDefault();
+      setTool(next);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [project, tool]);
   // Ctrl/Cmd + 滚轮缩放画布。React 的 onWheel 是被动监听，拦不住默认行为，所以这里用原生监听。
   useEffect(() => {
     if (!scroller) return;
@@ -302,10 +326,12 @@ function App() {
     zoom,
     scene: hitTestScene,
     selectedIds,
+    tool,
     pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
     layoutOf: id => document?.nodes[id]?.layout,
     onCommit: changes => patchLayouts(changes),
     onMarquee: ids => setSelectedIds(ids),
+    onDraw: (rect, info) => createNodeFromDraw(info.tool, rect, info.dragged),
   });
 
   if (!project || !document) return <main className="loading">{message}</main>;
@@ -469,6 +495,26 @@ function App() {
   });
   const addNode = (type: "frame" | "text" | "rectangle" | "ellipse") => void run(() => execute([{ type: "node.create", payload: { node: makeNode(type, page.id) } }]));
   /**
+   * 用图元工具拖出来的节点。
+   *
+   * 拖拽超过阈值就按拖出来的范围建，否则按单击建默认尺寸；两者都钳制在画板内，
+   * 所以拖到画板外不会生成一半在画布外的对象。提交后回到选择工具并选中新节点——
+   * 和 Figma 的手感一致：画完立刻能调尺寸。
+   */
+  const createNodeFromDraw = (drawTool: DrawToolId, rect: Rect, dragged: boolean) => {
+    const target = clampRect(dragged ? rect : defaultRectFor(drawTool, { x: rect.x, y: rect.y }), { width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+    const box = { x: Math.round(target.x), y: Math.round(target.y), width: Math.round(target.width), height: Math.round(target.height) };
+    setTool(current => nextToolAfterDraw(current));
+    // 整块拖到画板外：没有可建的面积，只把工具收回来。
+    if (box.width < 1 || box.height < 1) return;
+    const node = makeNode(drawTool, page.id, box);
+    void run(async () => {
+      await execute([{ type: "node.create", payload: { node } }]);
+      setSelectedIds([node.id]);
+      setMessage(`已添加${toolSpec(drawTool).label} · ${box.width}×${box.height}`);
+    });
+  };
+  /**
    * 插入图片。
    *
    * 三步必须一起成立：字节落进仓库、文档登记资源元数据、创建引用它的节点。
@@ -572,15 +618,16 @@ function App() {
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
-  /** 单击选中完全由 Canvas 命中决定。 */
+  /** 单击选中完全由 Canvas 命中决定；只有选择工具才改变选中态。 */
   const selectFromCanvas = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (canvasDrag.consumedClick()) return;
+    if (tool !== "select" || canvasDrag.consumedClick()) return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (!hit) setSelectedIds([]);
     else setSelectedIds(current => event.shiftKey ? toggleId(current, hit) : [hit]);
   };
-  /** 双击文本节点打开覆盖层编辑。 */
+  /** 双击文本节点打开覆盖层编辑（图元工具下双击不进入编辑，避免画到一半跳进文本框）。 */
   const editTextAtCanvasPoint = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (tool !== "select") return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (hit && document?.nodes[hit]?.type === "text") {
       setCanvasEditingId(hit);
@@ -1093,11 +1140,15 @@ function App() {
         <Tooltip label={rightPanelOpen ? "收起右侧面板" : "展开右侧面板"}><button className="icon-only" aria-label="右侧面板" aria-pressed={rightPanelOpen} onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip>
       </div>
       <span className="toolbar-separator" aria-hidden="true" />
-      <div className="toolbar-group" role="group" aria-label="创建图层">
-        <Tooltip label="添加 Frame"><button className="icon-only" aria-label="添加 Frame" disabled={busy} onClick={() => addNode("frame")}><Icon name="addFrame" /></button></Tooltip>
-        <Tooltip label="添加矩形"><button className="icon-only" aria-label="添加矩形" disabled={busy} onClick={() => addNode("rectangle")}><Icon name="addRectangle" /></button></Tooltip>
-        <Tooltip label="添加椭圆"><button className="icon-only" aria-label="添加椭圆" disabled={busy} onClick={() => addNode("ellipse")}><Icon name="addEllipse" /></button></Tooltip>
-        <Tooltip label="添加文本"><button className="icon-only" aria-label="添加文本" disabled={busy} onClick={() => addNode("text")}><Icon name="addText" /></button></Tooltip>
+      <div className="toolbar-group" role="group" aria-label="画布工具">
+        {TOOLS.filter(spec => spec.id !== "hand").map(spec => (
+          <Tooltip key={spec.id} label={`${spec.label} · ${spec.shortcut.toUpperCase()}`}>
+            <button className="icon-only" aria-label={spec.label} aria-pressed={tool === spec.id} disabled={busy} onClick={() => setTool(spec.id)}>
+              <Icon name={spec.icon} />
+            </button>
+          </Tooltip>
+        ))}
+        <span className="tool-divider" aria-hidden="true" />
         <Tooltip label="添加图片"><button className="icon-only" aria-label="添加图片" disabled={busy} onClick={() => imageInput.current?.click()}><Icon name="nodeImage" /></button></Tooltip>
       </div>
       <input ref={imageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) insertImage(file); }} />
@@ -1183,8 +1234,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""}`} style={{ zoom }} {...canvasDrag.handlers} onClick={selectFromCanvas} onDoubleClick={editTextAtCanvasPoint}>
-                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}`} style={{ zoom }} {...canvasDrag.handlers} onClick={selectFromCanvas} onDoubleClick={editTextAtCanvasPoint}>
+                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
             </div>
           </ContextMenuTrigger>
@@ -1219,7 +1270,7 @@ function App() {
         </ContextMenuRoot>
       </div>
       <div className="canvas-controls">
-        <Tooltip label={panMode ? "退出抓手" : "抓手拖动画布"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setPanMode(on => !on)}><Icon name="pan" /></button></Tooltip>
+        <Tooltip label={panMode ? "退出抓手 · H" : "抓手拖动画布 · H"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setTool(current => current === "hand" ? "select" : "hand")}><Icon name="pan" /></button></Tooltip>
         <Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => setZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip>
         <Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => setZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip>
         <Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip>
@@ -1426,10 +1477,11 @@ async function migrateLegacySnapshot(repository: ProjectRepository, projectId: s
   } catch { /* Preserve invalid legacy data for manual recovery. */ }
 }
 
-function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: string): DesignNode {
+function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: string, box?: { x: number; y: number; width: number; height: number }): DesignNode {
   const id = `${type}:${crypto.randomUUID().slice(0, 8)}`;
   const names = { frame: "Frame", text: "文本", rectangle: "矩形", ellipse: "椭圆" } as const;
-  const common = { id, name: names[type], parentId, childIds: [], visible: true, locked: false, layout: { ...defaultLayout(), x: 48, y: 48, width: type === "text" ? 160 : 240, height: type === "text" ? 48 : 140 }, appearance: { ...defaultAppearance(), fill: type === "text" ? "#ffffff" : "#8b5cf6", cornerRadius: type === "ellipse" ? undefined : 12 } };
+  const size = box ?? { x: 48, y: 48, width: type === "text" ? 160 : 240, height: type === "text" ? 48 : 140 };
+  const common = { id, name: names[type], parentId, childIds: [], visible: true, locked: false, layout: { ...defaultLayout(), x: size.x, y: size.y, width: size.width, height: size.height }, appearance: { ...defaultAppearance(), fill: type === "text" ? "#ffffff" : "#8b5cf6", cornerRadius: type === "ellipse" ? undefined : 12 } };
   if (type === "text") return { ...common, type: "text", text: "双击编辑文本", fontFamily: "Inter", fontSize: 20, lineHeight: 28 };
   return { ...common, type };
 }

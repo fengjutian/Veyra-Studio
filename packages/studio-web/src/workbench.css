@@ -544,6 +544,17 @@
   box-shadow: 0 2px 10px #00000066, 0 24px 64px #00000099;
 }
 
+/* 图元工具下指针变成十字：先看到"要画东西"，再拖出尺寸。 */
+.canvas.tool-frame,
+.canvas.tool-rectangle,
+.canvas.tool-ellipse {
+  cursor: crosshair;
+}
+
+.canvas.tool-text {
+  cursor: text;
+}
+
 .canvas-controls {
   right: 16px;
   bottom: 16px;

@@ -4,7 +4,7 @@ import type { ProjectRepository } from "@ufira/design-persistence";
 import { loadAssetUrl } from "../asset-url";
 import { buildScene, type SceneBox, type SceneNode } from "./scene";
 import { cullScene, type CullViewport } from "./culling";
-import { paintMarquee, paintSelectionOverlay, paintSnapGuides } from "./selection-overlay";
+import { paintDrawPreview, paintMarquee, paintSelectionOverlay, paintSnapGuides } from "./selection-overlay";
 import type { SnapGuide } from "./snapping";
 import { selectedBoxes, selectionBounds, type Rect } from "./selection";
 import { applyBoxOverrides } from "./selection-drag";
@@ -33,11 +33,14 @@ export interface CanvasSurfaceProps {
   previewBoxes?: Record<string, SceneBox>;
   /** 框选矩形（场景坐标）。 */
   marquee?: Rect;
+  /** 绘制中的临时矩形（场景坐标）与它的形状。 */
+  drawRect?: Rect;
+  drawShape?: "rectangle" | "ellipse" | "frame" | "text";
   /** 拖动时的对齐辅助线。 */
   guides?: SnapGuide[];
 }
 
-export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, guides }: CanvasSurfaceProps) {
+export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, guides }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
@@ -84,14 +87,17 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
       devicePixelRatio: window.devicePixelRatio || 1,
       images,
       onAfterPaint: context => {
-        if (!selection?.length) return;
+        // 框选与绘制预览跟选区无关：从空白处开始框选时选区本来就是空的，
+        // 之前把两者都放在 `selection` 判空之后，导致选框一直画不出来。
         if (marquee) paintMarquee(context, marquee, { zoom });
+        if (drawRect) paintDrawPreview(context, drawRect, { zoom, shape: drawShape });
+        if (!selection?.length) return;
         const bounds = selectionBounds(selectedBoxes(paintedScene, selection));
         if (bounds) paintSelectionOverlay(context, bounds, { zoom });
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
       },
     });
-  }, [paintedScene, zoom, images, width, height, selection, marquee, guides]);
+  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, guides]);
 
   return <canvas ref={canvasRef} className="canvas-surface" aria-hidden="true" />;
 }
