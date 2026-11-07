@@ -122,3 +122,20 @@ test("exports a non-default border width for shapes", () => {
   const result = exportPageToHtml(documentWith([root]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
   assert.match(result.html, /border:3px solid #000000/);
 });
+test("exports per-corner radii as a four-value border-radius", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), cornerRadii: [10, 20, 30, 40] },
+  };
+  const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  // CSS 顺序：左上 右上 右下 左下，与模型里的一致。
+  assert.match(result.html, /border-radius:10px 20px 30px 40px/);
+});
+
+test("a uniform cornerRadii keeps the single-value border-radius", () => {
+  const box: DesignNode = { ...frame("card"), type: "rectangle", appearance: { ...defaultAppearance(), cornerRadii: [8, 8, 8, 8] } };
+  const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /border-radius:8px/);
+  assert.doesNotMatch(result.html, /border-radius:8px 8px/);
+});

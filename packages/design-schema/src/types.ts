@@ -34,6 +34,14 @@ export interface LayoutSpec {
   align?: "start" | "center" | "end" | "stretch";
 }
 
+/**
+ * 四角圆角，顺序与 CSS `border-radius` 一致：左上、右上、右下、左下。
+ *
+ * 与单值的 `cornerRadius` 并存：单值是「四角相同」的快捷写法，四角独立时用这个字段；
+ * 两者同时存在时四角独立优先（画布、HTML、SVG 三处共用 `resolveCornerRadii`）。
+ */
+export type CornerRadii = [number, number, number, number];
+
 export interface AppearanceSpec {
   opacity: number;
   fill?: string;
@@ -41,6 +49,7 @@ export interface AppearanceSpec {
   /** 描边宽度（px）。缺省按 1px，与旧文档和 DOM 默认边框一致。 */
   strokeWidth?: number;
   cornerRadius?: number;
+  cornerRadii?: CornerRadii;
 }
 
 export interface PropertyBindings {

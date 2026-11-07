@@ -212,7 +212,9 @@ AI 原型：
 - 形状族与矢量基础（P2）：直线/多边形/星形落地为 `vector` + 归一化 `M/L/Z` 路径
   （`design-schema/src/geometry.ts`），改宽高即缩放图形；命中按真实路径判定；SVG 输出
   `<path>`、HTML 输出内联 `<svg>`，`vector` 支持等级升为 `exact`，无 geometry 的旧文档
-  导出产物不变；`AppearanceSpec.strokeWidth` 同时接入画布、导出与属性面板。
+  导出产物不变；`AppearanceSpec.strokeWidth` 与四角独立圆角 `cornerRadii` 同时接入画布、
+  导出与属性面板（四角不同时 SVG 改走 `<path>` + `A`，文档格式仍只有 M/L/Z）；
+  等距分布从纯函数层接到右键菜单与多选浮出的对齐工具条。
   相位与后续计划见 `editor-tooling-roadmap.md`；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 

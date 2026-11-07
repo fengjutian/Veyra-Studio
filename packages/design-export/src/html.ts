@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveCornerRadii, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -133,8 +133,12 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   if (node.appearance.fill && !pathVector) declarations.push(`background:${boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables)}`);
   // 描边和圆角都可以由 token 驱动；绑定存在但节点没写 fallback 时同样要输出。
   if ((resolveStroke(document, node) || node.bindings?.stroke) && !pathVector) declarations.push(`border:${num(node.appearance.strokeWidth ?? 1)}px solid ${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
-  const radius = resolveRadius(document, node);
-  if (radius !== undefined && !pathVector) declarations.push(`border-radius:${px(radius)}`);
+  const radii = resolveCornerRadii(document, node);
+  if (radii && !pathVector) {
+    // CSS 的 border-radius 直接支持「左上 右上 右下 左下」四值写法。
+    const uniform = radii.every(value => value === radii[0]);
+    declarations.push(`border-radius:${uniform ? px(radii[0]) : radii.map(px).join(" ")}`);
+  }
 
   if (node.type === "text") {
     declarations.push(`font-family:${cssString(node.fontFamily)}`, `font-size:${px(node.fontSize)}`, `line-height:${px(node.lineHeight)}`, "white-space:pre-wrap", "margin:0");

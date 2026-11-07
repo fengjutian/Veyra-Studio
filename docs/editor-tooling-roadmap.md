@@ -2,7 +2,7 @@
 
 > 文档状态：生效中的工具能力基线
 > 最后更新：2026-11-07
-> 当前阶段：P1、P2 已完成，P3（钢笔与路径编辑）待启动
+> 当前阶段：P1、P2 全部完成，P3（钢笔与路径编辑）待启动
 > 关联文档：`current-project-status.md`、`project-progress-and-version-roadmap.md`、`canvas-renderer-roadmap.md`
 
 ## 1. 问题：不是「按钮太少」
@@ -44,7 +44,7 @@
 | 类别 | 现在 | 缺 | 相位 | 是否要改文档格式 |
 | --- | --- | --- | --- | --- |
 | 形状 | 矩形、椭圆、**直线/多边形/星形** | 自定义边数 | P2 ✅ | 是（矢量几何，已完成） |
-| 形状 | 单值圆角、**可变描边宽度** | 四角独立圆角 | P2 部分 | 否（新增可选字段） |
+| 形状 | **四角独立圆角 + 可变描边宽度** | 圆角半径按百分比 | P2 ✅ | 否（新增可选字段） |
 | 矢量 | **归一化 M/L/Z 路径** | 钢笔、路径编辑（C/Q 贝塞尔） | P3 | 是（`vector.geometry`，已完成） |
 | 矢量 | 无 | 布尔运算 | P4 | 否（应用时烘焙成路径） |
 | 模式 | **选择、绘制、抓手** | 缩放工具 | P1 ✅ | 否 |
@@ -53,7 +53,7 @@
 | 几何 | 无 | 蒙版 | P4 | 是（新节点类型） |
 | 外观 | 纯色填充 | 渐变、多填充层 | P6 | 是（`fills[]` 替换 `fill`） |
 | 外观 | 无 | 阴影、模糊 | P6 | 否（新增可选字段） |
-| 排版 | 对齐（右键菜单） | 等距分布、选中态工具条 | P2 顺延 | 否 |
+| 排版 | 对齐（右键菜单） | **等距分布 + 多选浮出工具条** | P2 ✅ | 否 |
 
 ## 4. 设计原则
 
@@ -157,8 +157,7 @@ export interface VectorNode extends BaseNode {
 - 导出：SVG 直接输出 `<path d>`，HTML 输出内联 `<svg viewBox>`；`vector` 的支持等级
   从 `unsupported` 升为 `exact`，但**没有 geometry 的旧节点仍发诊断**。
 
-**不做（顺延）**：四角独立圆角 `cornerRadii`、等距分布、多选浮出的选中态工具条、
-几何编辑（拖锚点）。
+**不做（顺延）**：几何编辑（拖锚点）——那属于 P3 的钢笔/直接选择工具。
 
 **验收**：拖出直线/多边形/星形后画布形状与命中一致；改宽高时图形随之缩放；SVG/HTML
 导出含同一条路径；`supportFor("vector", "svg") === "exact"`；旧文档（无 geometry 的
@@ -178,9 +177,19 @@ vector）导出产物逐字不变，golden 不破。
   `vector` 支持等级升为 `exact`；没有 geometry 的旧 vector 保持原输出与诊断，golden 未变；
 - `AppearanceSpec.strokeWidth`：画布、HTML（`border:Npx`）、SVG（`stroke-width`）、
   属性面板各接一处；缺省 1px 时导出字符串与升级前逐字相同；
-- 测试：`geometry.test.ts`（16 条）、`shapes.test.ts`（6 条）、导出新增 5 条；
-  `design-schema` 43 条、`design-export` 47 条、`studio-web` 321 条全部通过，
-  `build:studio-core` 与 `vite build` 均成功。
+- 四角独立圆角（P2 收尾）：`AppearanceSpec.cornerRadii?: [number, number, number, number]`
+  （顺序同 CSS），`resolveCornerRadii` 是画布/HTML/SVG 的唯一解析入口。画布用每角一次
+  `arcTo`（半径为 0 的角自动退化成直线），HTML 直接输出四值 `border-radius`，
+  SVG 的 `<rect rx>` 只有单值，所以四角不同时改输出 `<path>` + `A` 圆弧——**圆弧只出现在
+  导出产物里，文档格式仍然只有 M/L/Z**。四角相同时继续走单值分支，导出产物不变。
+  属性面板在「圆角」与四个角字段之间切换（拆分/合并），不做两套并行输入；
+- 等距分布：`arrangeNodes` 里本来就有 `distributeX/Y`（等间隙、首尾不动），但没有任何
+  入口——本轮把它接进右键「对齐」子菜单和多选浮出的工具条，属于「有功能但找不到」的修复；
+- 多选浮出的对齐工具条：定位在未缩放的 `.canvas-stage` 里，位置按 `bounds × zoom` 换算，
+  所以按钮始终是屏幕尺寸；对齐 6 个 + 分布 2 个，少于 3 个对象时分布按钮禁用；
+- 测试：`geometry.test.ts`（16 条）、`shapes.test.ts`（6 条）、导出新增 5 条、
+  四角圆角与浮层相关新增 8 条；`design-schema` 44 条、`design-export` 51 条、
+  `studio-web` 326 条全部通过，`build:studio-core` 与 `vite build` 均成功。
 
 ### P3：钢笔与路径编辑
 

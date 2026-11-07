@@ -1,7 +1,9 @@
 import {
+  resolveCornerRadii,
   resolveRadius,
   resolveStroke,
   tokenColor,
+  type CornerRadii,
   type DesignDocument,
   type DesignNode,
   type NodeId,
@@ -52,6 +54,8 @@ export interface SceneNode {
   stroke?: string;
   strokeWidth: number;
   radius: number;
+  /** 四角互不相同的圆角；省略时四角都等于 `radius`。 */
+  radii?: CornerRadii;
   /** 矢量节点的归一化路径数据（坐标在 [0,1]，相对 box）。 */
   path?: string;
   text?: SceneText;
@@ -78,6 +82,9 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
   const box = boxes[node.id] ?? { x: node.layout.x ?? 0, y: node.layout.y ?? 0, width: node.layout.width ?? 0, height: node.layout.height ?? 0 };
   const fill = tokenColor(document, node.bindings?.fill) ?? node.appearance.fill;
   const stroke = resolveStroke(document, node);
+  const radii = resolveCornerRadii(document, node);
+  // 只有真正四角不同才带 `radii`：四角相同的文档继续走单值分支，导出产物不变。
+  const perCorner = radii && radii.some(value => value !== radii[0]) ? radii : undefined;
   const scene: SceneNode = {
     id: node.id,
     type: node.type,
@@ -89,6 +96,7 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     // 描边宽度来自外观；缺省 1px，与旧文档和 DOM 默认边框一致。
     strokeWidth: stroke ? (node.appearance.strokeWidth ?? 1) : 0,
     radius: resolveRadius(document, node) ?? 0,
+    ...(perCorner ? { radii: perCorner } : {}),
     ...(node.type === "vector" && node.geometry ? { path: node.geometry.d } : {}),
     children: node.childIds
       .map(childId => buildNode(document, document.nodes[childId], boxes))

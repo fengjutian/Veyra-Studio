@@ -100,3 +100,23 @@ test("wrapText breaks on explicit newlines and measures per character", () => {
   // 单个字符就超宽时仍然输出，避免死循环。
   assert.deepEqual(wrapText(context, "ab", 5), ["a", "b"]);
 });
+
+test("carries per-corner radii only when the corners actually differ", () => {
+  const uniform = documentWith([node("a", "page:1", "rectangle", { appearance: { ...defaultAppearance(), cornerRadius: 6 } })]);
+  assert.equal(buildScene(uniform, "page:1", {})[0]?.radii, undefined);
+  assert.equal(buildScene(uniform, "page:1", {})[0]?.radius, 6);
+
+  const mixed = documentWith([node("b", "page:1", "rectangle", { appearance: { ...defaultAppearance(), cornerRadii: [0, 4, 8, 12] } })]);
+  assert.deepEqual(buildScene(mixed, "page:1", {})[0]?.radii, [0, 4, 8, 12]);
+});
+
+test("a radius token still resolves to a uniform radius", () => {
+  const document = documentWith(
+    [node("c", "page:1", "rectangle", { appearance: defaultAppearance(), bindings: { radius: "Radius/Card" } })],
+    { "Radius/Card": { type: "number", value: 14 } },
+  );
+  const scene = buildScene(document, "page:1", {})[0];
+  assert.equal(scene?.radius, 14);
+  // 四角相同不写 radii，导出与升级前逐字一致。
+  assert.equal(scene?.radii, undefined);
+});

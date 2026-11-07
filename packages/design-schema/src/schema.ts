@@ -29,6 +29,7 @@ const appearanceSchema = z.object({
   // 缺省按 1px；0 没有意义（画不出线），所以要求为正数。
   strokeWidth: z.number().finite().positive().optional(),
   cornerRadius: nonNegative.optional(),
+  cornerRadii: z.tuple([nonNegative, nonNegative, nonNegative, nonNegative]).optional(),
 });
 
 /**

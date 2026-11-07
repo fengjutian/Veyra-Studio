@@ -1,4 +1,4 @@
-import { absolutePath, vectorPathCommands } from "@ufira/design-schema";
+import { absolutePath, vectorPathCommands, type CornerRadii } from "@ufira/design-schema";
 import type { SceneBox, SceneNode } from "./scene";
 
 /**
@@ -71,7 +71,7 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
 
   if (node.children.length) {
     if (node.clip) {
-      roundRectPath(context, node.box.x, node.box.y, node.box.width, node.box.height, node.radius);
+      roundRectPath(context, node.box.x, node.box.y, node.box.width, node.box.height, nodeRadii(node));
       context.clip();
     }
     for (const child of node.children) drawNode(context, child, options, opacity);
@@ -110,7 +110,7 @@ function shapePath(context: CanvasRenderingContext2D, node: SceneNode): void {
     context.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
     return;
   }
-  roundRectPath(context, x, y, width, height, node.radius);
+  roundRectPath(context, x, y, width, height, nodeRadii(node));
 }
 
 /**
@@ -134,7 +134,7 @@ function drawImage(context: CanvasRenderingContext2D, node: SceneNode, options: 
   if (!image) {
     // 缺图占位：让用户知道这里有一张图，而不是"空白"。
     context.fillStyle = "rgba(148, 163, 184, 0.25)";
-    roundRectPath(context, x, y, width, height, node.radius);
+    roundRectPath(context, x, y, width, height, nodeRadii(node));
     context.fill();
     return;
   }
@@ -152,7 +152,7 @@ function drawImage(context: CanvasRenderingContext2D, node: SceneNode, options: 
   const drawnWidth = sourceWidth * scale;
   const drawnHeight = sourceHeight * scale;
   context.save();
-  roundRectPath(context, x, y, width, height, node.radius);
+  roundRectPath(context, x, y, width, height, nodeRadii(node));
   context.clip();
   context.drawImage(image, x + (width - drawnWidth) / 2, y + (height - drawnHeight) / 2, drawnWidth, drawnHeight);
   context.restore();
@@ -199,19 +199,36 @@ export function wrapText(context: CanvasRenderingContext2D, value: string, maxWi
   return lines;
 }
 
-function roundRectPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
+function roundRectPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radii: number | CornerRadii): void {
+  const [topLeft, topRight, bottomRight, bottomLeft] = normalizeRadii(radii, width, height);
   context.beginPath();
-  const safe = Math.max(0, Math.min(radius, width / 2, height / 2));
-  if (safe <= 0) {
+  if (!topLeft && !topRight && !bottomRight && !bottomLeft) {
     context.rect(x, y, width, height);
     return;
   }
-  context.moveTo(x + safe, y);
-  context.arcTo(x + width, y, x + width, y + height, safe);
-  context.arcTo(x + width, y + height, x, y + height, safe);
-  context.arcTo(x, y + height, x, y, safe);
-  context.arcTo(x, y, x + width, y, safe);
+  // 用 arcTo 每角一次：半径为 0 的角退化成直线，四角不同的矩形因此仍是同一条路径。
+  context.moveTo(x + topLeft, y);
+  context.arcTo(x + width, y, x + width, y + height, topRight);
+  context.arcTo(x + width, y + height, x, y + height, bottomRight);
+  context.arcTo(x, y + height, x, y, bottomLeft);
+  context.arcTo(x, y, x + width, y, topLeft);
   context.closePath();
+}
+
+/** 单个半径按四角相同展开；每个角都钳到不超过短边的一半，避免弧线互相穿透。 */
+function normalizeRadii(radii: number | CornerRadii, width: number, height: number): CornerRadii {
+  const values: CornerRadii = typeof radii === "number" ? [radii, radii, radii, radii] : radii;
+  const limit = Math.max(0, Math.min(width, height) / 2);
+  return [clampValue(values[0], limit), clampValue(values[1], limit), clampValue(values[2], limit), clampValue(values[3], limit)];
+}
+
+function clampValue(value: number, limit: number): number {
+  return Number.isFinite(value) ? Math.min(Math.max(value, 0), limit) : 0;
+}
+
+/** 节点的四角圆角；没有四角独立值时退回单值。 */
+function nodeRadii(node: SceneNode): number | CornerRadii {
+  return node.radii ?? node.radius;
 }
 
 function quoteFamily(family: string): string {

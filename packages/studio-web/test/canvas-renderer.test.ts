@@ -132,3 +132,22 @@ test("draws cover images with clipping and placeholders when the asset is missin
   // 缺图占位只画一次灰色填充（图片节点本身没有背景）。
   assert.ok(context.calls.filter(call => call.name === "fill").length >= 1);
 });
+
+test("draws per-corner radii as four separate arcs", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([sceneNode({ fill: "#000000", radii: [4, 8, 12, 16] })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  // 顺序：右上、右下、左下、左上（从 moveTo(左上切点) 出发绕一圈）。
+  const arcs = context.calls.filter(call => call.name === "arcTo");
+  assert.deepEqual(arcs.map(call => call.args[4]), [8, 12, 16, 4]);
+});
+
+test("clamps per-corner radii to half of the short side", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  // 50 高的盒子：任何角都不能超过 25，否则弧线会互相穿透。
+  renderer.paint([sceneNode({ fill: "#000000", radii: [10, 100, 100, 10] })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  const arcs = context.calls.filter(call => call.name === "arcTo");
+  // 顺序：右上、右下、左下、左上；只有后两个角超过上限，被钳到 25。
+  assert.deepEqual(arcs.map(call => call.args[4]), [25, 25, 10, 10]);
+});

@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveCornerRadii, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -137,13 +137,45 @@ function renderNode(
   }
 
   const children = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep);
-  const radius = resolveRadius(document, node) ?? 0;
+  const radii = resolveCornerRadii(document, node);
+  const perCorner = radii && radii.some(value => value !== radii[0]);
 
   if (node.type === "ellipse") {
     return `<ellipse ${common} cx="${num(box.x + box.width / 2)}" cy="${num(box.y + box.height / 2)}" rx="${num(box.width / 2)}" ry="${num(box.height / 2)}" />${children ? `\n${indent(children, 2)}\n` : ""}`;
   }
 
+  if (radii && perCorner) {
+    // SVG 的 <rect rx> 只有单值，四角不同只能用路径表达（圆弧是导出产物，不是文档格式）。
+    const d = roundedRectPathData(box, radii);
+    return `<g ${common}><path d="${escapeXml(d)}" />${children ? `\n${indent(children, 2)}\n` : ""}</g>`;
+  }
+
+  const radius = radii ? radii[0]! : resolveRadius(document, node) ?? 0;
   return `<g ${common}>  <rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""} />${children ? `\n${indent(children, 2)}\n` : ""}</g>`;
+}
+
+/**
+ * 四角不同的矩形路径（绝对坐标）。
+ *
+ * 半径为 0 的角写 `A 0 0 …`：SVG 规范里退化成直线，因此不需要为每个角写分支。
+ */
+function roundedRectPathData(box: ComputedBox, radii: CornerRadii): string {
+  const limit = Math.max(0, Math.min(box.width, box.height) / 2);
+  const [topLeft, topRight, bottomRight, bottomLeft] = radii.map(value => Math.min(Math.max(value, 0), limit)) as CornerRadii;
+  const { x, y, width, height } = box;
+  const arc = (radius: number) => `A ${num(radius)} ${num(radius)} 0 0 1`;
+  return [
+    `M ${num(x + topLeft)} ${num(y)}`,
+    `L ${num(x + width - topRight)} ${num(y)}`,
+    `${arc(topRight)} ${num(x + width)} ${num(y + topRight)}`,
+    `L ${num(x + width)} ${num(y + height - bottomRight)}`,
+    `${arc(bottomRight)} ${num(x + width - bottomRight)} ${num(y + height)}`,
+    `L ${num(x + bottomLeft)} ${num(y + height)}`,
+    `${arc(bottomLeft)} ${num(x)} ${num(y + height - bottomLeft)}`,
+    `L ${num(x)} ${num(y + topLeft)}`,
+    `${arc(topLeft)} ${num(x + topLeft)} ${num(y)}`,
+    "Z",
+  ].join(" ");
 }
 
 function renderChildren(

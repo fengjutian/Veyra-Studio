@@ -144,3 +144,25 @@ test("only frames or components can be slots", () => {
   document.pages["page:1"]!.childIds = ["text:1"];
   assert.throws(() => validateDocument(document), /cannot be a slot/);
 });
+
+test("accepts four-value corner radii and rejects malformed tuples", () => {
+  const make = (cornerRadii: unknown) => {
+    const document = createDocument("doc:1", "Demo");
+    document.nodes["node:1"] = {
+      id: "node:1",
+      type: "rectangle",
+      name: "Card",
+      parentId: "page:1",
+      childIds: [],
+      visible: true,
+      locked: false,
+      layout: defaultLayout(),
+      appearance: { ...defaultAppearance(), cornerRadii: cornerRadii as [number, number, number, number] },
+    };
+    document.pages["page:1"]!.childIds = ["node:1"];
+    return document;
+  };
+  assert.ok(validateDocument(make([4, 8, 12, 16])));
+  assert.throws(() => validateDocument(make([4, 8, 12])), /cornerRadii/);
+  assert.throws(() => validateDocument(make([4, -1, 12, 16])), /cornerRadii/);
+});

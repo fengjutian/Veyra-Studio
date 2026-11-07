@@ -168,7 +168,17 @@
   导出侧 SVG 输出 `<path d>`、HTML 输出内联 `<svg viewBox>`，`vector` 的支持等级从
   `unsupported` 升为 `exact`；没有 geometry 的旧节点仍按原来的空容器 + 诊断导出，
   golden 产物未变。`AppearanceSpec.strokeWidth` 也随本相位落地（画布/SVG/HTML/属性面板），
-  缺省 1px 时导出字符串与升级前逐字相同。后续相位（钢笔与路径编辑、布尔、旋转/约束、
+  缺省 1px 时导出字符串与升级前逐字相同；
+- 四角独立圆角：`AppearanceSpec.cornerRadii`（四元组，顺序同 CSS `border-radius`），
+  `resolveCornerRadii` 是画布/HTML/SVG 的唯一解析入口。画布每角一次 `arcTo`（半径 0 的角
+  退化成直线，并统一钳到短边一半）；HTML 直接输出四值 `border-radius`；SVG 的 `<rect rx>`
+  只有单值，四角不同时改输出 `<path>` + `A` 圆弧——**圆弧只存在于导出产物，文档格式仍然
+  只有 M/L/Z**。四角相同时继续走单值分支，导出产物与升级前一致。属性面板在单值与四角之间
+  切换（拆分/合并），不做两套并行输入；
+- 等距分布与多选对齐工具条：`arrangeNodes` 里的 `distributeX/Y`（等间隙、首尾不动）此前
+  没有任何入口，现在接进右键「对齐」子菜单与多选浮出的工具条；工具条定位在未被缩放的
+  `.canvas-stage` 里、位置按 `bounds × zoom` 换算，因此按钮始终是屏幕尺寸，滚动与缩放都
+  跟随。少于 3 个对象时分布按钮禁用。后续相位（钢笔与路径编辑、布尔、旋转/约束、
   渐变/阴影）见 `editor-tooling-roadmap.md`；
 - 工作台外壳重做，布局对标 Figma / Penpot 一类编辑器：48px 顶栏把「创建工具、撤销重做、
   项目操作、导出/导入、自动保存状态」分组并用分隔线隔开；左侧栏拆成「页面」和「图层」两段，

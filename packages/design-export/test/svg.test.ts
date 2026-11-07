@@ -134,3 +134,29 @@ test("exports a non-default stroke width", () => {
   const result = exportPageToSvg(documentWith([root]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
   assert.match(result.svg, /stroke-width:4/);
 });
+test("exports per-corner radii as a path with arcs", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    layout: { ...defaultLayout(), x: 100, y: 50, width: 200, height: 100 },
+    appearance: { ...defaultAppearance(), fill: "#ffffff", cornerRadii: [10, 20, 30, 40] },
+  };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  // <rect rx> 只有单值，四角不同只能用路径；圆弧是导出产物，不是文档格式。
+  assert.match(result.svg, /<path d="M 110 50 L 280 50 A 20 20 0 0 1 300 70/);
+  assert.match(result.svg, /A 30 30 0 0 1 270 150/);
+  assert.match(result.svg, /A 40 40 0 0 1 100 110/);
+  assert.match(result.svg, /A 10 10 0 0 1 110 50 Z"/);
+  assert.doesNotMatch(result.svg, /<rect[^>]*data-node-id="card"/);
+});
+
+test("a uniform cornerRadii keeps the rect output", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), cornerRadii: [8, 8, 8, 8] },
+  };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /<rect[^>]*rx="8"/);
+  assert.doesNotMatch(result.svg, /<path/);
+});

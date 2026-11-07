@@ -1,4 +1,4 @@
-import type { DesignDocument, DesignNode, TokenValue } from "./types";
+import type { CornerRadii, DesignDocument, DesignNode, TokenValue } from "./types";
 
 /**
  * Token 解析。
@@ -34,6 +34,19 @@ export function resolveStroke(document: DesignDocument, node: DesignNode): strin
 /** 圆角：`radius` 绑定优先，否则用节点自身的值。 */
 export function resolveRadius(document: DesignDocument, node: DesignNode): number | undefined {
   return tokenNumber(document, node.bindings?.radius) ?? node.appearance.cornerRadius;
+}
+
+/**
+ * 四角圆角。
+ *
+ * 优先级：四角独立值 → `radius` token → 单值圆角。返回 `undefined` 表示没有圆角，
+ * 调用方应按直角处理。画布、HTML、SVG 都走这一个入口，避免三处各算一套。
+ */
+export function resolveCornerRadii(document: DesignDocument, node: DesignNode): CornerRadii | undefined {
+  const radii = node.appearance.cornerRadii;
+  if (radii) return radii;
+  const radius = resolveRadius(document, node);
+  return radius === undefined ? undefined : [radius, radius, radius, radius];
 }
 
 /** 自动布局间距：`spacing` 绑定优先，否则用节点自己的 gap。 */

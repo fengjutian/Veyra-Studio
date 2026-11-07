@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, type CornerRadii, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
 import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
 export interface PropertyPanelProps {
@@ -27,6 +27,12 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
 
   const patchLayout = (changes: Partial<LayoutSpec>) => onPatch({ layout: { ...layout, ...changes } });
   const patchPadding = (changes: Partial<typeof padding>) => patchLayout({ padding: { ...padding, ...changes } });
+  /** 只改一个角：四角数组是整体替换的，先拷贝再赋值。 */
+  const patchCorner = (index: number, value: number) => {
+    const radii = [...(node.appearance.cornerRadii ?? uniformRadii(node.appearance.cornerRadius ?? 0))] as CornerRadii;
+    radii[index] = value;
+    onPatch({ appearance: { ...node.appearance, cornerRadii: radii } });
+  };
 
   return (
     <>
@@ -104,7 +110,31 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
         <TextField label="填充" value={node.appearance.fill ?? ""} disabled={disabled} onCommit={fill => onPatch({ appearance: { ...node.appearance, fill: fill || undefined } })} />
         <TextField label="描边" value={node.appearance.stroke ?? ""} disabled={disabled} onCommit={stroke => onPatch({ appearance: { ...node.appearance, stroke: stroke || undefined } })} />
         <NumberField label="描边宽度" value={node.appearance.strokeWidth ?? 1} min={0} disabled={disabled} onCommit={strokeWidth => onPatch({ appearance: { ...node.appearance, strokeWidth: strokeWidth > 0 ? strokeWidth : undefined } })} />
-        <NumberField label="圆角" value={node.appearance.cornerRadius ?? 0} disabled={disabled} onCommit={cornerRadius => onPatch({ appearance: { ...node.appearance, cornerRadius } })} />
+        {node.appearance.cornerRadii ? (
+          <>
+            <div className="field-grid field-grid-4">
+              {CORNER_LABELS.map((label, index) => (
+                <NumberField
+                  key={label}
+                  label={label}
+                  value={node.appearance.cornerRadii![index]}
+                  disabled={disabled}
+                  onCommit={value => patchCorner(index, value)}
+                />
+              ))}
+            </div>
+            <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ appearance: { ...node.appearance, cornerRadii: undefined, cornerRadius: maxRadius(node.appearance.cornerRadii!) } })}>
+              统一为单值圆角
+            </button>
+          </>
+        ) : (
+          <>
+            <NumberField label="圆角" value={node.appearance.cornerRadius ?? 0} disabled={disabled} onCommit={cornerRadius => onPatch({ appearance: { ...node.appearance, cornerRadius, cornerRadii: undefined } })} />
+            <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ appearance: { ...node.appearance, cornerRadii: uniformRadii(node.appearance.cornerRadius ?? 0) } })}>
+              拆分为四角独立圆角
+            </button>
+          </>
+        )}
         <NumberField label="透明度" value={opacityToPercent(node.appearance.opacity)} disabled={disabled} onCommit={percent => onPatch({ appearance: { ...node.appearance, opacity: percentToOpacity(percent) } })} />
       </Section>
 
@@ -287,4 +317,16 @@ export function TextField({ label, value, disabled, mixed, onCommit }: { label: 
       />
     </label>
   );
+}
+
+/** 四角圆角字段的标签，顺序与 CSS `border-radius` 一致。 */
+const CORNER_LABELS = ["左上", "右上", "右下", "左下"] as const;
+
+function uniformRadii(radius: number): CornerRadii {
+  return [radius, radius, radius, radius];
+}
+
+/** 从四角独立切回单值时取最大值，视觉上至少不会把圆角削没了。 */
+function maxRadius(radii: CornerRadii): number {
+  return Math.max(...radii);
 }

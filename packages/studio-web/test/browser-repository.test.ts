@@ -125,6 +125,23 @@ test("upgrades a version 1 database to the version 2 storage layout", async t =>
   assert.deepEqual((await repository.listProjects()).map(item => item.id), ["project:1"]);
 });
 
+test("upgrades a version 2 database and creates the rebuild baseline", async t => {
+  const databaseName = `legacy-v2-${crypto.randomUUID()}`;
+  const legacy = new Dexie(databaseName, { indexedDB, IDBKeyRange });
+  legacy.version(2).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", snapshotHistory: "[projectId+revision], projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash" });
+  await legacy.open();
+  const document = createDocument("project:1", "Legacy", "page:1");
+  await legacy.table("snapshots").put({ projectId: "project:1", revision: 0, document });
+  await legacy.table("projects").put({ id: "project:1", revision: 0, updatedAt: document.meta.updatedAt });
+  legacy.close();
+
+  const repository = createRepository(databaseName);
+  t.after(() => repository.deleteDatabase());
+  // 升级后的库第一次落盘就该把重建基线补上。
+  await repository.saveSnapshot(document);
+  assert.equal((await repository.readBaseline!("project:1"))?.revision, 0);
+});
+
 function createRepository(databaseName = `test-${crypto.randomUUID()}`): DexieProjectRepository { return new DexieProjectRepository({ databaseName, indexedDB, IDBKeyRange }); }
 function entry(documentId: string, revision: number) { return { commandId: `cmd:${revision}`, documentId, revision, committedAt: new Date(0).toISOString(), actor: { type: "human" as const, id: "test" }, commands: [], warnings: [] }; }
 function frame(id: string): DesignNode { return { id, type: "frame", name: id, parentId: "page:1", childIds: [], visible: true, locked: false, layout: defaultLayout(), appearance: defaultAppearance() }; }

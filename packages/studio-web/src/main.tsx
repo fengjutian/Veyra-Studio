@@ -359,6 +359,11 @@ function App() {
   const selectedNodes = selectedRootIds.map(id => document.nodes[id]!).filter(Boolean);
   const selectionLocked = selectedNodes.some(node => node.locked);
   const selectionSameParent = selectedNodes.every(node => node.parentId === selectedNodes[0]?.parentId);
+  // 多选时浮出的对齐工具条。位置把画布坐标换算成 stage 坐标：stage 本身没有被 zoom
+  // 缩放，所以按钮始终是屏幕尺寸，只有位置跟着缩放与滚动走。
+  const multiSelectionBounds = selectedIds.length > 1 ? selectionBounds(canvasLayout.boxes, selectedIds) : undefined;
+  const multiToolbarTop = multiSelectionBounds ? Math.max(4, CANVAS_STAGE_OFFSET_TOP + multiSelectionBounds.y * zoom - 44) : 0;
+  const canArrange = !selectionLocked && selectionSameParent;
 
   const run = async (operation: () => Promise<void>) => {
     if (operationInFlight.current) return;
@@ -1269,6 +1274,19 @@ function App() {
               <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}`} style={{ zoom }} {...canvasDrag.handlers} onClick={selectFromCanvas} onDoubleClick={editTextAtCanvasPoint}>
                 <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
+              {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
+                <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>
+                <Tooltip label="水平居中"><button className="icon-only" aria-label="水平居中" disabled={busy || !canArrange} onClick={() => arrangeSelection("centerX")}><Icon name="alignCenterX" /></button></Tooltip>
+                <Tooltip label="右对齐"><button className="icon-only" aria-label="右对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("right")}><Icon name="alignRight" /></button></Tooltip>
+                <span className="tool-divider" aria-hidden="true" />
+                <Tooltip label="水平等距分布"><button className="icon-only" aria-label="水平等距分布" disabled={busy || selectedIds.length < 3 || !canArrange} onClick={() => arrangeSelection("distributeX")}><Icon name="distributeX" /></button></Tooltip>
+                <span className="tool-divider" aria-hidden="true" />
+                <Tooltip label="顶对齐"><button className="icon-only" aria-label="顶对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("top")}><Icon name="alignTop" /></button></Tooltip>
+                <Tooltip label="垂直居中"><button className="icon-only" aria-label="垂直居中" disabled={busy || !canArrange} onClick={() => arrangeSelection("centerY")}><Icon name="alignCenterY" /></button></Tooltip>
+                <Tooltip label="底对齐"><button className="icon-only" aria-label="底对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("bottom")}><Icon name="alignBottom" /></button></Tooltip>
+                <span className="tool-divider" aria-hidden="true" />
+                <Tooltip label="垂直等距分布"><button className="icon-only" aria-label="垂直等距分布" disabled={busy || selectedIds.length < 3 || !canArrange} onClick={() => arrangeSelection("distributeY")}><Icon name="distributeY" /></button></Tooltip>
+              </div> : null}
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>{contextIds.length ? <>
@@ -1289,6 +1307,9 @@ function App() {
               <ContextMenuItem icon="alignTop" disabled={busy} onSelect={() => arrangeSelection("top")}>顶对齐</ContextMenuItem>
               <ContextMenuItem icon="alignCenterY" disabled={busy} onSelect={() => arrangeSelection("centerY")}>垂直居中</ContextMenuItem>
               <ContextMenuItem icon="alignBottom" disabled={busy} onSelect={() => arrangeSelection("bottom")}>底对齐</ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem icon="distributeX" disabled={busy || contextIds.length < 3} onSelect={() => arrangeSelection("distributeX")}>水平等距分布</ContextMenuItem>
+              <ContextMenuItem icon="distributeY" disabled={busy || contextIds.length < 3} onSelect={() => arrangeSelection("distributeY")}>垂直等距分布</ContextMenuItem>
             </ContextMenuSub>}<ContextMenuItem icon="nodeComponent" disabled={busy || !selectionSameParent} onSelect={groupSelection}>编组</ContextMenuItem>{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}{contextIds.length === 1 && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={ungroupSelection}>取消编组</ContextMenuItem>}{contextIds.length === 1 && selected?.type === "instance" && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={detachComponent}>脱离组件</ContextMenuItem>}</> : <>
             <ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem>
             <ContextMenuSeparator />
@@ -1561,6 +1582,9 @@ function clampToCanvas(point: HitPoint): HitPoint {
 
 /** 单击创建矢量形状时的默认边长。 */
 const DEFAULT_VECTOR_LENGTH = 160;
+
+/** `.canvas-stage` 的 padding-top：画布在 stage 里的纵向偏移，浮层定位要用。 */
+const CANVAS_STAGE_OFFSET_TOP = 24;
 
 function collectSlotNodes(document: DesignDocument, rootId: string): DesignNode[] {
   const found: DesignNode[] = [];
