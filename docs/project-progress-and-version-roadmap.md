@@ -328,8 +328,11 @@ AI 原型：
 - 视觉回归：本机 Chrome/Edge headless 渲染 golden HTML 与画布 harness，与提交的基线 PNG 做像素比较
   （`npm run visual:check`），默认 0.5% 阈值，差异图落盘；PNG 编解码与 diff 用
   `node:zlib` 自实现，没有原生依赖。找不到浏览器时跳过，`--require-browser` 让 CI 明确失败。
-- 性能预算门禁：`npm run bench:layout:budget` 在 200/500/1000/2000 节点超预算时非零退出，
-  可直接接 CI；本机中位数约 1.3 / 2.9 / 4.6 / 10.4 ms。
+- 性能预算门禁：`npm run check:budgets` 覆盖布局（200/500/1000/2000/5000）、导出
+  （1000/5000 的 HTML/SVG）与绘制（200/1000/5000），超预算非零退出，可直接接 CI；
+  本机布局中位数约 1.5/3/5/11/30 ms；绘制在真实 Chrome 里 200/1000/5000 节点为
+  0.9/3.5/12.3 ms，视口裁剪后 0.7/0.7/0.3 ms（132 个根节点），由
+  `npm run visual:canvas:paint -- --budget` 门禁。
 - 兼容性矩阵（初步）：Windows + Chrome/Edge headless 已实测；字体只有确定性估算器与
   浏览器 Canvas 两条测量路径，尚无跨平台字体基线。
 - 可访问性（对比度）：文档级 WCAG 对比度检查（4.5:1 / 大字号 3:1），支持 token

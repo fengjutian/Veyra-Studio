@@ -3,6 +3,7 @@ import type { DesignDocument, AssetMetadata } from "@ufira/design-schema";
 import type { ProjectRepository } from "@ufira/design-persistence";
 import { loadAssetUrl } from "../asset-url";
 import { buildScene, type SceneBox, type SceneNode } from "./scene";
+import { cullScene, type CullViewport } from "./culling";
 import { createCanvas2DRenderer, type SceneRenderer } from "./canvas-renderer";
 
 /**
@@ -22,13 +23,18 @@ export interface CanvasSurfaceProps {
   width: number;
   height: number;
   zoom: number;
+  /** 画布可视区域（场景坐标）；不传则整页绘制。 */
+  viewport?: CullViewport;
 }
 
-export function CanvasSurface({ enabled, repository, projectId, document, pageId, boxes, width, height, zoom }: CanvasSurfaceProps) {
+export function CanvasSurface({ enabled, repository, projectId, document, pageId, boxes, width, height, zoom, viewport }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
-  const scene = useMemo(() => (enabled ? buildScene(document, pageId, boxes) : []), [enabled, document, pageId, boxes]);
+  const scene = useMemo(
+    () => (enabled ? cullScene(buildScene(document, pageId, boxes), viewport) : []),
+    [enabled, document, pageId, boxes, viewport],
+  );
   const assetIds = useMemo(() => collectAssetIds(scene), [scene]);
 
   useEffect(() => {

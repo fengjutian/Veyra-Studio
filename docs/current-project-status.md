@@ -102,7 +102,15 @@
   （`renderer/canvas-renderer.ts`），缩放时重绘而不是拉伸位图。分层借鉴 tldraw /
   Excalidraw：绘制走 Canvas，命中测试、选择框、拖拽手柄和文本编辑继续用 DOM 覆盖层，
   所以输入法、文本选择和 Moveable/Selecto 的行为不变；图片走现有的对象 URL 缓存。
-  默认启用，`?renderer=dom` 可回退到旧的 DOM 绘制。场景构建与绘制调用都有单元测试
+  默认启用，`?renderer=dom` 可回退到旧的 DOM 绘制。渲染前按视口裁剪根节点
+  （`renderer/culling.ts`，只裁根节点、保留子树，避免阴影/半截文本消失），视口随滚动
+  与缩放更新；`npm run bench:paint` 测 200/1000/5000 节点的绘制耗时与绘制调用，并已并入
+  `check:budgets`（1280×800 视口下 5000 节点只画 139 个根节点）；`npm run visual:canvas:paint`
+  在真实 Chrome 里测绘制耗时（200/1000/5000 节点：完整 0.9/3.5/12.3 ms，裁剪后
+  0.7/0.7/0.3 ms），并随 `check:visual` 做预算门禁。命中测试已有纯函数实现
+  （`renderer/hit-test.ts`，最深命中 + 命中栈 + 裁剪/透明度/椭圆）与双跑对比模式
+  （`?hittest=compare`，Canvas 与 DOM 结果不一致时只告警），选择层仍由 DOM 承担。
+  场景构建与绘制调用都有单元测试
   （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
   像素验证，也没有做视口裁剪（culling）；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、

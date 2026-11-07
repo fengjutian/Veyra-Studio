@@ -20,8 +20,8 @@
 | 缺口 | 现状 | 目标 |
 | --- | --- | --- |
 | 像素级验证 | ✅ 已完成（Phase A）：独立 harness + Chrome 截图 + PNG diff | — |
-| 绘制性能 | 整页全量绘制，无裁剪，绘制耗时未纳入预算 | 视口裁剪（culling）+ 绘制耗时基线 + `check:budgets` 门禁 |
-| 命中测试 | 依赖透明 DOM 副本，节点上限仍受 DOM 限制 | 自研命中测试与选择手柄，移除 DOM 节点副本 |
+| 绘制性能 | ✅ 已完成（Phase B）：根节点级视口裁剪 + 绘制基线 + 预算门禁；浏览器光栅化耗时待测 | — |
+| 命中测试 | 🟡 Phase C 起步：`hitTest` + 双跑对比已完成；选择层与手柄仍走 DOM | 切换选择层并移除 DOM 节点副本 |
 
 ## Phase A：画布像素回归（✅ 已完成）
 
@@ -50,7 +50,7 @@
 - 没有 Chrome/Edge 时跳过并提示，`--require-browser` 时明确失败；
 - `npm run check:visual` 把导出基线与画布基线一起跑。
 
-## Phase B：视口裁剪 + 绘制耗时
+## Phase B：视口裁剪 + 绘制耗时（✅ 基本完成）
 
 ### 设计
 
@@ -60,12 +60,21 @@
 2. 绘制耗时基线（`packages/studio-web/bench/paint-bench.ts`）：合成文档 200/1000/5000 节点，测 `paint` 耗时（Node 环境用假上下文，浏览器环境用 harness 页面的 `performance.now()` 并在控制台输出 JSON，由 Chrome `--dump-dom` 之外的 CDP 读取——若 CDP 成本高，先只做 Node 假上下文基线 + harness 页面自报数字）。
 3. 把绘制耗时纳入 `npm run check:budgets`，预算按数量级设置。
 
-### 验收
+### 验收结果
 
-- 5000 节点、视口外内容不参与绘制（可通过假上下文调用次数断言）；
-- 绘制耗时基线稳定，超预算非零退出。
+- `packages/studio-web/src/renderer/culling.ts`：只裁根节点，视口外扩 64px 防止边缘闪烁；
+  子节点永远保留，避免阴影/半截文本消失；
+- 工作台按滚动 + 缩放计算场景坐标的可视区域并传给 `CanvasSurface`；
+- `npm run bench:paint`：200/1000/5000 节点的绘制耗时与绘制调用数；
+  1280×800 视口下 5000 节点只画 139 个根节点（约 259 次绘制调用）；
+- `check:budgets` 已包含 Node 假上下文的绘制预算，超预算非零退出；
+- 浏览器内真实绘制耗时：harness 在 Chrome 里测完写进 `#harness-metrics`，脚本用
+  `--dump-dom` 读回（`npm run visual:canvas:paint`）。实测 200/1000/5000 节点：完整场景
+  0.9 / 3.5 / 12.3 ms，裁剪后 0.7 / 0.7 / 0.3 ms（132 个根节点），已纳入 `check:visual`。
 
-## Phase C：命中测试迁移
+仍未完成：更激进的子节点级裁剪、GPU/合成层级别的耗时分析。
+
+## Phase C：命中测试迁移（🟡 进行中）
 
 ### 设计
 
@@ -73,6 +82,21 @@
 2. 选择框与手柄：用 Canvas 或独立 overlay 绘制选中态，不再依赖 Moveable/Selecto；
 3. 文本编辑：保留 DOM `<textarea>` 覆盖在节点位置（tldraw 同样做法），编辑结束再提交；
 4. 移除透明 DOM 节点副本与 `canvas-rendered` 的 CSS 隐藏规则，减少 DOM 节点数。
+
+### 已完成（2026-11-07）
+
+- `renderer/hit-test.ts`：最深命中 + 由深到外的命中栈；处理透明度、容器裁剪与椭圆精确命中；
+- `renderer/hit-test-compare.ts`：`compareHits` 与 `pointFromEvent`（把指针坐标经 `zoom` 换算成场景坐标）；
+- 工作台开关 `?hittest=compare`：Canvas 命中与 DOM `closest("[data-node-id]")` 同时跑，不一致只
+  `console.warn`，不改变选择行为；
+- 单元测试覆盖重叠顺序、父子优先级、透明穿透、椭圆角落、裁剪容器与坐标换算。
+
+### 剩余工作
+
+1. 在浏览器里实际跑一段对比，确认没有系统性偏差（需要人工点击或录制事件）；
+2. 用 Canvas/overlay 绘制选择框与手柄，替换 Moveable/Selecto；
+3. 移除透明 DOM 节点副本与 `canvas-rendered` 隐藏规则；
+4. 保留 `<textarea>` 文本编辑覆盖层。
 
 ### 风险与回退
 

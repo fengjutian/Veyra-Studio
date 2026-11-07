@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
@@ -28,6 +28,9 @@ import { PropertyPanel } from "./property-panel";
 import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
 import { CanvasSurface } from "./renderer/canvas-surface";
+import { buildScene } from "./renderer/scene";
+import { hitTest } from "./renderer/hit-test";
+import { compareHits, pointFromEvent } from "./renderer/hit-test-compare";
 import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
 import { commitText, textEditAction } from "./text-edit";
@@ -84,6 +87,19 @@ function App() {
   const [panMode, setPanMode] = useState(false);
   // 默认用 Canvas 2D 绘制；加 `?renderer=dom` 回退到旧的 DOM 渲染，便于对比排查。
   const canvasRenderer = useMemo(() => new URLSearchParams(window.location.search).get("renderer") !== "dom", []);
+  // `?hittest=compare`：Canvas 命中与 DOM 命中同时跑，只记录差异，不改变行为。
+  const hitTestCompare = useMemo(() => new URLSearchParams(window.location.search).get("hittest") === "compare", []);
+  // 可视区域（场景坐标）：滚动 + 缩放变化时更新，Canvas 只画相交的根节点。
+  const [canvasViewport, setCanvasViewport] = useState({ x: 0, y: 0, width: 0, height: 0 });
+  const syncCanvasViewport = useCallback(() => {
+    if (!scroller) return;
+    setCanvasViewport({
+      x: scroller.scrollLeft / zoom,
+      y: scroller.scrollTop / zoom,
+      width: scroller.clientWidth / zoom,
+      height: scroller.clientHeight / zoom,
+    });
+  }, [scroller, zoom]);
   const [panning, setPanning] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
@@ -226,7 +242,26 @@ function App() {
 
   const activePageId = document && currentPageId && document.pages[currentPageId] ? currentPageId : document?.pageOrder[0];
   // Hooks must run before the early return below, so the layout is resolved unconditionally.
+  useEffect(() => {
+    syncCanvasViewport();
+    const onResize = () => syncCanvasViewport();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [syncCanvasViewport]);
   const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch);
+  const hitTestScene = useMemo(
+    () => (hitTestCompare && document && activePageId ? buildScene(document, activePageId, canvasLayout.boxes) : []),
+    [hitTestCompare, document, activePageId, canvasLayout.boxes],
+  );
+  /** 双跑对比：只告警，不接管选择。 */
+  const compareHitTest = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!hitTestCompare || !canvas) return;
+    const point = pointFromEvent(canvas.getBoundingClientRect(), event.clientX, event.clientY, zoom);
+    const canvasId = hitTest(hitTestScene, point);
+    const domId = (event.target as HTMLElement).closest?.("[data-node-id]")?.getAttribute("data-node-id") ?? undefined;
+    const comparison = compareHits(canvasId, domId);
+    if (!comparison.matches) console.warn("[hittest] canvas/DOM mismatch", comparison, point);
+  };
   // 导出范围：整页用画布尺寸；选区用选中节点的包围盒，并只导出与选中节点相关的分支。
   const exportTarget = useMemo(() => {
     if (exportScope === "selection") {
@@ -1021,7 +1056,7 @@ function App() {
         <LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} />
       </div>
     </aside>    <section className="workspace">
-      <div className={`canvas-scroller${panMode ? " pan-mode" : ""}${panning ? " panning" : ""}`} ref={setScroller} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
+      <div className={`canvas-scroller${panMode ? " pan-mode" : ""}${panning ? " panning" : ""}`} ref={setScroller} onScroll={syncCanvasViewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
         <ContextMenuRoot>
           <ContextMenuTrigger onContextMenu={handleCanvasContextMenu}>
             <div className="canvas-stage">
@@ -1029,8 +1064,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${canvasRenderer ? " canvas-rendered" : ""}${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClick={event => event.target === event.currentTarget && setSelectedIds([])}>
-                <CanvasSurface enabled={canvasRenderer} repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} />{page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}>
+              <div ref={setCanvas} className={`canvas${canvasRenderer ? " canvas-rendered" : ""}${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClickCapture={compareHitTest} onClick={event => event.target === event.currentTarget && setSelectedIds([])}>
+                <CanvasSurface enabled={canvasRenderer} repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} />{page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}<Suspense fallback={null}>
                   <CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={ids => setSelectedIds(ids.filter(id => { const node = document.nodes[id]; return !node || canvasSelectable(node); }))} onCommit={patchLayouts} />
                 </Suspense>
               </div>
