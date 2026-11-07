@@ -366,7 +366,10 @@
 ## 尚未实现或尚未达到可用状态
 
 - 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
-- 生产可用的渲染系统；画布为 DOM 渲染，尚未引入 Canvas/SVG 渲染器与性能基线；
+- 生产可用的渲染系统；画布已切到 Canvas 2D 场景渲染（`renderer/scene.ts` +
+  `renderer/canvas-renderer.ts`），有根节点级视口裁剪、像素回归和绘制耗时基线，
+  但选择层仍由开关切换（`?selection=canvas` / `?selection=drag`），默认路径仍挂着
+  旧的 Moveable/Selecto 交互层，DOM 副本也还在；
 - 生产可用的文本测量；浏览器端测量依赖 Canvas 字体度量，已有有上限的测量缓存、
   统一回退栈和字体加载后的缓存失效，但还没有跨平台字体基线、CI 截图对比，也没有
   服务端/无 Canvas 环境的真实度量；
