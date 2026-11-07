@@ -92,13 +92,15 @@ function App() {
   const canvasRenderer = useMemo(() => new URLSearchParams(window.location.search).get("renderer") !== "dom", []);
   // `?hittest=compare`：Canvas 命中与 DOM 命中同时跑，只记录差异，不改变行为。
   const hitTestCompare = useMemo(() => new URLSearchParams(window.location.search).get("hittest") === "compare", []);
-  // `?selection=overlay`：额外用 Canvas 画一层选择框，与 Moveable 并排对比。
-  const selectionMode = useMemo(() => new URLSearchParams(window.location.search).get("selection") ?? "default", []);
-  // overlay：叠加 Canvas 选择框做对比；drag：Canvas 接管拖动/缩放/框选；canvas：连单击选中
-  // 和文本编辑也交给 Canvas（DOM 节点变成纯视觉，指针事件关闭）。
-  const selectionOverlay = selectionMode === "overlay" || selectionMode === "canvas";
-  const selectionDrag = selectionMode === "drag" || selectionMode === "canvas";
-  const canvasPointer = selectionMode === "canvas";
+  // 画布交互默认全部交给 Canvas：单击选中、拖拽/缩放、框选、双击编辑、选择框。
+  // `?selection=dom` 保留旧的 DOM 交互层（Moveable/Selecto）用于对照排查；
+  // `?renderer=dom` 同时回退到旧的 DOM 绘制，两者一起就是完整的旧路径。
+  const legacyDomSelection = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("selection") === "dom" || params.get("renderer") === "dom";
+  }, []);
+  /** Canvas 交互是否接管画布：默认接管，旧 DOM 路径下让位。 */
+  const canvasSelection = !legacyDomSelection;
   const [canvasEditingId, setCanvasEditingId] = useState<string | null>(null);
   // 可视区域（场景坐标）：滚动 + 缩放变化时更新，Canvas 只画相交的根节点。
   const [canvasViewport, setCanvasViewport] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -261,8 +263,8 @@ function App() {
   }, [syncCanvasViewport]);
   const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch);
   const hitTestScene = useMemo(
-    () => (hitTestCompare || selectionDrag || selectionOverlay) && document && activePageId ? buildScene(document, activePageId, canvasLayout.boxes) : [],
-    [hitTestCompare, selectionDrag, selectionOverlay, document, activePageId, canvasLayout.boxes],
+    () => (hitTestCompare || canvasSelection) && document && activePageId ? buildScene(document, activePageId, canvasLayout.boxes) : [],
+    [hitTestCompare, canvasSelection, document, activePageId, canvasLayout.boxes],
   );
   /** 双跑对比：只告警，不接管选择。 */
   const compareHitTest = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -308,7 +310,7 @@ function App() {
   // 这个 hook 必须在提前 return 之前调用：加载态渲染的 hook 数量要和项目加载后
   // 完全一致，否则 React 会直接抛「渲染了比上次更多的 hook」，整棵 App 崩掉。
   const canvasDrag = useCanvasDrag({
-    enabled: selectionDrag,
+    enabled: canvasSelection,
     busy,
     zoom,
     scene: hitTestScene,
@@ -564,16 +566,16 @@ function App() {
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
-  /** `?selection=canvas`：单击选中完全由 Canvas 命中决定。 */
+  /** 单击选中完全由 Canvas 命中决定。 */
   const selectFromCanvas = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!canvasPointer || canvasDrag.consumedClick()) return;
+    if (!canvasSelection || canvasDrag.consumedClick()) return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (!hit) setSelectedIds([]);
     else setSelectedIds(current => event.shiftKey ? toggleId(current, hit) : [hit]);
   };
   /** 双击文本节点打开覆盖层编辑。 */
   const editTextAtCanvasPoint = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!canvasPointer) return;
+    if (!canvasSelection) return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (hit && document?.nodes[hit]?.type === "text") {
       setCanvasEditingId(hit);
@@ -846,7 +848,7 @@ function App() {
   const arrangeSelection = (arrangement: Arrangement) => { if (!selectionLocked && selectionSameParent) patchLayouts(arrangeNodes(selectedNodes, arrangement)); };
   // 右键命中节点时沿用 Excalidraw 的行为：未选中的节点被选中，已在选区内的则保留原多选。
   const handleCanvasContextMenu = (event: React.MouseEvent) => {
-    const nodeId = resolveContextNodeId(event.target) ?? (canvasPointer ? hitTest(hitTestScene, canvasPointOf(event)) : undefined);
+    const nodeId = resolveContextNodeId(event.target) ?? (canvasSelection ? hitTest(hitTestScene, canvasPointOf(event)) : undefined);
     if (!nodeId) { setContextIds([]); return; }
     if (selectedIds.includes(nodeId)) { setContextIds(selectedIds); return; }
     setSelectedIds([nodeId]);
@@ -1107,8 +1109,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${canvasRenderer ? " canvas-rendered" : ""}${canvasPointer ? " canvas-pointer" : ""}${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClickCapture={compareHitTest} {...canvasDrag.handlers} onClick={canvasPointer ? selectFromCanvas : event => event.target === event.currentTarget && !canvasDrag.consumedClick() && setSelectedIds([])} onDoubleClick={editTextAtCanvasPoint}>
-                <CanvasSurface enabled={canvasRenderer} repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectionOverlay || selectionDrag ? selectedIds : undefined} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} guides={canvasDrag.guides} />{canvasPointer && canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}{canvasPointer && <CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />}{!canvasPointer && page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}{!selectionDrag && <Suspense fallback={null}>
+              <div ref={setCanvas} className={`canvas${canvasRenderer ? " canvas-rendered" : ""}${canvasSelection ? " canvas-pointer" : ""}${panMode ? " pan-mode" : ""}`} style={{ zoom }} onClickCapture={compareHitTest} {...canvasDrag.handlers} onClick={canvasSelection ? selectFromCanvas : event => event.target === event.currentTarget && !canvasDrag.consumedClick() && setSelectedIds([])} onDoubleClick={editTextAtCanvasPoint}>
+                <CanvasSurface enabled={canvasRenderer} repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={canvasSelection ? selectedIds : undefined} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} guides={canvasDrag.guides} />{canvasSelection && canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}{canvasSelection && <CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />}{legacyDomSelection && page.childIds.map(id => <CanvasNode key={id} projectId={document.id} document={document} node={document.nodes[id]!} selectedIds={selectedIds} layout={canvasLayout} onSelect={(id, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, id) : [id])} onCommitText={(nodeId, text) => patchTextOf(nodeId, { text })} />)}{legacyDomSelection && <Suspense fallback={null}>
                   <CanvasInteractionLayer canvas={canvas} nodes={pageNodes} selectedIds={selectedRootIds} disabled={busy || selectionLocked} onSelect={ids => setSelectedIds(ids.filter(id => { const node = document.nodes[id]; return !node || canvasSelectable(node); }))} onCommit={patchLayouts} />
                 </Suspense>}
               </div>

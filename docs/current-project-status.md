@@ -109,28 +109,29 @@
   在真实 Chrome 里测绘制耗时（200/1000/5000 节点：完整 0.9/3.5/12.3 ms，裁剪后
   0.7/0.7/0.3 ms），并随 `check:visual` 做预算门禁。命中测试已有纯函数实现
   （`renderer/hit-test.ts`，最深命中 + 命中栈 + 裁剪/透明度/椭圆）与双跑对比模式
-  （`?hittest=compare`，Canvas 与 DOM 结果不一致时只告警），选择层仍由 DOM 承担。
-  选择框与手柄已能用 Canvas 绘制：`renderer/selection.ts` 提供包围盒合并、手柄命中与
-  缩放后的盒子，`renderer/selection-overlay.ts` 负责轮廓/手柄绘制（随 zoom 保持屏幕尺寸）；
-  工作台用 `?selection=overlay` 与 Moveable 并排对比。`?selection=drag` 下由 Canvas 接管
-  拖动与单节点缩放：预览盒子覆盖绘制、指针在捕获阶段处理并阻断 Moveable，松手后按现有
-  `node.patch` 事务提交；空白处拖动可框选（Canvas 绘制选框、与顶层节点求交），
-  松手直接更新选中集合。`?selection=drag` 下不再挂载 Moveable/Selecto，选择、拖拽、
-  缩放、框选全部由 Canvas 接管；默认路径仍保留旧交互层以便回退。拖动时会按
+  （`?hittest=compare`，Canvas 与 DOM 结果不一致时只告警），选择层**已默认交给 Canvas**。
+  选择框与手柄由 Canvas 绘制：`renderer/selection.ts` 提供包围盒合并、手柄命中与
+  缩放后的盒子，`renderer/selection-overlay.ts` 负责轮廓/手柄绘制（随 zoom 保持屏幕尺寸）。
+  默认路径下由 Canvas 接管拖动与单节点缩放：预览盒子覆盖绘制、指针在捕获阶段处理，
+  松手后按现有 `node.patch` 事务提交；空白处拖动可框选（Canvas 绘制选框、与顶层节点
+  求交），松手直接更新选中集合。默认路径不再挂载 Moveable/Selecto，选择、拖拽、
+  缩放、框选全部由 Canvas 接管。拖动时会按
   左/中/右、上/中/下对齐线做 6px（按 zoom 换算）吸附并绘制辅助线，松手按吸附后的
-  位置提交。`?selection=canvas` 进一步把 DOM 节点的指针事件关掉：单击/Shift 单击、
-  双击文本编辑（在布局盒上覆盖 `<textarea>`，提交走 `text.patch`）与右键菜单都改用
-  Canvas 命中；该模式下 DOM 节点副本完全不渲染，画布上只有 `<canvas>` 与按需出现的
-  文本编辑框。为了不丢键盘与屏幕阅读器，`?selection=canvas` 同时挂载一个视觉隐藏的
+  位置提交。单击/Shift 单击、双击文本编辑（在布局盒上覆盖 `<textarea>`，提交走
+  `text.patch`）与右键菜单都改用 Canvas 命中；DOM 节点副本默认完全不渲染，画布上只有
+  `<canvas>` 与按需出现的
+  文本编辑框。为了不丢键盘与屏幕阅读器，默认路径同时挂载一个视觉隐藏的
   `listbox`（按图层顺序、支持上下/Home/End 移动并同步选中、Delete 删除、
-  `aria-selected`/`aria-level`/`aria-disabled`）。默认路径仍渲染旧 DOM 交互层，便于回退。
+  `aria-selected`/`aria-level`/`aria-disabled`）。旧 DOM 交互层仍可用 `?selection=dom`
+  保留，DOM 绘制可用 `?renderer=dom` 保留，便于回退。
   场景构建与绘制调用都有单元测试
   （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
   像素验证，也没有做视口裁剪（culling）；
 - `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
   节点创建/选择/框选/拖动/缩放/吸附/删除、基础属性编辑、Dexie/IndexedDB 项目、事务
   和二进制资产存储，以及 AI 计划预览、过期提示、取消和确认提交界面；画布交互层
-  已接入 Moveable/Selecto 并延迟加载，支持 Shift/框选、多节点批量拖动、缩放和删除，
+  默认走 Canvas（Moveable/Selecto 旧层仍保留为 `?selection=dom` 逃生开关），
+  支持 Shift/框选、多节点批量拖动、缩放和删除，
   所有群组变换在交互结束时作为一个原子事务提交；浏览器存储支持快照后事务重放、
   revision 缺口降级报告、资产哈希校验和旧 localStorage 快照迁移；已提供 AI 服务地址、
   模型和密钥设置入口，但尚未完成真实 Provider 的生产级端到端验证、流式体验和支持矩阵；
@@ -368,8 +369,9 @@
 - 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
 - 生产可用的渲染系统；画布已切到 Canvas 2D 场景渲染（`renderer/scene.ts` +
   `renderer/canvas-renderer.ts`），有根节点级视口裁剪、像素回归和绘制耗时基线，
-  但选择层仍由开关切换（`?selection=canvas` / `?selection=drag`），默认路径仍挂着
-  旧的 Moveable/Selecto 交互层，DOM 副本也还在；
+  选择层也**已默认交给 Canvas**（单击/双击编辑、拖拽/缩放、框选、吸附、可访问性列表
+  全部走 Canvas，DOM 副本默认不渲染）；但旧的 Moveable/Selecto 交互层代码与依赖
+  尚未删除，只用 `?selection=dom` / `?renderer=dom` 保留为逃生开关；
 - 生产可用的文本测量；浏览器端测量依赖 Canvas 字体度量，已有有上限的测量缓存、
   统一回退栈和字体加载后的缓存失效，但还没有跨平台字体基线、CI 截图对比，也没有
   服务端/无 Canvas 环境的真实度量；

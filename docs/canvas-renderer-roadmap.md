@@ -10,8 +10,8 @@
 - `packages/studio-web/src/renderer/scene.ts`：把文档 + 布局盒压成纯数据的 `SceneNode` 树；
 - `packages/studio-web/src/renderer/canvas-renderer.ts`：Canvas 2D 绘制（`zoom × dpr` 分辨率、圆角、裁剪、文本换行、图片 fit）；
 - `packages/studio-web/src/renderer/canvas-surface.tsx`：React 挂载、图片按需加载、随文档/缩放重绘；
-- DOM 节点保留为交互层（命中测试、Moveable/Selecto、文本编辑），视觉由 CSS 隐藏；
-- 回退开关：`?renderer=dom`。
+- 交互层已默认交给 Canvas（命中、选择框、拖拽/缩放、框选、文本编辑），DOM 节点副本默认不渲染；
+- 逃生开关：`?selection=dom`（旧 DOM 交互层）/ `?renderer=dom`（旧 DOM 绘制）。
 
 这是 tldraw / Excalidraw 的分层：**形状描述是纯函数，绘制与交互各自实现**。默认启用，但还有三个明确缺口。
 
@@ -21,7 +21,7 @@
 | --- | --- | --- |
 | 像素级验证 | ✅ 已完成（Phase A）：独立 harness + Chrome 截图 + PNG diff | — |
 | 绘制性能 | ✅ 已完成（Phase B）：根节点级视口裁剪 + 绘制基线 + 预算门禁；浏览器光栅化耗时待测 | — |
-| 命中测试 | 🟡 Phase C 接近完成：`hitTest`、双跑对比、选择框、拖拽/缩放、框选、吸附、Canvas 单击/双击编辑（`?selection=canvas`，DOM 副本不再渲染） | 把 canvas 模式设为默认并删除旧交互层 |
+| 命中测试 | 🟡 Phase C 接近完成：`hitTest`、双跑对比、选择框、拖拽/缩放、框选、吸附、Canvas 单击/双击编辑；**已设为默认**（DOM 副本不再渲染） | 删除旧交互层与 Moveable/Selecto 依赖 |
 
 ## Phase A：画布像素回归（✅ 已完成）
 
@@ -93,31 +93,33 @@
 - 选择框几何与绘制：`renderer/selection.ts`（包围盒合并、8 个手柄、手柄命中、拖拽后的
   盒子、光标映射）+ `renderer/selection-overlay.ts`（Canvas 绘制轮廓与手柄，手柄按
   `zoom` 保持屏幕像素大小）；harness 基线里已叠加双选选择框，像素基线同时覆盖它；
-- 工作台开关 `?selection=overlay`：额外画一层 Canvas 选择框，与 Moveable 并排对比；
+- 选择框绘制：默认由 Canvas 画选中框与手柄（旧路径 `?selection=dom` 下仍由 Moveable 画）；
 - 拖拽/缩放接管：`renderer/selection-drag.ts`（子树偏移、单节点缩放、预览覆盖、布局补丁）
-  与 `renderer/use-canvas-drag.ts`（捕获阶段指针手势、`stopPropagation` 防止 Moveable
-  同时启动、`consumedClick` 抑制拖拽后的误清除选择）。开关 `?selection=drag`：拖动已选
-  节点或拖手柄时由 Canvas 接管，提交仍走现有 `node.patch` 事务。
+  与 `renderer/use-canvas-drag.ts`（捕获阶段指针手势、`stopPropagation` 防止旧交互层
+  同时启动、`consumedClick` 抑制拖拽后的误清除选择）。默认路径下拖动已选节点或拖手柄
+  由 Canvas 接管，提交仍走现有 `node.patch` 事务。
 - 框选：`renderer/marquee.ts`（拖拽矩形归一化、与顶层节点求交）+ Canvas 半透明框选绘制；
-  `?selection=drag` 下空白处拖动即开始框选，松手后直接设置选中集合。
+  默认路径下空白处拖动即开始框选，松手后直接设置选中集合。
 - 对齐吸附：`renderer/snapping.ts`（左/中/右、上/中/下对齐线，阈值内取最近，输出位移与
   辅助线）+ `paintSnapGuides`；拖动时的位移会叠加吸附修正，辅助线随拖动绘制，松手后
   按吸附后的位置提交。像素基线里也画了两条固定辅助线，覆盖该绘制路径；
-- `?selection=canvas`：DOM 节点关闭指针事件（只保留视觉与文本编辑入口），单击选中、
-  双击文本编辑与右键菜单全部走 Canvas 命中：
+- **默认路径（不带开关）**：DOM 节点副本**完全不渲染**，单击选中、双击文本编辑与右键菜单
+  全部走 Canvas 命中：
   - 单击/Shift 单击由 `hitTest` 决定，空白处清空选择；
   - 双击文本节点在它的布局盒上盖一个 `<textarea>`（输入法/选择交给浏览器），提交仍走
     `text.patch`；
   - 右键菜单在 DOM 命中为空时回退到 `hitTest`；
   - 文本覆盖层会阻止拖动手势，避免在输入框里拖动节点；
-  - DOM 节点副本在这个模式下**完全不渲染**（`{!canvasPointer && page.childIds.map(...)}`），
+  - DOM 节点副本在默认路径下**完全不渲染**（`{legacyDomSelection && page.childIds.map(...)}`），
     画布上只有一个 `<canvas>` 和按需出现的文本编辑框；
   - 可访问性层：`renderer/a11y-tree.ts`（按图层顺序生成带层级的扁平列表）+ 
     `renderer/a11y-layer.tsx`（视觉隐藏的 `listbox`，上下箭头/Home/End 移动并同步选中，
     Delete 删除，`aria-selected`/`aria-level`/`aria-disabled` 齐全），保证纯 Canvas 画布
     仍然能用键盘和屏幕阅读器操作。
-- `?selection=drag` 时不再挂载 `CanvasInteractionLayer`：Moveable/Selecto 整个跳过，
-  选择框、拖拽、缩放、框选全部由 Canvas 接管；默认路径仍然挂载（可随时回退）。
+- 默认路径**不挂载** `CanvasInteractionLayer`：Moveable/Selecto 整个跳过，
+  选择框、拖拽、缩放、框选全部由 Canvas 接管。
+- 逃生开关 `?selection=dom`（或 `?renderer=dom`）保留旧的 DOM 交互层与 DOM 绘制，
+  用于对照排查；两者同时给上就是完整的旧路径。
 
 ### 浏览器实跑验证（2026-11-07）
 
@@ -125,7 +127,7 @@
 
 - `?hittest=compare`：点击画布节点，Canvas 命中与 DOM 命中**结果一致，控制台零
   `[hittest] canvas/DOM mismatch` 告警**——没有系统性偏差；
-- `?selection=canvas`（DOM 副本完全不渲染，纯 Canvas）：
+- `?selection=canvas`（当时的开关模式，现已并入默认路径）：
   - 单击选中正确节点，隐藏的可访问性 listbox 同步 `aria-selected`；
   - 拖拽由 Canvas 接管，预览框与手柄跟手，松手提交事务（r74 → r75）；
   - 空白处拖动框选，命中 8 个顶层节点（刚拖走的那一个不在框内）；
@@ -137,10 +139,28 @@
 React 直接抛「渲染了比上次更多的 hook」并让整棵 App 崩溃。hook 已挪到提前
 return 之前。
 
+### 默认路径实跑验证（2026-11-07）
+
+把 Canvas 交互切成默认后，在不带任何开关的地址上实测：
+
+- 画布容器的 class 是 `canvas-rendered canvas-pointer`；
+- **没有** `[data-node-id]` DOM 副本、**没有** `.moveable-control` / `.selecto-selection`
+  ——旧交互层确实没有挂载；
+- 隐藏的可访问性 listbox 正常挂载，9 个节点的顺序与类型正确；
+- 选中椭圆后拖拽 → `onPointerUp` 触发提交 → revision **r77 → r78**，命令确实落库。
+
+又发现并修掉一个真实缺陷：`useCanvasDrag` 的 `consumedRef` 原先在**手势建立后**才置位，
+于是拖完一次之后它一直是 `true`，把**下一次**正常点击也一起吞掉——拖完再点别的节点会
+完全没反应。现在 `movedRef` / `consumedRef` 的重置挪到每次 pointerdown 的早退之后，
+`consumed` 只抑制拖拽结束后浏览器补发的那一次 click。
+
 ### 剩余工作
 
-1. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖（当前由开关切换）；
-2. 把 `?selection=canvas` 变成默认（DOM 副本已完全不渲染、可访问性列表已就位），并删掉旧交互层代码。
+1. 让 Canvas 选择层成为默认并删除 Moveable/Selecto 依赖：默认切换**已完成**（默认路径不再挂载
+   `CanvasInteractionLayer`、DOM 副本默认不渲染），Moveable/Selecto 依赖与旧交互层代码待删；
+2. 删掉旧交互层代码：`CanvasInteractionLayer`、`CanvasNode` 与 `react-moveable` /
+   `react-selecto` 依赖；删 `CanvasNode` 会同时废掉 `?renderer=dom` 绘制回退，届时
+   `?selection=dom` 逃生开关只保留 DOM 交互层、画布仍走 Canvas 绘制。
 
 ### 风险与回退
 
