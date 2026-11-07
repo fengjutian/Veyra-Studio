@@ -124,11 +124,12 @@ export interface ProjectRepository {
    */
   inspectStorage?(projectId: string): Promise<ProjectStorageUsage>;
   /**
-   * 把历史版本裁剪到只剩最近 `keep` 份，返回被删除的份数。
+   * 把历史版本裁剪到只剩最近 `keepVersions` 个版本，返回被删除的份数。
    *
-   * 当前版本永远保留。可选能力：后端不支持时调用方应跳过。
+   * `keepVersions` **包含当前版本**：传 3 表示保留"当前 + 两个更早的版本"。
+   * 当前版本永远不会被删掉。可选能力：后端不支持时调用方应跳过。
    */
-  trimSnapshots?(projectId: string, keep: number): Promise<number>;
+  trimSnapshots?(projectId: string, keepVersions: number): Promise<number>;
 }
 
 export class ProjectNotFoundError extends Error {

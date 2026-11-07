@@ -162,7 +162,7 @@ function App() {
     setDocument(snapshot); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setMessage(`已${direction === "undo" ? "撤销" : "重做"} · r${committed.result.revision}`);
   };
 
-  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSnapshots(await repository.listSnapshots(snapshot.id)); setMissingAssets(await findMissingAssets(repository, snapshot)); setBackups(await backupStore.list(snapshot.id)); setStorage(await readStorageEstimate()); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSnapshots(await repository.listSnapshots(snapshot.id)); setMissingAssets(await findMissingAssets(repository, snapshot)); setBackups(await backupStore.list(snapshot.id)); setStorage(await readStorageEstimate()); setStorageUsage(await loadStorageUsage(snapshot.id)); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
   // 页面被关闭或切到后台时立刻把待写快照落盘，避免最后几次编辑留在内存里。
   useEffect(() => installAutosaveFlush(), []);
   // 历史版本列表和项目摘要：等自动保存真正落盘之后再刷新，否则看到的还是上一版。
@@ -376,16 +376,7 @@ function App() {
   /** 重新读一遍浏览器存储用量；估算失败时显示"无法获取"，不阻塞编辑。 */
   const refreshStorage = () => void readStorageEstimate().then(setStorage).catch(() => setStorage(undefined));
   /** 逐项目统计占用并生成清理清单；仓库不支持统计时保持 undefined。 */
-  const refreshStorageUsage = () => void (async () => {
-    if (!repository.inspectStorage) { setStorageUsage(undefined); return; }
-    try {
-      const summaries = await repository.listProjects();
-      const usages = await Promise.all(summaries.map(summary => repository.inspectStorage!(summary.id).catch(() => undefined)));
-      setStorageUsage(storageUsageOverview(usages.filter((usage): usage is ProjectStorageUsage => Boolean(usage)), { currentProjectId: document?.id }));
-    } catch {
-      setStorageUsage(undefined);
-    }
-  })();
+  const refreshStorageUsage = () => void loadStorageUsage(document?.id).then(setStorageUsage);
   /** 裁掉某个项目多余的历史版本；当前版本永远保留。 */
   const trimProjectHistory = (projectId: string) => void run(async () => {
     if (!repository.trimSnapshots) return;
@@ -1410,6 +1401,23 @@ function autosaveTitle(status: AutosaveStatus): string {
 }
 
 function toggleId(ids: string[], id: string): string[] { return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id]; }
+
+/**
+ * 逐项目统计存储占用并生成清理清单。
+ *
+ * 仓库不支持统计时返回 undefined——调用方要显示"无法统计"，不能把 0 当成
+ * "这个项目不占空间"。单个项目统计失败也不该让整张清单消失，所以那一项跳过。
+ */
+async function loadStorageUsage(currentProjectId?: string): Promise<StorageUsageOverview | undefined> {
+  if (!repository.inspectStorage) return undefined;
+  try {
+    const summaries = await repository.listProjects();
+    const usages = await Promise.all(summaries.map(summary => repository.inspectStorage!(summary.id).catch(() => undefined)));
+    return storageUsageOverview(usages.filter((usage): usage is ProjectStorageUsage => Boolean(usage)), { currentProjectId });
+  } catch {
+    return undefined;
+  }
+}
 
 function validateNumber(value: string): string | undefined {
   const parsed = Number(value.trim());

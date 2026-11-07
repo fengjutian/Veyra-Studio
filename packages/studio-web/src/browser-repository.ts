@@ -231,14 +231,15 @@ export class DexieProjectRepository implements ProjectRepository {
   }
 
   /**
-   * 把历史版本裁到只剩最近 `keep` 份（当前版本不算在内）。
+   * 把历史版本裁到只剩最近 `keepVersions` 个版本（**含当前版本**）。
    *
-   * 旧的先删——保留的历史版本越新越有价值。
+   * 旧的先删——保留的历史版本越新越有价值；当前版本在 snapshots 表里，不动。
    */
-  async trimSnapshots(projectId: string, keep: number): Promise<number> {
-    const target = Math.max(0, keep);
+  async trimSnapshots(projectId: string, keepVersions: number): Promise<number> {
     const history = await this.database.snapshotHistory.where("projectId").equals(projectId).sortBy("revision");
-    const outdated = history.slice(0, Math.max(0, history.length - target));
+    // 当前版本算一份，所以历史最多留 keepVersions - 1 份。
+    const keepHistory = Math.max(0, keepVersions - 1);
+    const outdated = history.slice(0, Math.max(0, history.length - keepHistory));
     for (const record of outdated) await this.database.snapshotHistory.delete([record.projectId, record.revision]);
     return outdated.length;
   }

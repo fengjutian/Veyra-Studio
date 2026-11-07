@@ -297,7 +297,8 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
         await repository.saveSnapshot(snapshotAt("project:1", revision, `v${revision}`));
       }
       assert.ok(repository.trimSnapshots, "后端应支持裁历史版本");
-      const removed = await repository.trimSnapshots!("project:1", 2);
+      // keepVersions 含当前版本：保留 3 个 = 当前 + 2 份历史。
+      const removed = await repository.trimSnapshots!("project:1", 3);
       assert.ok(removed > 0, "应删掉多余的历史版本");
 
       const snapshots = await repository.listSnapshots("project:1");

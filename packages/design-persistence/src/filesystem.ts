@@ -263,16 +263,15 @@ export class FileSystemProjectRepository implements ProjectRepository {
   }
 
   /**
-   * 把历史版本裁到只剩最近 `keep` 份（当前版本不算在内）。
+   * 把历史版本裁到只剩最近 `keepVersions` 个版本（**含当前版本**）。
    *
-   * 文件名上的 revision 越大越新，所以从旧到新删。
+   * 文件名上的 revision 越大越新，所以从旧到新删；当前版本是最新的一份，永远保留。
    */
-  async trimSnapshots(projectId: string, keep: number): Promise<number> {
+  async trimSnapshots(projectId: string, keepVersions: number): Promise<number> {
     const snapshots = join(this.projectDirectory(projectId), "snapshots");
     const files = (await safeReadDirectory(snapshots)).filter(isRevisionFile).sort().reverse();
-    const target = Math.max(0, keep);
-    // 当前版本是最新的一份，永远保留，所以能删的是它之后的那些。
-    const outdated = files.slice(target + 1);
+    // 至少留 1 份：当前版本不能被裁掉。
+    const outdated = files.slice(Math.max(1, keepVersions));
     for (const file of outdated) await rm(join(snapshots, file), { force: true });
     return outdated.length;
   }
