@@ -30,9 +30,10 @@ export interface CanvasDragOptions {
   onMarquee?(ids: string[]): void;
   /**
    * 绘制结束。`dragged` 为 false 表示这是一次单击（没有拉出尺寸），
-   * 由调用方决定单击创建什么尺寸的默认节点。
+   * 由调用方决定单击创建什么尺寸的默认节点。`start`/`end` 是原始按下点与松手点，
+   * 直线工具靠它们判断方向（归一化后的矩形丢掉了方向信息）。
    */
-  onDraw?(rect: Rect, info: { tool: DrawToolId; dragged: boolean }): void;
+  onDraw?(rect: Rect, info: { tool: DrawToolId; dragged: boolean; start: HitPoint; end: HitPoint }): void;
 }
 
 type Gesture =
@@ -66,6 +67,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   const marqueeRef = useRef<Rect | undefined>(undefined);
   const drawRectRef = useRef<Rect | undefined>(undefined);
+  const drawEndRef = useRef<HitPoint | undefined>(undefined);
   const previewRef = useRef<Record<string, SceneBox>>({});
   const gestureRef = useRef<Gesture | null>(null);
   const movedRef = useRef(false);
@@ -90,6 +92,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     if (isDrawTool(options.tool)) {
       gestureRef.current = { kind: "draw", tool: options.tool, start: point };
       drawRectRef.current = { x: point.x, y: point.y, width: 0, height: 0 };
+      drawEndRef.current = point;
       setDrawRect(drawRectRef.current);
       event.stopPropagation();
       event.currentTarget.setPointerCapture?.(event.pointerId);

@@ -1,4 +1,5 @@
-import type { SceneNode } from "./scene";
+import { absolutePath, vectorPathCommands } from "@ufira/design-schema";
+import type { SceneBox, SceneNode } from "./scene";
 
 /**
  * Canvas 2D 渲染器。
@@ -93,15 +94,38 @@ function drawShape(context: CanvasRenderingContext2D, node: SceneNode): void {
   }
 }
 
-/** 椭圆节点画椭圆，其余形状按圆角矩形处理。 */
+/** 椭圆节点画椭圆；有几何的矢量画路径；其余形状按圆角矩形处理。 */
 function shapePath(context: CanvasRenderingContext2D, node: SceneNode): void {
   const { x, y, width, height } = node.box;
+  if (node.path) {
+    const commands = vectorPathCommands(node.path);
+    if (commands.length) {
+      tracePath(context, commands, node.box);
+      return;
+    }
+    // 路径坏了不能让整页空白：退回框，至少还能看见"这里有个对象"。
+  }
   if (node.type === "ellipse") {
     context.beginPath();
     context.ellipse(x + width / 2, y + height / 2, width / 2, height / 2, 0, 0, Math.PI * 2);
     return;
   }
   roundRectPath(context, x, y, width, height, node.radius);
+}
+
+/**
+ * 把归一化路径描到画布上。
+ *
+ * 坐标在发出 `moveTo`/`lineTo` 之前就换算成绝对坐标，而不是用 `ctx.scale()`：
+ * 缩放上下文会把描边也拉粗，非等比缩放时竖线比横线粗，看起来像渲染 bug。
+ */
+function tracePath(context: CanvasRenderingContext2D, commands: ReturnType<typeof vectorPathCommands>, box: SceneBox): void {
+  context.beginPath();
+  for (const command of absolutePath(commands, box)) {
+    if (command.command === "Z") context.closePath();
+    else if (command.command === "M") context.moveTo(command.point.x, command.point.y);
+    else context.lineTo(command.point.x, command.point.y);
+  }
 }
 
 function drawImage(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions): void {

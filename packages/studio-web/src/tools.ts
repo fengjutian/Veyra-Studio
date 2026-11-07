@@ -12,10 +12,13 @@ import type { Rect } from "./renderer/selection";
  * 这个模块是纯函数层：没有 React、没有 DOM，图标只以名字引用（type-only import），
  * 因此可以在 node 环境里直接跑单测。
  */
-export type ToolId = "select" | "frame" | "rectangle" | "ellipse" | "text" | "hand";
+export type ToolId = "select" | "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "text" | "hand";
 
 /** 能用拖拽「画出来」的工具，也就是会创建节点的工具。 */
-export type DrawToolId = Extract<ToolId, "frame" | "rectangle" | "ellipse" | "text">;
+export type DrawToolId = Extract<ToolId, "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "text">;
+
+/** 五种形状工具里靠矢量路径实现的三个。 */
+export type VectorToolId = Extract<ToolId, "line" | "polygon" | "star">;
 
 export interface ToolSpec {
   id: ToolId;
@@ -35,6 +38,9 @@ export const TOOLS: readonly ToolSpec[] = [
   { id: "frame", label: "Frame", shortcut: "f", icon: "addFrame", cursor: "crosshair", creates: "frame" },
   { id: "rectangle", label: "矩形", shortcut: "r", icon: "addRectangle", cursor: "crosshair", creates: "rectangle" },
   { id: "ellipse", label: "椭圆", shortcut: "o", icon: "addEllipse", cursor: "crosshair", creates: "ellipse" },
+  { id: "line", label: "直线", shortcut: "l", icon: "addLine", cursor: "crosshair", creates: "line" },
+  { id: "polygon", label: "多边形", shortcut: "g", icon: "addPolygon", cursor: "crosshair", creates: "polygon" },
+  { id: "star", label: "星形", shortcut: "s", icon: "addStar", cursor: "crosshair", creates: "star" },
   { id: "text", label: "文本", shortcut: "t", icon: "addText", cursor: "text", creates: "text" },
   { id: "hand", label: "抓手", shortcut: "h", icon: "pan", cursor: "grab" },
 ];
@@ -45,7 +51,12 @@ export function toolSpec(id: ToolId): ToolSpec {
 
 /** 是否为「拖拽绘制」工具（选择与抓手不是）。 */
 export function isDrawTool(tool: ToolId): tool is DrawToolId {
-  return tool === "frame" || tool === "rectangle" || tool === "ellipse" || tool === "text";
+  return tool === "frame" || tool === "rectangle" || tool === "ellipse" || tool === "line" || tool === "polygon" || tool === "star" || tool === "text";
+}
+
+/** 是否是需要矢量几何的工具（直线/多边形/星形）。 */
+export function isVectorTool(tool: ToolId): tool is VectorToolId {
+  return tool === "line" || tool === "polygon" || tool === "star";
 }
 
 /** 单击（没有拖拽）时创建的默认尺寸。 */
@@ -53,6 +64,9 @@ export const DEFAULT_DRAW_SIZE: Record<DrawToolId, { width: number; height: numb
   frame: { width: 240, height: 140 },
   rectangle: { width: 240, height: 140 },
   ellipse: { width: 240, height: 140 },
+  line: { width: 160, height: 1 },
+  polygon: { width: 160, height: 160 },
+  star: { width: 160, height: 160 },
   text: { width: 160, height: 48 },
 };
 

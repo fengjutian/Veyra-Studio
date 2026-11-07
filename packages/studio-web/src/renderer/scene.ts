@@ -52,6 +52,8 @@ export interface SceneNode {
   stroke?: string;
   strokeWidth: number;
   radius: number;
+  /** 矢量节点的归一化路径数据（坐标在 [0,1]，相对 box）。 */
+  path?: string;
   text?: SceneText;
   image?: SceneImage;
   children: SceneNode[];
@@ -84,9 +86,10 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     opacity: node.appearance.opacity ?? 1,
     ...(fill ? { fill } : {}),
     ...(stroke ? { stroke } : {}),
-    // 模型里还没有描边宽度，统一按 1px 画（与 DOM 默认边框一致）。
-    strokeWidth: stroke ? 1 : 0,
+    // 描边宽度来自外观；缺省 1px，与旧文档和 DOM 默认边框一致。
+    strokeWidth: stroke ? (node.appearance.strokeWidth ?? 1) : 0,
     radius: resolveRadius(document, node) ?? 0,
+    ...(node.type === "vector" && node.geometry ? { path: node.geometry.d } : {}),
     children: node.childIds
       .map(childId => buildNode(document, document.nodes[childId], boxes))
       .filter((child): child is SceneNode => Boolean(child)),

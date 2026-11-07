@@ -1,4 +1,4 @@
-import type { NodeId } from "@ufira/design-schema";
+import { hitTestVectorPath, vectorPathCommands, type NodeId } from "@ufira/design-schema";
 import type { SceneNode } from "./scene";
 
 /**
@@ -44,6 +44,9 @@ function pathInNode(node: SceneNode, point: HitPoint): NodeId[] {
 export function containsPoint(node: SceneNode, point: HitPoint): boolean {
   const { x, y, width, height } = node.box;
   if (width <= 0 || height <= 0) return false;
+  // 矢量按真实路径判定：开放路径（直线）用容差，闭合路径用奇偶规则。
+  // 否则一条对角线会把它整个包围盒都变成可点击区域。
+  if (node.path) return hitTestVectorPath(vectorPathCommands(node.path), node.box, point);
   if (node.type === "ellipse") {
     const radiusX = width / 2;
     const radiusY = height / 2;

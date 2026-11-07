@@ -316,9 +316,12 @@ function App() {
   const contrastIssues = useMemo(() => document ? collectContrastIssues(document) : [], [document]);
   const missingIds = useMemo(() => missingAssetIds(missingAssets), [missingAssets]);
   const transactionRows = useMemo(() => {
-    const oldestSnapshotRevision = snapshots.length ? Math.min(...snapshots.map(item => item.revision)) : undefined;
-    return historyRows(transactions, document?.revision ?? 0, { oldestSnapshotRevision });
-  }, [transactions, document?.revision, snapshots]);
+    // 回退的起点：保留的历史版本 + 重建基线。基线让日志里早于最老快照的那些
+    // 步骤也能重建，所以它必须一起算进来。
+    const baseRevisions = snapshots.map(item => item.revision);
+    if (baselineRevision !== undefined) baseRevisions.push(baselineRevision);
+    return historyRows(transactions, document?.revision ?? 0, { baseRevisions });
+  }, [transactions, document?.revision, snapshots, baselineRevision]);
   // 首次打开项目时把画板缩放到工作区里：1280 宽的屏幕上 960px 画板会被裁掉右侧，
   // 对标市面编辑器的「打开即可看到整页」。只自动执行一次，之后保留用户自己的缩放。
   const initialFitDone = useRef(false);
@@ -420,7 +423,7 @@ function App() {
     setDocument(restored);
     setSelectedIds(current => current.filter(id => Boolean(restored.nodes[id])));
     setProjects(await repository.listProjects());
-    setSnapshots(await repository.listSnapshots(document.id));
+    await refreshHistory(document.id);
     setMessage(`已还原到 ${row.label}`);
   });
   /** 重新读一遍浏览器存储用量；估算失败时显示"无法获取"，不阻塞编辑。 */
@@ -431,7 +434,7 @@ function App() {
   const trimProjectHistory = (projectId: string) => void run(async () => {
     if (!repository.trimSnapshots) return;
     const removed = await repository.trimSnapshots(projectId, DEFAULT_HISTORY_KEEP);
-    if (projectId === document?.id) setSnapshots(await repository.listSnapshots(projectId));
+    if (projectId === document?.id) await refreshHistory(projectId);
     await refreshStorageUsage();
     setMessage(removed ? `已裁掉 ${removed} 份旧版本` : "没有可裁掉的历史版本");
   });
@@ -461,7 +464,7 @@ function App() {
     setDocument(restored);
     setSelectedIds(current => current.filter(id => Boolean(restored.nodes[id])));
     setProjects(await repository.listProjects());
-    setSnapshots(await repository.listSnapshots(document.id));
+    await refreshHistory(document.id);
     setMessage(`已从备份还原到 r${row.revision}`);
   });
   /**
@@ -486,7 +489,7 @@ function App() {
       setDocument(restored);
       setSelectedIds(current => current.filter(id => Boolean(restored.nodes[id])));
       setProjects(await repository.listProjects());
-      setSnapshots(await repository.listSnapshots(document.id));
+      await refreshHistory(document.id);
       setMessage(`已回退到 ${row.label}（重放 ${reconstructed.replayedTransactions} 条事务）`);
     } catch (error) {
       // 日志被裁剪、起点快照被清理时给出人话，而不是一句内部错误。

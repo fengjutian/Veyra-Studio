@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDocument, defaultAppearance, defaultLayout, type DesignNode } from "@ufira/design-schema";
+import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportPageToHtml } from "../src/index";
 
 function frame(id: string, parentId = "page:1"): DesignNode {
   return { id, type: "frame", name: id, parentId, childIds: [], visible: true, locked: false, layout: defaultLayout(), appearance: defaultAppearance() };
+}
+
+function documentWith(nodes: DesignNode[]): DesignDocument {
+  const document = createDocument("doc:1", "Demo");
+  document.pages["page:1"].childIds = nodes.map(node => node.id);
+  for (const node of nodes) document.nodes[node.id] = node;
+  return document;
 }
 
 test("exports escaped text inside a structural stack", () => {
@@ -90,4 +97,28 @@ test("keeps the default text style out of the exported CSS", () => {
   assert.doesNotMatch(result.html, /font-style/);
   assert.doesNotMatch(result.html, /text-align/);
   assert.doesNotMatch(result.html, /letter-spacing/);
+});
+
+test("exports a vector node as an inline svg path", () => {
+  const vector: DesignNode = {
+    ...frame("logo"),
+    type: "vector",
+    layout: { ...defaultLayout(), x: 20, y: 30, width: 100, height: 50 },
+    appearance: { ...defaultAppearance(), fill: "#8b5cf6", stroke: "#111111", strokeWidth: 2 },
+    geometry: { kind: "path", d: "M 0 0 L 1 0 L 0.5 1 Z" },
+  };
+  const result = exportPageToHtml(documentWith([vector]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /<svg viewBox="0 0 100 50"/);
+  assert.match(result.html, /<path d="M 0 0 L 100 0 L 50 50 Z" fill="#8b5cf6" stroke="#111111" stroke-width="2"/);
+  // 矢量节点自己画路径，外层 div 不能再铺一块背景矩形。
+  assert.doesNotMatch(result.html, /design-vector[^>]*background:/);
+  assert.equal(result.diagnostics.length, 0);
+});
+
+test("exports a non-default border width for shapes", () => {
+  const root = frame("root");
+  root.appearance.stroke = "#000000";
+  root.appearance.strokeWidth = 3;
+  const result = exportPageToHtml(documentWith([root]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /border:3px solid #000000/);
 });

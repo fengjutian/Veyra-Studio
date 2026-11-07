@@ -104,3 +104,33 @@ test("keeps left aligned text on the default anchor", () => {
   assert.doesNotMatch(result.svg, /text-anchor/);
   assert.doesNotMatch(result.svg, /font-weight/);
 });
+
+test("exports a vector node as an absolute path", () => {
+  const vector: DesignNode = {
+    ...frame("logo"),
+    type: "vector",
+    layout: { ...defaultLayout(), x: 100, y: 50, width: 200, height: 100 },
+    appearance: { ...defaultAppearance(), fill: "#8b5cf6" },
+    geometry: { kind: "path", d: "M 0 0 L 1 0 L 1 1 Z" },
+  };
+  const result = exportPageToSvg(documentWith([vector]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  // 归一化坐标在导出前换算成绝对坐标，和画布/命中共用同一套几何。
+  assert.match(result.svg, /<path d="M 100 50 L 300 50 L 300 150 Z"/);
+  assert.doesNotMatch(result.svg, /<rect[^>]*data-node-id="logo"/);
+  assert.equal(result.diagnostics.length, 0);
+});
+
+test("a vector without geometry keeps the legacy unsupported diagnostic", () => {
+  const vector: DesignNode = { ...frame("logo"), type: "vector" };
+  const result = exportPageToSvg(documentWith([vector]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.equal(result.diagnostics[0]?.feature, "vector");
+  assert.equal(result.diagnostics[0]?.support, "unsupported");
+});
+
+test("exports a non-default stroke width", () => {
+  const root = frame("root");
+  root.appearance.stroke = "#000000";
+  root.appearance.strokeWidth = 4;
+  const result = exportPageToSvg(documentWith([root]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /stroke-width:4/);
+});

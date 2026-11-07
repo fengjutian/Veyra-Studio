@@ -236,6 +236,11 @@ function px(value: number): string {
   return `${Number(value.toFixed(4))}px`;
 }
 
+/** 无单位的数值（viewBox、stroke-width 这类属性用）。 */
+function num(value: number): string {
+  return String(Number(value.toFixed(4)));
+}
+
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 }
