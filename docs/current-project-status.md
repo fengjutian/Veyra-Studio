@@ -31,7 +31,8 @@
   不钳位造成重叠。属性面板提供轨道编辑器（类型 / 尺寸 / 权重 / 增删）。
   HTML 导出输出 CSS Grid，SVG/PNG 用布局引擎解出的绝对盒子。
   语义对齐 Penpot 的 grid-layout，见 `figma-gap-roadmap.md`；
-  **尚未实现**：拖拽调整轨道、命名网格区域、自动轨道（`auto-fill` / `auto-fit`）；
+  **已实现**：拖拽调整轨道宽度、增删轨道（属性面板的轨道条，规格见 `grid-layout.md`）；
+  **尚未实现**：命名网格区域、自动轨道（`auto-fill` / `auto-fit`）；
 - **表现层能力**（混合模式 / 椭圆渐变 / 背景模糊）：三项都是**可选字段**，
   文档格式版本不变（仍是 v4），旧文档无需迁移。
   `AppearanceSpec.blendMode` 取值与 CSS `mix-blend-mode` 对齐（16 种）；
@@ -146,7 +147,9 @@
   松手后按现有 `node.patch` 事务提交；空白处拖动可框选（Canvas 绘制选框、与顶层节点
   求交），松手直接更新选中集合。拖动时会按
   左/中/右、上/中/下对齐线做 6px（按 zoom 换算）吸附并绘制辅助线，松手按吸附后的
-  位置提交。单击/Shift 单击、双击文本编辑（在布局盒上覆盖 `<textarea>`，提交走
+  位置提交。吸附已升级为**智能辅助线**：角点/边中点/中心参与对齐（辅助线带语义），
+  三个对象间距相等时给出**等间距提示**并标出间距值，按住 `Alt` 临时关闭吸附；
+  规格见 `snapping.md`。单击/Shift 单击、双击文本编辑（在布局盒上覆盖 `<textarea>`，提交走
   `text.patch`）与右键菜单都改用 Canvas 命中；**画布上不再有任何 DOM 节点副本**，
   只有一个 `<canvas>` 与按需出现的
   文本编辑框。为了不丢键盘与屏幕阅读器，画布同时挂载一个视觉隐藏的
@@ -260,7 +263,7 @@
   入口：右键菜单与属性面板「外观」区的「用作蒙版 / 取消蒙版」，一条 `node.patch` 可撤销。
   运行时只允许 `vector` / `rectangle` / `ellipse` 当蒙版。
   已知限制：蒙版圆角被忽略、自动布局里的 HTML 蒙版位置可能不准、不支持 alpha 蒙版；
-  保留布尔组与曲线级布尔仍未实现；
+  保留布尔组与曲线级布尔**已实现**（paper.js 引擎，规格见 `boolean-and-mask.md` §10）；
 - 旋转（P5.1）：`LayoutSpec.rotation`（角度制、顺时针为正、绕节点中心），可选字段。
   画布在 `save()` 后按中心旋转，子树自动继承；命中每层把点**逆变换回本地**再判定，
   蒙版检查放在逆变换之前（蒙版是兄弟，活在上层坐标系）；选择框画旋转后的四边形与手柄；
@@ -520,9 +523,11 @@
   缩进会吃掉可用宽度所以「加一级缩进」真的让文字提前换行；
   HTML 输出真正的 `<ul>/<ol>`（编号用 `<li value>` 显式给值，与画布一致），
   SVG 的标记与正文分属两个 `<text>`。属性面板「文字」区新增「段落」小节
-  （列表类型分段控件 + 缩进步进器）。规格见 `paragraph-styles.md`；
-  **尚未实现**：段落缩进（px，Figma 的 Paragraph indent）、悬挂列表、列表间距、
-  一个节点内混排多种列表类型；
+  （列表类型分段控件 + 缩进步进器 + 段落缩进 + 悬挂 + 列表间距）。规格见 `paragraph-styles.md`；
+  **段落缩进（px，Figma 的 Paragraph indent）、悬挂列表、列表间距已实现**：
+  段落缩进只对左对齐生效（居中/右对齐时画布会扣掉它），悬挂列表的标记不占正文宽度、
+  画在文本框外（画布的裁剪区往左让出标记的宽度），列表间距加在段落之后；
+  **尚未实现**：一个节点内混排多种列表类型；
 - **字体管理**：字体文件走与图片同一套资产管线（SHA-256 落库、去重、随文档备份），
   `document.fonts` 记录族名 + `assetId`（缺省表示依赖系统字体）+ 字重/字形，可选字段、
   旧文档不迁移。`font.register` 同键替换、`font.remove` 在族名仍被文本使用时拒绝，
@@ -541,8 +546,9 @@
   上传字体时还会读出文件里的真实族名与字重（`fonteditor-core` 动态加载，
   读不出来才回落文件名猜测），不再让用户靠文件名猜。
   规格见 `font-inline.md`；
-  **尚未实现**：字体**子集化**（浏览器端没有可靠的纯 JS 方案，见 `font-inline.md` §2）、
-  SVG 导出的字体内联、字体 token 的渲染语义；
+  **字体子集化已实现**（浏览器端 harfbuzz wasm：超过 1 MB 的字体先裁到导出范围里
+  真正用到的字符再内联，规格见 `font-management.md` §7）；
+  **尚未实现**：SVG 导出的字体内联、字体 token 的渲染语义；
 - 图片资产闭环：可从本地插入 PNG/JPEG/GIF/WebP 图片，字节按 SHA-256 写进仓库并去重，
   文档里先登记资源元数据（`asset.upsert`）再在同一个事务里创建 `image` 节点，两步不会
   只成一半；画布按 `fit`（覆盖/适应/拉伸）用对象 URL 渲染，资源缺失时画占位框并标注
@@ -611,17 +617,18 @@
 - 矢量能力完成到「能画、能改节点、能做布尔」：`vector` 节点已有归一化 `M/L/C/Q` 路径
   （画布、命中、SVG、HTML 共用同一套几何），钢笔能画折线与曲线，编辑态能拖锚点/手柄、
   断对称、删锚点，布尔组能合并/减去/交集/排除并保留运算树；
-  尚未实现：锚点类型切换（corner/smooth）、多选锚点、锚点吸附、
-  保留布尔组、曲线级布尔；相位划分见 `editor-tooling-roadmap.md`，
+  尚未实现：锚点类型切换（corner/smooth）、多选锚点；
+  保留布尔组、曲线级布尔已实现；相位划分见 `editor-tooling-roadmap.md`，
   P3 见 `pen-and-path-editing.md`，P4 见 `boolean-and-mask.md`；
 - **原型已有运行时**：`interaction.patch` 的数据层 + `studio-web/src/prototype/` 的预览，
   支持点击/悬停/延迟三种事件、navigate/overlay/prev-screen/open-url 五类动作、
   dissolve/slide/push 动画与 overlay 定位（详见下方「原型预览」条目）；
   仍未实现：滚动保持（`preserveScroll` 字段已建模未消费）、
   原型内的固定元素与滚动容器；协作（实时多人、评论、分享）完全空缺；
-- **Grid 只有数据模型与求解，没有可视化编辑**：轨道能通过属性面板录入，
-  但拖拽调整轨道宽度、命名网格区域（`grid-template-areas`）、
-  自动轨道（`auto-fill` / `auto-fit`）都未实现；
+- **Grid 的可视化轨道编辑已实现**：属性面板里有轨道条，能拖拽改轨道宽度、增删轨道，
+  宽度代数在 `design-layout/src/grid.ts`（`resolveGridTrackWidths` / `applyGridTrackWidths`），
+  编辑期模型在 `studio-web/src/grid-track-model.ts`，规格见 `grid-layout.md`；
+  **尚未实现**：命名网格区域（`grid-template-areas`）、自动轨道（`auto-fill` / `auto-fit`）；
   与 Figma 的差距清单见 `figma-gap-roadmap.md`；
 - SVG 路径导入：`design-schema/src/svg-path.ts` 按 Penpot 的解析语义支持
   `M/L/C/Q/A/H/V/S/T/Z` 及小写相对形式与隐式命令（`M` 之后省略命令字母按 `L` 处理），
