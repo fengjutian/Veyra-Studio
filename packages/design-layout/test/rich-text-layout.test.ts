@@ -92,3 +92,34 @@ test("the estimate measurer counts bold runs, so hug height reacts to rich text"
   assert.equal(plain.height, 40);
   assert.equal(rich.height, 60);
 });
+
+test("a larger run wraps earlier and raises that line's height", () => {
+  const lines = layoutRichText({
+    ...base,
+    text: "abcdef",
+    runs: [{ from: 0, to: 2, style: { fontSize: 30 } }],
+    availableWidth: 70,
+  });
+  // a(30) b(30) c(10) = 70 刚好放得下；d 开始溢出，于是在 c 之后断行。
+  assert.deepEqual(lines[0]!.segments.map(segment => [segment.text, segment.style.fontSize]), [["ab", 30], ["c", 10]]);
+  assert.equal(lines[0]!.height, 30);
+  assert.deepEqual(lines[1]!.segments.map(segment => segment.text), ["def"]);
+  assert.equal(lines[1]!.height, 20);
+});
+
+test("measureRichText sums per-line heights instead of multiplying lineHeight", () => {
+  const measured = measureRichText({
+    ...base,
+    text: "ab\ncd",
+    runs: [{ from: 0, to: 2, style: { fontSize: 40 } }],
+  });
+  assert.equal(measured.lineCount, 2);
+  assert.equal(measured.height, 60);
+});
+
+test("segments split when a run changes the font size", () => {
+  const mixed = layoutRichText({ ...base, text: "abcd", runs: [{ from: 2, to: 4, style: { fontSize: 20 } }] });
+  assert.deepEqual(mixed[0]!.segments.map(segment => segment.text), ["ab", "cd"]);
+  const same = layoutRichText({ ...base, text: "abcd", runs: [{ from: 0, to: 2, style: { fontSize: 20 } }, { from: 2, to: 4, style: { fontSize: 20 } }] });
+  assert.deepEqual(same[0]!.segments.map(segment => segment.text), ["abcd"]);
+});

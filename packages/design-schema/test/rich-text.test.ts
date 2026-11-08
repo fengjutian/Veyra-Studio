@@ -131,3 +131,17 @@ test("document validation accepts rich text and rejects a broken range", () => {
   const invalid = documentWithText({ runs: [{ from: 2, to: 9, style: { fontWeight: 700 } }] });
   assert.throws(() => validateDocument(invalid), /inside the text/);
 });
+
+test("font size is validated and merges only when identical", () => {
+  assert.equal(validateTextRuns("abcdef", [{ from: 0, to: 2, style: { fontSize: 24 } }]), undefined);
+  assert.match(validateTextRuns("abcdef", [{ from: 0, to: 2, style: { fontSize: 0 } }]) ?? "", /positive/);
+  assert.match(validateTextRuns("abcdef", [{ from: 0, to: 2, style: { fontSize: Number.NaN } }]) ?? "", /positive/);
+  // 相邻且字号相同 → 合并；字号不同 → 保持两段。
+  assert.deepEqual(applyTextRunStyle("abcdef", [{ from: 0, to: 2, style: { fontSize: 24 } }], 2, 4, { fontSize: 24 }), [
+    { from: 0, to: 4, style: { fontSize: 24 } },
+  ]);
+  assert.deepEqual(applyTextRunStyle("abcdef", [{ from: 0, to: 2, style: { fontSize: 24 } }], 2, 4, { fontSize: 12 }), [
+    { from: 0, to: 2, style: { fontSize: 24 } },
+    { from: 2, to: 4, style: { fontSize: 12 } },
+  ]);
+});

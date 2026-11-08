@@ -64,3 +64,14 @@ test("escapes rich text content before wrapping it", () => {
   }), { pageId: "page:1", viewport: VIEWPORT });
   assert.match(result.html, /&lt;b&gt;<span style="font-weight:700">ab<\/span>&lt;\/b&gt;/);
 });
+
+test("exports per-run font size", () => {
+  const document = documentWithText({
+    runs: [{ from: 0, to: 2, style: { fontSize: 32 } }],
+  });
+  const html = exportPageToHtml(document, { pageId: "page:1", viewport: VIEWPORT });
+  assert.match(html.html, /<span style="font-size:32px">ab<\/span>cdef/);
+
+  const svg = exportPageToSvg(document, { pageId: "page:1", viewport: VIEWPORT });
+  assert.match(svg.svg, /<tspan font-size="32">ab<\/tspan>cdef/);
+});

@@ -92,3 +92,17 @@ test("draws plain text with one fill per line, as before", () => {
   assert.equal(draws.length, 2);
   assert.deepEqual(draws.map(call => call.args[0]), ["abcd", "ef"]);
 });
+
+test("a larger run advances the next line by that line's height", () => {
+  const context = fakeContext();
+  const canvas = { width: 0, height: 0, style: {}, getContext: () => context } as unknown as HTMLCanvasElement;
+  const renderer = createCanvas2DRenderer(canvas);
+  const node = textNode();
+  node.text!.runs = [{ from: 0, to: 2, style: { fontSize: 40 } }];
+
+  renderer.paint([node], { width: 100, height: 100, zoom: 1, devicePixelRatio: 1, images: new Map() });
+
+  const draws = context.calls.filter(call => call.name === "fillText");
+  assert.deepEqual(draws.map(call => [call.args[0], call.args[2]]), [["ab", 20], ["cd", 20], ["ef", 60]]);
+  assert.ok(context.calls.some(call => call.name === "font" && String(call.args[0]).includes("40px")), "large run should use its own font size");
+});
