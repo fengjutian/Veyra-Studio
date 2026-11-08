@@ -1,6 +1,7 @@
 export * from "./studio-project";
 export * from "./assets";
 export * from "./boolean-engine";
+export * from "./font-faces";
 export * from "./history";
 export * from "./mcp";
 export * from "./mcp-server";
