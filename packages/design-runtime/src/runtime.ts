@@ -1,4 +1,4 @@
-import { clampTextRuns, findOwningComponentId, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { findOwningComponentId, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -164,6 +164,7 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       if (patch.textAlign !== undefined && patch.textAlign !== "left" && patch.textAlign !== "center" && patch.textAlign !== "right") throw new CommandError("Text align must be left, center or right");
       if (patch.letterSpacing !== undefined && !Number.isFinite(patch.letterSpacing)) throw new CommandError("Letter spacing must be a finite number");
       const textChanged = patch.text !== undefined && patch.text !== node.text;
+      const previousText = node.text;
       if (patch.runs !== undefined) {
         // 显式给的 runs 必须和（新的）文本自洽：越界、重叠、切断代理对都在这里拒绝。
         const error = validateTextRuns(patch.text ?? node.text, patch.runs);
@@ -171,9 +172,9 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       }
       Object.assign(node, structuredClone(patch));
       if (patch.runs === undefined && textChanged && node.runs?.length) {
-        // 只改了文字没给新 runs：旧偏移已经指向别处，按新文本修剪（有损但可预期）。
-        const clamped = clampTextRuns(node.text, node.runs);
-        if (clamped.length) node.runs = clamped;
+        // 只改了文字没给新 runs：按「公共前后缀」把旧区间平移/夹紧到新文本上。
+        const remapped = remapTextRuns(previousText, node.text, node.runs);
+        if (remapped.length) node.runs = remapped;
         else delete node.runs;
       }
       if (node.runs && node.runs.length === 0) delete node.runs;

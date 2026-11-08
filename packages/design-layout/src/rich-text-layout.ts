@@ -69,6 +69,13 @@ function charWidth(input: RichTextLayoutInput, char: StyledChar): number {
   return input.measure(char.value, char.style) + input.letterSpacing * Array.from(char.value).length;
 }
 
+/** 行尾空格不参与排版（与 CSS 一致）；整行都是空格时保留一个字符，避免行宽凭空消失。 */
+function trimTrailingSpaces(chars: StyledChar[], from: number, to: number): number {
+  let end = to;
+  while (end > from + 1 && chars[end - 1]!.value === " ") end -= 1;
+  return end;
+}
+
 /** 把段落里的 [from, to) 组装成一行：相邻同样式合并，x 偏移按累计宽度算。 */
 function buildLine(input: RichTextLayoutInput, chars: StyledChar[], from: number, to: number): RichTextLine {
   const segments: RichTextSegment[] = [];
@@ -121,13 +128,15 @@ export function layoutRichText(input: RichTextLayoutInput): RichTextLine[] {
         end += 1;
       }
       if (end >= chars.length) {
-        lines.push(buildLine(input, chars, start, chars.length));
+        lines.push(buildLine(input, chars, start, trimTrailingSpaces(chars, start, chars.length)));
         break;
       }
-      // 断行点：优先上一处空格；没有空格（或空格就是行首）就硬断在溢出字符之前。
-      const breakAt = lastSpace > start ? lastSpace + 1 : end;
-      lines.push(buildLine(input, chars, start, breakAt));
-      start = breakAt;
+      // 断行点：优先上一处空格，并且把断点处的空格留在行尾之外（CSS 也不会画出行尾空格）；
+      // 没有空格（或空格就是行首）就硬断在溢出字符之前。
+      const breakAt = lastSpace > start ? lastSpace : end;
+      lines.push(buildLine(input, chars, start, Math.max(start + 1, breakAt)));
+      start = lastSpace > start ? lastSpace + 1 : end;
+      while (start < chars.length && chars[start]!.value === " ") start += 1;
     }
   }
   return lines;

@@ -134,10 +134,48 @@ export function applyTextRunStyle(
 }
 
 /**
+ * 文本被改写后把 runs 重新对齐到新文本。
+ *
+ * 用「最长公共前缀 + 最长公共后缀」定位改动区间：
+ * - 改动点之前的区间原样保留；
+ * - 改动点之后的区间整体平移（插入或删除带来的位移）；
+ * - 跨在改动区间上的区间夹到新文本范围内。
+ *
+ * 不这么做的话，在段首插入一个字就会让「加粗的那一段」整体错位一个字。
+ */
+export function remapTextRuns(oldText: string, newText: string, runs: readonly TextRun[] | undefined): TextRun[] {
+  if (!runs?.length) return [];
+  const limit = Math.min(oldText.length, newText.length);
+  let prefix = 0;
+  while (prefix < limit && oldText[prefix] === newText[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < limit - prefix && oldText[oldText.length - 1 - suffix] === newText[newText.length - 1 - suffix]) suffix += 1;
+  const delta = newText.length - oldText.length;
+  const tailStart = oldText.length - suffix;
+  const remapped: TextRun[] = [];
+  for (const run of runs) {
+    if (run.to <= prefix) {
+      remapped.push({ from: run.from, to: run.to, style: { ...run.style } });
+      continue;
+    }
+    if (run.from >= tailStart) {
+      remapped.push({ from: run.from + delta, to: run.to + delta, style: { ...run.style } });
+      continue;
+    }
+    // 跨在改动区间上：起点若落在被替换区内部，就退到替换区起点；
+    // 终点若在被替换区内部，说明尾部被删掉了，截断到替换区起点。
+    const from = run.from < prefix ? run.from : prefix;
+    const to = run.to > tailStart ? run.to + delta : prefix;
+    if (to > from) remapped.push({ from, to, style: { ...run.style } });
+  }
+  return clampTextRuns(newText, remapped);
+}
+
+/**
  * 文本被改写后修剪 runs：越界部分裁掉，完全失效的区间丢弃。
  *
  * 这是有损的（缩到 0 长度就没了），但比「让偏移静默指向错位的文字」可接受——
- * 后者会让用户看到一段随机加粗的文字。真正需要精确语义的编辑走显式 runs 覆盖。
+ * 后者会让用户看到一段随机加粗的文字。需要保留相对位置时用 {@link remapTextRuns}。
  */
 export function clampTextRuns(text: string, runs: readonly TextRun[] | undefined): TextRun[] {
   if (!runs?.length) return [];

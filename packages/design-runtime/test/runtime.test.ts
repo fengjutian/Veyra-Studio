@@ -173,8 +173,37 @@ test("patches the text style fields and rejects invalid ones", () => {
   assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { fontStyle: "oblique" as never } } }])), /Font style/);
 });
 
-test("patches a vector path together with its layout", () => {
-  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+test("validates rich text runs and trims them when the text changes", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  const text: DesignNode = { ...frame("text:1"), type: "text", text: "abcdef", fontFamily: "Inter", fontSize: 16, lineHeight: 24 };
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: text } }]));
+  runtime.execute(envelope(1, [{ type: "text.patch", payload: { id: text.id, patch: { runs: [{ from: 0, to: 4, style: { fontWeight: 700 } }] } } }]));
+  const styled = runtime.snapshot().nodes[text.id];
+  assert.deepEqual(styled?.type === "text" ? styled.runs : undefined, [{ from: 0, to: 4, style: { fontWeight: 700 } }]);
+
+  // 越界区间被命令层拒绝，且不推进 revision（下一次仍可基于 2 提交）。
+  assert.throws(
+    () => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { runs: [{ from: 4, to: 99, style: { fontWeight: 700 } }] } } }])),
+    /inside the text/,
+  );
+
+  // 只改文字、没给新 runs：旧偏移按「公共前后缀」平移/截断，而不是指到随机位置。
+  runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { text: "abc" } } }]));
+  const trimmed = runtime.snapshot().nodes[text.id];
+  assert.deepEqual(trimmed?.type === "text" ? trimmed.runs : undefined, [{ from: 0, to: 3, style: { fontWeight: 700 } }]);
+
+  // 段首插入：加粗区间整体后移，仍覆盖原来那几个字。
+  runtime.execute(envelope(3, [{ type: "text.patch", payload: { id: text.id, patch: { text: "XYabc" } } }]));
+  const shifted = runtime.snapshot().nodes[text.id];
+  assert.deepEqual(shifted?.type === "text" ? shifted.runs : undefined, [{ from: 2, to: 5, style: { fontWeight: 700 } }]);
+
+  // 空数组表示清空覆盖，字段本身也不该留在文档里。
+  runtime.execute(envelope(4, [{ type: "text.patch", payload: { id: text.id, patch: { runs: [] } } }]));
+  const cleared = runtime.snapshot().nodes[text.id];
+  assert.equal(cleared?.type === "text" ? cleared.runs : "missing", undefined);
+});
+
+test("patches a vector path together with its layout", () => {  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   const vector: DesignNode = { ...frame("vector:1"), type: "vector", geometry: { kind: "path", d: "M 0 0 L 1 1" } };
   runtime.execute(envelope(0, [{ type: "node.create", payload: { node: vector } }]));
   runtime.execute(envelope(1, [{
