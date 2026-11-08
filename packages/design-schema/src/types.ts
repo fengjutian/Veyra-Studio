@@ -8,6 +8,7 @@ export type AssetId = string;
 import type { VectorGeometry } from "./geometry";
 import type { Interaction } from "./interactions";
 import type { TextRun } from "./rich-text";
+import type { DocumentFont } from "./fonts";
 
 export interface DocumentMeta {
   name: string;
@@ -349,6 +350,8 @@ export interface DesignDocument {
   components: Record<ComponentId, ComponentDefinition>;
   /** 变体集；可选字段，旧文档没有它也不需要迁移。 */
   componentSets?: Record<ComponentSetId, ComponentSetDefinition>;
+  /** 字体声明：上传的字体文件（资源 id）或依赖系统字体；可选，旧文档不需要迁移。 */
+  fonts?: DocumentFont[];
   tokens: Record<string, TokenValue>;
   assets: Record<AssetId, AssetMetadata>;
   /** 迁移历史；新建文档没有这个字段，迁移过的文档才有。 */

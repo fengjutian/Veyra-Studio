@@ -88,3 +88,37 @@ export function imageFileError(file: File, byteLength: number): string | undefin
   if (byteLength > MAX_IMAGE_BYTES) return `图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024} MB，请先压缩再插入`;
   return undefined;
 }
+
+/* ── 字体文件 ─────────────────────────────────────────────────────── */
+
+/** 支持上传的字体格式。浏览器对 ttf/otf 的 MIME 上报不统一，因此按扩展名兜底。 */
+export const SUPPORTED_FONT_EXTENSIONS: Record<string, string> = {
+  woff2: "font/woff2",
+  woff: "font/woff",
+  ttf: "font/ttf",
+  otf: "font/otf",
+};
+
+/** 单个字体文件的上限：字体比图片小得多，超过这个数多半是打包错了。 */
+export const MAX_FONT_BYTES = 10 * 1024 * 1024;
+
+/** 扩展名 → MIME；不认识返回 undefined。 */
+export function fontMimeFromFileName(name: string): string | undefined {
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  return SUPPORTED_FONT_EXTENSIONS[extension];
+}
+
+/** 由文件名猜一个族名：去扩展名，下划线/连字符换成空格。用户仍可在弹窗里改。 */
+export function fontFamilyFromFileName(name: string): string {
+  const base = name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  return base || "Untitled Font";
+}
+
+/** 上传前的字体文件校验；返回错误文案，通过则 undefined。 */
+export function fontFileError(file: File, byteLength: number, mimeType: string | undefined): string | undefined {
+  if (!mimeType) return "只支持 .woff2 / .woff / .ttf / .otf 字体文件";
+  if (!byteLength) return "字体文件内容为空";
+  if (byteLength > MAX_FONT_BYTES) return `字体文件超过 ${MAX_FONT_BYTES / 1024 / 1024} MB`;
+  void file;
+  return undefined;
+}

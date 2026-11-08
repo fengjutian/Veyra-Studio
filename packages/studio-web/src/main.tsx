@@ -29,7 +29,7 @@ import { LayerTree } from "./layer-tree";
 import { planReparent, type DropPosition } from "./layer-reorder";
 import { useCanvasLayout } from "./canvas-layout";
 import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
-import { collectFontFamilies, prepareFonts } from "./font-loading";
+import { collectFontFamilies, collectMissingFonts, loadDocumentFonts, prepareFonts } from "./font-loading";
 import { CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
 import { clampScroll, panScroll } from "./canvas-pan";
 import { listComponents, makeInstanceNode, variantOptions } from "./components";
@@ -37,7 +37,8 @@ import { PropertyPanel } from "./property-panel";
 import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
 import { CanvasSurface } from "./renderer/canvas-surface";
-import { PrototypePreview } from "./prototype/preview";import { buildScene } from "./renderer/scene";
+import { PrototypePreview } from "./prototype/preview";
+import { buildScene } from "./renderer/scene";
 import { hitTest, pointFromEvent, type HitPoint } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
 import { usePenTool, type PenCommit } from "./renderer/use-pen-tool";
@@ -57,7 +58,7 @@ import { ExportDiagnosticsPanel } from "./export-panel";
 import type { ExportFormat } from "./export-report";
 import { ExportPreviewDialog } from "./export-preview-dialog";
 import { fitPreviewSize, previewTitle, svgPreviewDataUrl, type ExportPreview } from "./export-preview";
-import { assetIdForHash, fitImageBox, imageFileError, readImageSize, sha256Hex } from "./assets";
+import { assetIdForHash, fitImageBox, fontFamilyFromFileName, fontFileError, fontMimeFromFileName, imageFileError, readImageSize, sha256Hex } from "./assets";
 import { assetLabel, formatBytes, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
 import { AssetPanel } from "./asset-panel";
 import { backupRestoreConfirmation, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
@@ -67,7 +68,7 @@ import { readStorageEstimate, storagePercent, type StorageEstimate } from "./sto
 import { DEFAULT_HISTORY_KEEP, storageUsageOverview, type StorageUsageOverview } from "./storage-usage";
 import { StoragePanel } from "./storage-panel";
 import { inspectorTabs, type InspectorTabId } from "./inspector-tabs";
-import { forgetAssetUrl } from "./asset-url";
+import { forgetAssetUrl, loadAssetUrl } from "./asset-url";
 import { Icon } from "./icons";
 import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/dialogs";
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
@@ -165,6 +166,13 @@ function App() {
   const [previewOpen, setPreviewOpen] = useState(false);
   // 原型预览：非空时进入全屏预览（Esc 退出）。这是视图状态，不写文档。
   const [prototypeScreenId, setPrototypeScreenId] = useState<string>();
+  // 字体：文档声明的上传字体是否真的加载成功，用来做「缺失字体」诊断。
+  const [availableFonts, setAvailableFonts] = useState<string[]>([]);
+  const [fontsReady, setFontsReady] = useState(false);
+  const fontInput = useRef<HTMLInputElement>(null);
+  // 最新文档快照：字体加载是异步的，回调里不能用渲染时捕获的旧文档。
+  const documentRef = useRef<DesignDocument | undefined>(undefined);
+  documentRef.current = document;
   // 已提交事务：操作历史面板据此列出每一条可回退的步骤。
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
@@ -250,16 +258,44 @@ function App() {
   }, [snapshotProjectId, autosave.lastSavedAt]);
   // 字体异步到达：加载完清掉测量缓存并触发一次重排，避免回退字形的尺寸一直留着。
   const fontFamiliesKey = useMemo(() => document ? collectFontFamilies(document).join("|") : "", [document]);
+  const documentFontsKey = useMemo(
+    () => document?.fonts?.map(font => [font.family, font.assetId ?? "", font.weight ?? 400, font.style ?? "normal"].join(":")).join("|") ?? "",
+    [document],
+  );
   useEffect(() => {
-    if (!fontFamiliesKey) return;
+    const current = documentRef.current;
+    if (!current || !fontFamiliesKey) return;
     let cancelled = false;
-    void prepareFonts(fontFamiliesKey.split("|")).then(loaded => {
-      if (cancelled || !loaded.length) return;
+    void (async () => {
+      // 先注册上传的字体文件，再统一探测可用性：两步都完成，missing 才有意义。
+      if (current.fonts?.length) {
+        await loadDocumentFonts(current, {
+          resolveAssetUrl: async assetId => {
+            const asset = current.assets[assetId];
+            return asset ? loadAssetUrl(repository, current.id, asset) : undefined;
+          },
+        });
+      }
+      const loaded = await prepareFonts(fontFamiliesKey.split("|"));
+      if (cancelled) return;
+      setAvailableFonts([...loaded].sort());
+      setFontsReady(true);
       resetBrowserTextMeasurementCache();
       setFontEpoch(epoch => epoch + 1);
-    });
+    })();
     return () => { cancelled = true; };
-  }, [fontFamiliesKey]);
+  }, [fontFamiliesKey, documentFontsKey]);
+  /** 文本用到、但既没有上传文件也没有装进系统的字体：给用户明确提示，而不是静默换字形。 */
+  const missingFonts = useMemo(() => {
+    if (!document || !fontsReady) return [];
+    return collectMissingFonts(document, availableFonts);
+  }, [document, availableFonts, fontsReady]);
+  /** 属性面板的字体建议：已加载的族名 + 文档里声明过的族名。 */
+  const fontSuggestions = useMemo(() => {
+    const families = new Set<string>(availableFonts);
+    for (const font of document?.fonts ?? []) families.add(font.family);
+    return [...families].sort();
+  }, [availableFonts, document]);
   useEffect(() => {
     if (!project) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -726,6 +762,45 @@ function App() {
     await refreshMissingAssets(project.snapshot());
     setSelectedIds([node.id]);
     setMessage(`已插入图片「${file.name}」· ${box.width}×${box.height}`);
+  });
+  /**
+   * 上传字体文件并登记为文档字体。
+   *
+   * 与图片共用同一套资产管线：字节按内容哈希落库（同文件去重）、元数据进文档、
+   * 字体声明在同一个事务里提交；族名从文件名猜默认值，用户可以在弹窗里改。
+   */
+  const insertFont = (file: File) => void run(async () => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const mimeType = fontMimeFromFileName(file.name) ?? (file.type.startsWith("font/") ? file.type : undefined);
+    const invalid = fontFileError(file, bytes.byteLength, mimeType);
+    if (invalid) { setMessage(invalid); return; }
+    const values = await askForm({
+      title: "登记字体",
+      description: "字体文件按内容哈希存进项目，随文档一起备份；同一份文件不会重复占用空间。",
+      fields: [
+        { key: "family", label: "字体族名", defaultValue: fontFamilyFromFileName(file.name) },
+        { key: "weight", label: "字重（100–900 的整百值）", defaultValue: "400" },
+      ],
+      validate: input => {
+        if (!input.family?.trim()) return "字体族名不能为空";
+        const weight = Number(input.weight);
+        if (!Number.isInteger(weight) || weight < 100 || weight > 900 || weight % 100 !== 0) return "字重写 100–900 的整百值";
+        return undefined;
+      },
+    });
+    if (!values) return;
+    const family = values.family!.trim();
+    const weight = Number(values.weight);
+    const hash = await sha256Hex(bytes);
+    await repository.putAsset(document.id, { hash, bytes });
+    forgetAssetUrl(document.id, hash);
+    const assetId = assetIdForHash(hash);
+    const asset: AssetMetadata = { id: assetId, hash, mimeType: mimeType!, byteLength: bytes.byteLength, name: file.name };
+    await execute([
+      { type: "asset.upsert", payload: { asset } },
+      { type: "font.register", payload: { font: { family, assetId, weight } } },
+    ]);
+    setMessage(`已登记字体「${family}」${weight === 400 ? "" : ` ${weight}`}`);
   });
   /**
    * 重新关联缺失的图片资源。
@@ -1603,7 +1678,7 @@ function App() {
             ? (
               <section className="inspector-section">
                 <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
-                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} />
+                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} fontSuggestions={fontSuggestions} />
                 <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
@@ -1704,7 +1779,29 @@ function App() {
             <h2>图片资源</h2>
             <AssetPanel usage={assetUsage} missingIds={missingIds} disabled={busy} onRelink={startRelink} onDelete={deleteAsset} />
             <input ref={relinkInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) relinkAssetFile(file); }} />
+          </section>          <section className="inspector-section">
+            <h2>字体</h2>
+            <div className="font-list">
+              {(document.fonts ?? []).length === 0
+                ? <p className="empty-hint">还没有上传字体。文本使用系统里已安装的字体。</p>
+                : (document.fonts ?? []).map(font => (
+                  <div className="font-row" key={`${font.family}:${font.weight ?? 400}:${font.style ?? "normal"}`}>
+                    <span className="font-family" title={font.family}>{font.family}</span>
+                    <span className="font-meta">{font.weight ?? 400}{font.style === "italic" ? " · 斜体" : ""}</span>
+                    <span className="font-source">{font.assetId ? "上传" : "系统"}</span>
+                    <Tooltip label="删除字体（仍被文本使用时会被拒绝）"><button className="icon-only" aria-label="删除字体" disabled={busy} onClick={() => void run(() => execute([{ type: "font.remove", payload: { family: font.family, weight: font.weight, style: font.style } }]))}><Icon name="trash" /></button></Tooltip>
+                  </div>
+                ))}
+            </div>
+            <button type="button" disabled={busy} onClick={() => fontInput.current?.click()}><Icon name="uploadFont" />上传字体（woff2 / woff / ttf / otf）</button>
+            {missingFonts.length > 0 && (
+              <div className="font-missing" role="status">
+                <strong>缺失字体</strong>
+                <p>{missingFonts.join("、")} 既不在项目里，也没有装进系统；画布与导出会使用回退字形。</p>
+              </div>
+            )}
           </section>
+          <input ref={fontInput} className="hidden-input" type="file" accept=".woff2,.woff,.ttf,.otf" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) insertFont(file); }} />
           <section className="inspector-section">
             <h2>组件</h2>
             <div className="component-create"><input type="text" placeholder="组件名称" value={componentName} onChange={event => setComponentName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") createComponentFromSelection(componentName); }} /><Tooltip label={selected?.type === "instance" ? "实例不能转为组件" : "将选中节点转为组件"}><button disabled={busy || !componentName.trim() || !selected || selectedIds.length !== 1 || selected.type === "instance"} onClick={() => createComponentFromSelection(componentName)}><Icon name="componentCreate" />创建</button></Tooltip></div>

@@ -19,6 +19,7 @@ export const DESTRUCTIVE_COMMAND_TYPES = [
   "component.remove",
   "token.delete",
   "asset.delete",
+  "font.remove",
   "history.restore",
 ] as const satisfies ReadonlyArray<DesignCommand["type"]>;
 
@@ -50,6 +51,8 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "component.setVariant": true,
   "component.createVariant": true,
   "component.switchVariant": true,
+  "font.register": true,
+  "font.remove": true,
   "component.remove": true,
   "component.instantiate": true,
   "component.detach": true,

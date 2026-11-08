@@ -268,6 +268,12 @@ export const designDocumentSchema = z.object({
     name: z.string(),
     properties: z.array(z.string().min(1)).min(1),
   })).optional(),
+  fonts: z.array(z.object({
+    family: z.string().min(1),
+    assetId: id.optional(),
+    weight: z.number().int().min(100).max(900).optional(),
+    style: z.enum(["normal", "italic"]).optional(),
+  })).optional(),
   tokens: z.record(z.string(), z.object({
     type: z.enum(["color", "number", "string"]),
     value: z.union([z.string(), z.number()]),

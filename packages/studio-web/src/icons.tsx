@@ -180,6 +180,7 @@ export const ICONS = {
   componentCreate: ComponentIcon,
   componentInstantiate: Boxes,
   componentVariant: LayersIcon,
+  uploadFont: Upload,
   componentRemove: X,
 
   // AI 安全编辑

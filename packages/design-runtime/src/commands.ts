@@ -6,6 +6,8 @@ import type {
   DesignDocument,
   DesignNode,
   DesignPage,
+  DocumentFont,
+  FontStyle,
   ImageNode,
   InstanceNode,
   Interaction,
@@ -198,6 +200,23 @@ export interface SwitchComponentVariantCommand {
   payload: { id: NodeId; componentId: string };
 }
 
+/**
+ * 登记字体声明。
+ *
+ * `assetId` 指向已上传的字体文件；缺省表示依赖系统字体（导入的文档常常如此）。
+ * 同族名 + 字重 + 字形视为同一条记录，再次登记即替换。
+ */
+export interface RegisterFontCommand {
+  type: "font.register";
+  payload: { font: DocumentFont };
+}
+
+/** 删除字体声明；还有文本节点在用这个族名时拒绝。 */
+export interface RemoveFontCommand {
+  type: "font.remove";
+  payload: { family: string; weight?: number; style?: FontStyle };
+}
+
 export interface RemoveComponentCommand {
   type: "component.remove";
   payload: { id: string };
@@ -263,6 +282,8 @@ export type DesignCommand =
   | AssignComponentVariantCommand
   | CreateComponentVariantCommand
   | SwitchComponentVariantCommand
+  | RegisterFontCommand
+  | RemoveFontCommand
   | RemoveComponentCommand
   | InstantiateComponentCommand
   | DetachComponentCommand

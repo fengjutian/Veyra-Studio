@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import { TEXT_DEFAULTS, applyTextRunStyle, runStyleAt, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
@@ -11,6 +11,8 @@ export interface PropertyPanelProps {
   onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints">>): void;
   onPatchText(patch: TextPatch): void;
   onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
+  /** 属性面板的字体建议（已加载 + 文档声明过的族名）。 */
+  fontSuggestions?: string[];
   /** 换一张图：只改节点引用的资源，节点本身不重建。 */
   onReplaceImage?(): void;
 }
@@ -22,7 +24,7 @@ export interface PropertyPanelProps {
  * absolute and stack modes, fixed/fill/hug sizing, gap, padding and alignment —
  * so the editor can drive the same semantics the exporters use.
  */
-export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage }: PropertyPanelProps) {
+export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage, fontSuggestions }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";  const isGrid = layout.mode === "grid";
   const padding = resolvePadding(layout);
@@ -332,7 +334,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
             onSelection={(from, to) => setTextSelection({ from, to })}
             onCommit={text => { setTextSelection({ from: 0, to: 0 }); onPatchText({ text }); }}
           />
-          <TextField label="字体" value={node.fontFamily} disabled={disabled} onCommit={fontFamily => onPatchText({ fontFamily })} />
+          <TextField label="字体" value={node.fontFamily} disabled={disabled} suggestions={fontSuggestions} onCommit={fontFamily => onPatchText({ fontFamily })} />
           <NumberField label="字号" value={node.fontSize} disabled={disabled} onCommit={fontSize => onPatchText({ fontSize })} />
           <NumberField label="行高" value={node.lineHeight} disabled={disabled} onCommit={lineHeight => onPatchText({ lineHeight })} />
           <Segmented
@@ -618,15 +620,25 @@ export function NumberField({ label, value, min, disabled, mixed, onCommit }: { 
 }
 
 /** A text input. `mixed` behaves like in {@link NumberField}. */
-export function TextField({ label, value, disabled, mixed, onCommit }: { label: string; value: string; disabled?: boolean; mixed?: boolean; onCommit(value: string): void }) {
+export function TextField({ label, value, disabled, mixed, onCommit, suggestions }: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  mixed?: boolean;
+  onCommit(value: string): void;
+  /** 下拉建议（仍可自由输入）——字体名用它，避免用户拼错导致「看起来正常、其实回退了」。 */
+  suggestions?: string[];
+}) {
   const [draft, setDraft] = useState(mixed ? "" : value);
   const [dirty, setDirty] = useState(false);
+  const listId = useId();
   useEffect(() => { setDraft(mixed ? "" : value); setDirty(false); }, [value, mixed]);
   return (
     <label className="field field-inline">
       <span className="field-label">{label}</span>
       <input
         type="text"
+        list={suggestions?.length ? listId : undefined}
         disabled={disabled}
         value={draft}
         placeholder={mixed ? "混合" : undefined}
@@ -639,6 +651,7 @@ export function TextField({ label, value, disabled, mixed, onCommit }: { label: 
         }}
         onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }}
       />
+      {suggestions?.length ? <datalist id={listId}>{suggestions.map(name => <option key={name} value={name} />)}</datalist> : null}
     </label>
   );
 }

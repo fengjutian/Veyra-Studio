@@ -1,4 +1,5 @@
 import { designDocumentSchema } from "./schema";
+import { fontKey, isFontMimeType } from "./fonts";
 import type { DesignDocument, NodeId } from "./types";
 
 export class DocumentValidationError extends Error {
@@ -102,6 +103,19 @@ export function validateDocument(input: unknown): DesignDocument {
       if (duplicate) issues.push(`components ${duplicate} and ${componentId} share the same variant values in set ${setId}`);
       else seen.set(signature, componentId);
     }
+  }
+
+  // 字体声明自洽性：同一族名+字重+字形只能有一条；引用的资源必须存在且确实是字体文件。
+  const fontKeys = new Set<string>();
+  for (const [index, font] of (document.fonts ?? []).entries()) {
+    if (!font.family.trim()) issues.push(`fonts.${index}.family cannot be empty`);
+    const key = fontKey(font);
+    if (fontKeys.has(key)) issues.push(`fonts.${index} duplicates ${font.family} (${font.weight ?? 400}/${font.style ?? "normal"})`);
+    fontKeys.add(key);
+    if (!font.assetId) continue;
+    const asset = document.assets[font.assetId];
+    if (!asset) issues.push(`fonts.${index} references missing asset ${font.assetId}`);
+    else if (!isFontMimeType(asset.mimeType)) issues.push(`fonts.${index} asset ${font.assetId} is ${asset.mimeType}, not a font`);
   }
 
   detectComponentCycles(document, issues);

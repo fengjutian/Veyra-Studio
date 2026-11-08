@@ -25,6 +25,8 @@ export const COMMAND_TYPES = [
   "component.setVariant",
   "component.createVariant",
   "component.switchVariant",
+  "font.register",
+  "font.remove",
 ] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
@@ -55,6 +57,8 @@ export function describeCommandVocabulary(): string {
     '- component.setVariant: { id: "<组件 id>", variantSetId: "<集合 id>", variant: { state: "default" } } —— 把组件登记为变体成员',
     '- component.createVariant: { sourceComponentId, componentId, name, values: { state: "hover" } } —— 复制根子树生成新变体，源组件必须已属于某个集合',
     '- component.switchVariant: { id: "<实例 id>", componentId: "<同集成员 id>" } —— 切换后按新变体重新物化子树',
+    '- font.register: { font: { family, assetId?, weight?, style? } } —— assetId 指向已上传的字体资源，缺省表示系统字体',
+    '- font.remove: { family, weight?, style? } —— 仍被文本节点使用时不可删除',
   ].join("\n");
 }
 

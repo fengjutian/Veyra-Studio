@@ -1,4 +1,4 @@
-import type { DesignDocument } from "@ufira/design-schema";
+import { fontKey, type DesignDocument } from "@ufira/design-schema";
 
 /**
  * 字体加载。
@@ -70,5 +70,84 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | und
 
 function resolveFontSet(): FontFaceSetLike | undefined {
   const fonts = (globalThis as { document?: { fonts?: FontFaceSetLike } }).document?.fonts;
+  return fonts ?? undefined;
+}
+
+/* ── 上传字体 ─────────────────────────────────────────────────────── */
+
+/** 只依赖 `load` 与 `add`，测试里可以注入替身，不必真的构造 FontFace。 */
+export interface FontFaceHandle {
+  load(): Promise<unknown>;
+}
+
+export interface FontFaceSetWithAdd {
+  add(face: unknown): void;
+}
+
+export interface LoadDocumentFontsOptions {
+  /** 资源 id → 可加载 URL（浏览器里是对象 URL）。 */
+  resolveAssetUrl(assetId: string): Promise<string | undefined>;
+  /** 注入 FontFace 构造器；缺省用浏览器全局的。 */
+  createFace?(family: string, source: string, descriptors: { weight: string; style: string }): FontFaceHandle;
+  /** 注入字体集合；缺省用 `document.fonts`。 */
+  fontSet?: FontFaceSetWithAdd;
+}
+
+/** 已经注册过的字体文件；同一份文档反复打开时不要重复 add。 */
+const registeredFaces = new Set<string>();
+
+/**
+ * 把文档里声明的上传字体注册进 FontFaceSet。
+ *
+ * 返回成功加载的族名。坏文件、缺字节、浏览器拒绝都不会抛错——它们会落到
+ * `collectMissingFonts()` 的诊断里，而不是让工作台打不开项目。
+ */
+export async function loadDocumentFonts(document: DesignDocument, options: LoadDocumentFontsOptions): Promise<string[]> {
+  const declared = (document.fonts ?? []).filter(font => font.assetId);
+  if (!declared.length) return [];
+  const loaded: string[] = [];
+  for (const font of declared) {
+    const assetId = font.assetId!;
+    const key = `${fontKey(font)}\u0000${assetId}`;
+    if (registeredFaces.has(key)) {
+      loaded.push(font.family);
+      continue;
+    }
+    const asset = document.assets[assetId];
+    if (!asset) continue;
+    const url = await options.resolveAssetUrl(assetId);
+    if (!url) continue;
+    const fontSet = options.fontSet ?? resolveFontSetWithAdd();
+    if (!fontSet) continue;
+    const descriptor = { weight: String(font.weight ?? 400), style: font.style ?? "normal" };
+    const face = options.createFace
+      ? options.createFace(font.family, `url("${url}")`, descriptor)
+      : createBrowserFace(font.family, `url("${url}")`, descriptor);
+    if (!face) continue;
+    fontSet.add(face);
+    try {
+      await face.load();
+      registeredFaces.add(key);
+      loaded.push(font.family);
+    } catch {
+      // 坏字体文件：不抛错，交给缺失诊断去提示。
+    }
+  }
+  return loaded;
+}
+
+/** `prepareFonts` 之后仍然拿不到的族名 = 缺失字体（没有任何可用来源）。 */
+export function collectMissingFonts(document: DesignDocument, available: Iterable<string>): string[] {
+  const ready = new Set(available);
+  return collectFontFamilies(document).filter(family => !ready.has(family));
+}
+
+function createBrowserFace(family: string, source: string, descriptors: { weight: string; style: string }): FontFaceHandle | undefined {
+  const ctor = (globalThis as { FontFace?: new (family: string, source: string, descriptors: { weight: string; style: string }) => FontFaceHandle }).FontFace;
+  return ctor ? new ctor(family, source, descriptors) : undefined;
+}
+
+function resolveFontSetWithAdd(): FontFaceSetWithAdd | undefined {
+  const fonts = (globalThis as { document?: { fonts?: FontFaceSetWithAdd } }).document?.fonts;
   return fonts ?? undefined;
 }

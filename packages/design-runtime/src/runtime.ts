@@ -1,4 +1,4 @@
-import { findOwningComponentId, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type ComponentSetDefinition, type DesignDocument, type DesignNode, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { findOwningComponentId, fontKey, isFontMimeType, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -237,6 +237,8 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.setVariant": return assignComponentVariant(document, command.payload);
     case "component.createVariant": return createComponentVariant(document, command.payload);
     case "component.switchVariant": return switchComponentVariant(document, command.payload);
+    case "font.register": return registerFont(document, command.payload.font);
+    case "font.remove": return removeFont(document, command.payload);
     case "component.remove": return removeComponent(document, command.payload.id);
     case "component.instantiate": return instantiateComponent(document, command.payload.node, command.payload.index);
     case "component.detach": return detachComponent(document, command.payload.id);
@@ -304,7 +306,48 @@ function deleteAsset(document: DesignDocument, id: string): void {
   if (!document.assets[id]) throw new CommandError(`Asset ${id} does not exist`);
   const used = Object.values(document.nodes).find(node => node.type === "image" && node.assetId === id);
   if (used) throw new CommandError(`Asset ${id} is still used by node ${used.id}`);
+  const font = (document.fonts ?? []).find(entry => entry.assetId === id);
+  if (font) throw new CommandError(`Asset ${id} is still used by font ${font.family}`);
   delete document.assets[id];
+}
+
+/**
+ * 登记字体声明（上传文件对应的资源或系统字体）。
+ *
+ * 同一族名 + 字重 + 字形视为同一条记录：再次登记是**替换**而不是重复，
+ * 这样重新上传同名同字重的字体文件时可以覆盖，不用先删再建。
+ */
+function registerFont(document: DesignDocument, font: DocumentFont): void {
+  const family = font.family.trim();
+  if (!family) throw new CommandError("Font family cannot be empty");
+  const weight = font.weight ?? 400;
+  if (!Number.isInteger(weight) || weight < 100 || weight > 900) throw new CommandError("Font weight must be an integer between 100 and 900");
+  const style = font.style ?? "normal";
+  if (style !== "normal" && style !== "italic") throw new CommandError("Font style must be normal or italic");
+  if (font.assetId) {
+    const asset = document.assets[font.assetId];
+    if (!asset) throw new CommandError(`Font asset ${font.assetId} does not exist`);
+    if (!isFontMimeType(asset.mimeType)) throw new CommandError(`Asset ${font.assetId} is ${asset.mimeType}, not a font`);
+  }
+  const entry: DocumentFont = { family, weight, style, ...(font.assetId ? { assetId: font.assetId } : {}) };
+  const fonts = [...(document.fonts ?? [])];
+  const index = fonts.findIndex(existing => fontKey(existing) === fontKey(entry));
+  if (index >= 0) fonts[index] = entry;
+  else fonts.push(entry);
+  document.fonts = fonts;
+}
+
+/** 删除字体声明；还有文本节点在用这个族名时拒绝，避免它们悄悄掉进回退字体。 */
+function removeFont(document: DesignDocument, payload: { family: string; weight?: number; style?: FontStyle }): void {
+  const fonts = document.fonts ?? [];
+  const key = fontKey({ family: payload.family, weight: payload.weight, style: payload.style });
+  const index = fonts.findIndex(font => fontKey(font) === key);
+  if (index < 0) throw new CommandError(`Font ${payload.family} is not declared`);
+  const used = Object.values(document.nodes).find(node => node.type === "text" && node.fontFamily === payload.family);
+  if (used) throw new CommandError(`Font ${payload.family} is still used by text node ${used.id}`);
+  const next = fonts.filter((_, position) => position !== index);
+  if (next.length) document.fonts = next;
+  else delete document.fonts;
 }
 
 function defineComponent(document: DesignDocument, component: DesignDocument["components"][string]): void {
