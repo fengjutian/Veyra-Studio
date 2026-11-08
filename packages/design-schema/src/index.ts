@@ -5,6 +5,7 @@ export * from "./arc-to-bezier";
 export * from "./svg-path";
 export * from "./interactions";
 export * from "./rich-text";
+export * from "./paragraph-styles";
 export * from "./fonts";
 export * from "./schema";
 export * from "./validate";

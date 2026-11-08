@@ -76,11 +76,13 @@ function measureWithCanvas(
 ): { width: number; height: number } {
   context.textBaseline = "alphabetic";
 
-  if (request.runs?.length) {
+  if (request.runs?.length || request.paragraphStyles?.length) {
     // 富文本：逐段换字体量宽，换行也必须走同一套（否则 hug 高度和画布行数会打架）。
+    // 段落样式（缩进）会吃掉可用宽度，同样必须走这条路径。
     const measured = measureRichText({
       text: request.text,
       runs: request.runs,
+      paragraphStyles: request.paragraphStyles,
       fontWeight: request.fontWeight,
       fontStyle: request.fontStyle,
       fontSize: request.fontSize,

@@ -921,6 +921,9 @@ function App() {
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints">>) => selected && patchNode(selected.id, patchValue);
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
   const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
+  // 段落样式走独立命令：它是带区间语义的结构，不能混进 text.patch。
+  const setParagraphStyleOf = (id: string, payload: { from: number; to: number; style: { listType?: "bullet" | "ordered" | "none"; indentDelta?: number } }) => void run(() => execute([{ type: "text.paragraph.set", payload: { id, ...payload } }]));
+  const setParagraphStyle = (payload: { from: number; to: number; style: { listType?: "bullet" | "ordered" | "none"; indentDelta?: number } }) => selected?.type === "text" && setParagraphStyleOf(selected.id, payload);
   // 图片的 fit 单独走 image.patch，和文字一样不扩张通用节点 patch。
   const patchImageOf = (id: string, patchValue: { fit?: ImageNode["fit"] }) => void run(() => execute([{ type: "image.patch", payload: { id, patch: patchValue } }]));
   // 批量改动：每个节点用自己原有的外观/布局合并后再发一条 patch，避免整块替换丢掉别的字段。
@@ -1743,7 +1746,7 @@ function App() {
             ? (
               <section className="inspector-section">
                 <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
-                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} fontSuggestions={fontSuggestions}
+                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onSetParagraphStyle={setParagraphStyle} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} fontSuggestions={fontSuggestions}
                   onSetBooleanOperation={operation => void run(() => execute([{ type: "boolean.setOperation", payload: { id: selected.id, operation } }]))}
                   onReleaseBoolean={() => void run(async () => {
                     const children = [...(document.nodes[selected.id]?.childIds ?? [])];

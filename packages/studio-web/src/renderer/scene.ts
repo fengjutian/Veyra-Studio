@@ -13,6 +13,7 @@ import {
   type Paint,
   type PathCommand,
   type ShadowSpec,
+  type ParagraphStyleRun,
   type TextRun,
 } from "@ufira/design-schema";
 
@@ -45,6 +46,8 @@ export interface SceneText {
   color: string;
   /** 段内样式覆盖；为空表示整段用节点级样式。 */
   runs?: TextRun[];
+  /** 段落样式区间；决定列表标记与缩进。 */
+  paragraphStyles?: ParagraphStyleRun[];
 }
 
 export interface SceneImage {
@@ -168,6 +171,7 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
       letterSpacing: node.letterSpacing ?? 0,
       color: fill ?? "#111111",
       ...(node.runs?.length ? { runs: node.runs } : {}),
+      ...(node.paragraphStyles?.length ? { paragraphStyles: node.paragraphStyles } : {}),
     };
   }
   if (node.type === "image" && node.assetId) {

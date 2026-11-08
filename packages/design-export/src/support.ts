@@ -25,6 +25,7 @@ export const EXPORT_SUPPORT_MATRIX: ExportSupportEntry[] = [
   { feature: "sizing", html: "exact", svg: "exact", png: "exact", note: "Fixed / fill / hug sizing is computed once and shared by canvas, export and rasterization." },
   { feature: "text-typography", html: "exact", svg: "exact", png: "exact", note: "Family, size, line height, weight, style, alignment and letter spacing." },
   { feature: "text-wrapping", html: "exact", svg: "exact", png: "exact", note: "Line breaks come from the injected text measurer." },
+  { feature: "paragraph-styles", html: "exact", svg: "exact", png: "exact", note: "List type and indent level. HTML uses real <ul>/<ol> with explicit <li value> so numbering matches the canvas; SVG emits the marker and the body as separate <text> elements." },
   { feature: "tokens", html: "exact", svg: "exact", png: "exact", note: "Color, number and string tokens become CSS variables / SVG variables." },
   { feature: "shapes", html: "exact", svg: "exact", png: "exact", note: "Frame, rectangle and ellipse with fill, stroke, corner radius and opacity." },
   { feature: "effects", html: "exact", svg: "exact", png: "rasterized", note: "Drop shadow and layer blur. SVG uses <feDropShadow>/<feGaussianBlur> with stdDeviation = blur / 2; HTML uses box-shadow / filter." },

@@ -1,4 +1,4 @@
-import { BOOLEAN_OPERATIONS, findOwningComponentId, fontKey, isFontMimeType, supportsBooleanOperand, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, withPropertyBinding, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, withPropertyBinding, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -179,7 +179,37 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
         if (remapped.length) node.runs = remapped;
         else delete node.runs;
       }
+      if (patch.runs === undefined && textChanged && node.paragraphStyles?.length) {
+        // 段落样式同样要跟着文本走：区间必须对齐新文本的段落边界，否则文档直接不合法。
+        const remapped = remapParagraphStyles(previousText, node.text, node.paragraphStyles);
+        if (remapped.length) node.paragraphStyles = remapped;
+        else delete node.paragraphStyles;
+      }
       if (node.runs && node.runs.length === 0) delete node.runs;
+      if (node.paragraphStyles && node.paragraphStyles.length === 0) delete node.paragraphStyles;
+      return;
+    }
+    case "text.paragraph.set": {
+      const node = requireNode(document, command.payload.id);
+      if (node.type !== "text") throw new CommandError(`Node ${node.id} is not a text node`);
+      const { from, to, style } = command.payload;
+      if (!Number.isInteger(from) || !Number.isInteger(to)) throw new CommandError("Paragraph style range must use integer offsets");
+      if (from < 0 || to > node.text.length) throw new CommandError("Paragraph style range must fall inside the text");
+      if (style.listType !== undefined && style.listType !== "bullet" && style.listType !== "ordered" && style.listType !== "none") {
+        throw new CommandError("Paragraph listType must be bullet, ordered or none");
+      }
+      if (style.indent !== undefined && (!Number.isInteger(style.indent) || style.indent < 0 || style.indent > MAX_LIST_INDENT)) {
+        throw new CommandError(`Paragraph indent must be an integer between 0 and ${MAX_LIST_INDENT}`);
+      }
+      if (style.indentDelta !== undefined && (!Number.isInteger(style.indentDelta) || style.indentDelta < -MAX_LIST_INDENT || style.indentDelta > MAX_LIST_INDENT)) {
+        throw new CommandError(`Paragraph indent delta must be an integer between -${MAX_LIST_INDENT} and ${MAX_LIST_INDENT}`);
+      }
+      if (style.listType === undefined && style.indent === undefined && style.indentDelta === undefined) {
+        throw new CommandError("Paragraph style must set listType, indent or indentDelta");
+      }
+      const next = setParagraphStyle(node.text, node.paragraphStyles, from, to, style);
+      if (next.length) node.paragraphStyles = next;
+      else delete node.paragraphStyles;
       return;
     }
     case "node.delete": return deleteNode(document, command.payload.id);
@@ -716,6 +746,8 @@ function applyInstanceProperties(document: DesignDocument, instance: InstanceNod
       if (copy.type !== "text") continue;
       copy.text = String(value);
       delete copy.runs;
+      // 段落样式区间必须对齐段落边界，纯文本替换后旧区间必然失效——与段内样式一起清掉。
+      delete copy.paragraphStyles;
     } else {
       copy.visible = Boolean(value);
     }
@@ -740,6 +772,8 @@ function restoreCopyFromSource(document: DesignDocument, instanceId: NodeId, sou
     copy.text = source.text;
     if (source.runs) copy.runs = structuredClone(source.runs);
     else delete copy.runs;
+    if (source.paragraphStyles) copy.paragraphStyles = structuredClone(source.paragraphStyles);
+    else delete copy.paragraphStyles;
   }
 }
 
@@ -962,7 +996,14 @@ function overrideInstanceNode(
   }
   if (text !== undefined) {
     if (copy.type !== "text") throw new CommandError(`Node ${copyId} is not a text node`);
+    // 覆盖文本会改变段落边界：段落样式区间必须跟着重排，否则文档立刻不合法。
+    const previousText = copy.text;
     copy.text = text;
+    if (previousText !== text && copy.paragraphStyles?.length) {
+      const remapped = remapParagraphStyles(previousText, text, copy.paragraphStyles);
+      if (remapped.length) copy.paragraphStyles = remapped;
+      else delete copy.paragraphStyles;
+    }
   }
   if (name !== undefined) copy.name = name;
   if (visible !== undefined) copy.visible = visible;
@@ -1019,7 +1060,11 @@ function resetOneOverride(document: DesignDocument, instance: InstanceNode, sour
   copy.name = source.name;
   copy.visible = source.visible;
   copy.appearance = structuredClone(source.appearance);
-  if (copy.type === "text" && source.type === "text") copy.text = source.text;
+  if (copy.type === "text" && source.type === "text") {
+    copy.text = source.text;
+    if (source.paragraphStyles) copy.paragraphStyles = structuredClone(source.paragraphStyles);
+    else delete copy.paragraphStyles;
+  }
 
   const overrides = { ...instance.overrides };
   delete overrides[sourceNodeId];
@@ -1089,7 +1134,15 @@ function applyOverrides(instance: InstanceNode, overrides: Record<string, unknow
     if (!copy) throw new CommandError(`Override target ${copyId} does not exist`);
     if (typeof value !== "object" || value === null) throw new CommandError(`Override for ${sourceId} must be an object`);
     const patch = value as Record<string, unknown>;
-    if (copy.type === "text" && typeof patch.text === "string") copy.text = patch.text;
+    if (copy.type === "text" && typeof patch.text === "string") {
+      const previousText = copy.text;
+      copy.text = patch.text;
+      if (previousText !== patch.text && copy.paragraphStyles?.length) {
+        const remapped = remapParagraphStyles(previousText, patch.text, copy.paragraphStyles);
+        if (remapped.length) copy.paragraphStyles = remapped;
+        else delete copy.paragraphStyles;
+      }
+    }
     if (typeof patch.name === "string") copy.name = patch.name;
     if (patch.appearance && typeof patch.appearance === "object") copy.appearance = { ...copy.appearance, ...(patch.appearance as object) };
     if (patch.layout && typeof patch.layout === "object") copy.layout = { ...copy.layout, ...(patch.layout as object) };

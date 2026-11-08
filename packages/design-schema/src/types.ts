@@ -8,6 +8,7 @@ export type AssetId = string;
 import type { VectorGeometry } from "./geometry";
 import type { Interaction } from "./interactions";
 import type { TextRun } from "./rich-text";
+import type { ParagraphStyleRun } from "./paragraph-styles";
 import type { DocumentFont } from "./fonts";
 import type { BooleanOperation } from "./boolean";
 
@@ -317,6 +318,14 @@ export interface TextNode extends BaseNode {
    * 纯文本编辑器、AI 计划、搜索和导出拿 `text` 就能工作，不必理解富文本结构。
    */
   runs?: TextRun[];
+  /**
+   * 段落样式区间：列表类型、列表缩进级别、段落缩进。
+   *
+   * 与 `runs` 的分工：`runs` 是字符级覆盖（局部加粗），这里是整段级（这一段是不是列表项）。
+   * 区间必须对齐段落边界（`\n` 切出的段），因此与 `runs` 的半段覆盖语义不同。
+   * 编号不存进文档——它在渲染时按段落顺序现算，插行删行不需要迁移数据。
+   */
+  paragraphStyles?: ParagraphStyleRun[];
 }
 
 /** 可以一次改动掉的文本字段。 */

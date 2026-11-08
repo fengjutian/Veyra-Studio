@@ -103,11 +103,13 @@ export function createEstimateTextMeasurer(): TextMeasurer {
       const letterSpacing = node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
       const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
       const fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
-      if (node.runs?.length) {
+      if (node.runs?.length || node.paragraphStyles?.length) {
         // 富文本必须按区间量宽：一段加粗文字比常规文字更宽，忽略它 hug 高度就会算错。
+        // 段落样式同理：缩进吃掉可用宽度，不走同一条换行路径就会算少几行。
         const measured = measureRichText({
           text: node.text,
           runs: node.runs,
+          paragraphStyles: node.paragraphStyles,
           fontWeight,
           fontStyle,
           fontSize: node.fontSize,
@@ -157,6 +159,7 @@ export function createHostTextMeasurer(
         fontStyle: node.fontStyle ?? TEXT_DEFAULTS.fontStyle,
         letterSpacing: node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing,
         ...(node.runs?.length ? { runs: node.runs } : {}),
+        ...(node.paragraphStyles?.length ? { paragraphStyles: node.paragraphStyles } : {}),
         availableWidth,
       });
       return {

@@ -221,3 +221,35 @@ export function runStyleAt(text: string, runs: readonly TextRun[] | undefined, i
   }
   return {};
 }
+
+/**
+ * 取出一段字符区间内的段内样式片段。
+ *
+ * 段落级导出需要「按段切片」：每个段落单独成块，块内的 `<span>` / `<tspan>`
+ * 只能覆盖本段的那部分文字。`textRunSegments` 给出的是全文切片，所以这里
+ * 再按区间裁一次。
+ *
+ * 区间是 UTF-16 下标，与 `text.slice` 的口径一致，切代理对不会被劈开
+ * （调用方给的 from/to 已经是合法边界）。
+ */
+export function textRunSegmentsInRange(
+  text: string,
+  runs: readonly TextRun[] | undefined,
+  from: number,
+  to: number,
+): TextRunSegment[] {
+  if (to <= from) return [];
+  const segments = textRunSegments(text, runs);
+  const output: TextRunSegment[] = [];
+  let offset = 0;
+  for (const segment of segments) {
+    const start = offset;
+    const end = offset + segment.text.length;
+    offset = end;
+    if (end <= from || start >= to) continue;
+    const sliceStart = Math.max(from, start) - start;
+    const sliceEnd = Math.min(to, end) - start;
+    output.push({ text: segment.text.slice(sliceStart, sliceEnd), style: segment.style });
+  }
+  return output;
+}

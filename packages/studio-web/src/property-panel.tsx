@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, applyTextRunStyle, runStyleAt, type BlendMode, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
+import { MAX_LIST_INDENT, TEXT_DEFAULTS, applyTextRunStyle, paragraphIndexAt, paragraphRanges, paragraphStyleAt, runStyleAt, type BlendMode, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type ListType, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextNode, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 import type { BooleanOperation } from "./boolean";
 
@@ -11,6 +11,8 @@ export interface PropertyPanelProps {
   disabled?: boolean;
   onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints">>): void;
   onPatchText(patch: TextPatch): void;
+  /** 改段落样式（列表类型 / 缩进）；走独立命令，不经过 TextPatch。 */
+  onSetParagraphStyle?(payload: { from: number; to: number; style: { listType?: ListType | "none"; indentDelta?: number } }): void;
   onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
 /** 布尔组的运算类型切换与解除。 */
   onSetBooleanOperation?(operation: BooleanOperation): void;
@@ -28,7 +30,7 @@ export interface PropertyPanelProps {
  * absolute and stack modes, fixed/fill/hug sizing, gap, padding and alignment —
  * so the editor can drive the same semantics the exporters use.
  */
-export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage, fontSuggestions, onSetBooleanOperation, onReleaseBoolean }: PropertyPanelProps) {
+export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onSetParagraphStyle, onPatchImage, onReplaceImage, fontSuggestions, onSetBooleanOperation, onReleaseBoolean }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";  const isGrid = layout.mode === "grid";
   const padding = resolvePadding(layout);
@@ -71,6 +73,28 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
   const selectionStyle = node.type === "text" && hasTextSelection ? runStyleAt(node.text, node.runs, textSelection.from) : {};
   const selectionColor = selectionStyle.color ?? "#111111";
   const selectionFontSize = node.type === "text" ? selectionStyle.fontSize ?? node.fontSize : 0;
+  /**
+   * 段落样式的当前状态：取选区（或光标）所在那一段。
+   *
+   * 列表类型与缩进是**段落级**的，面板读的是段落而不是字符——
+   * 用户选中了列表项中间的一个字，回显的仍然是这一段的列表类型。
+   */
+  const paragraphState = node.type === "text" ? currentParagraphState(node.text, node.paragraphStyles, hasTextSelection ? textSelection.from : 0) : undefined;
+  /**
+   * 段落样式的作用范围：有选区时作用于选区覆盖的段落，没有选区时作用于整段文本。
+   *
+   * 命令层会把区间吸附到段落边界，所以这里给选区原始偏移就够——
+   * 选区落在段中时整段生效，与 Figma 一致。
+   */
+  const paragraphRange = node.type === "text"
+    ? (hasTextSelection
+      ? { from: Math.max(0, textSelection.from), to: Math.min(node.text.length, textSelection.to) }
+      : { from: 0, to: node.text.length })
+    : { from: 0, to: 0 };
+  const setParagraphStyle = (style: { listType?: ListType | "none"; indentDelta?: number }) => {
+    if (node.type !== "text") return;
+    onSetParagraphStyle?.({ ...paragraphRange, style });
+  };
   // 删掉一层后下标可能越界，取最小值兜底，避免编辑到不存在的层。
   const activeIndex = paints.length ? Math.min(paintIndex, paints.length - 1) : 0;
   const paint = paints[activeIndex];
@@ -426,12 +450,71 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
           )}
         </Section>
       )}
+
+      {node.type === "text" && (
+        <Section title="段落">
+          <Segmented
+            label="列表"
+            value={paragraphState?.listType ?? "none"}
+            disabled={disabled || !onSetParagraphStyle}
+            options={[
+              { value: "none", label: "无" },
+              { value: "bullet", label: "项目符号" },
+              { value: "ordered", label: "编号" },
+            ]}
+            onChange={value => setParagraphStyle({ listType: value as ListType | "none" })}
+          />
+          <div className="field field-inline">
+            <span className="field-label">缩进</span>
+            <div className="paragraph-indent">
+              <button
+                type="button"
+                className="paragraph-indent-step"
+                disabled={disabled || !onSetParagraphStyle || (paragraphState?.indent ?? 0) <= 0}
+                aria-label="减少缩进"
+                onClick={() => setParagraphStyle({ indentDelta: -1 })}
+              >
+                −
+              </button>
+              <span className="paragraph-indent-value">{paragraphState?.indent ?? 0}</span>
+              <button
+                type="button"
+                className="paragraph-indent-step"
+                disabled={disabled || !onSetParagraphStyle || (paragraphState?.indent ?? 0) >= MAX_LIST_INDENT}
+                aria-label="增加缩进"
+                onClick={() => setParagraphStyle({ indentDelta: 1 })}
+              >
+                ＋
+              </button>
+            </div>
+          </div>
+          <p className="field-hint">列表作用于选区覆盖的段落；没有选区时作用于整段文本。</p>
+        </Section>
+      )}
     </>
   );
 }
 
-const booleanOperationOptions = [
-  { value: "union", label: "合并" },
+/**
+ * 取某个下标所在段落的列表状态（面板回显用）。
+ *
+ * 段落边界由 `paragraphRanges` 决定，所以这里能定位到「光标落在哪一段」，
+ * 再读那一段上的段落样式区间。
+ */
+function currentParagraphState(
+  text: string,
+  paragraphStyles: TextNode["paragraphStyles"],
+  offset: number,
+): { listType?: ListType; indent: number } | undefined {
+  if (!text.length) return undefined;
+  const index = paragraphIndexAt(text, Math.max(0, Math.min(offset, text.length - 1)));
+  const range = paragraphRanges(text)[index];
+  if (!range) return undefined;
+  const style = paragraphStyleAt(paragraphStyles, range.start, range.end);
+  return { listType: style?.listType, indent: style?.indent ?? 0 };
+}
+
+const booleanOperationOptions = [  { value: "union", label: "合并" },
   { value: "subtract", label: "减去" },
   { value: "intersect", label: "交集" },
   { value: "exclude", label: "排除" },

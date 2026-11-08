@@ -22,6 +22,8 @@ export function textMeasurementKey(node: TextNode, availableWidth?: number): str
     node.text,
     // 段内样式必须进键：同一段文字改成局部加粗后宽度不同，共用缓存会拿到旧尺寸。
     node.runs?.length ? JSON.stringify(node.runs) : "",
+    // 段落样式同理：加一级缩进会吃掉可用宽度，尺寸就变了。
+    node.paragraphStyles?.length ? JSON.stringify(node.paragraphStyles) : "",
   ].join("\u0000");
 }
 

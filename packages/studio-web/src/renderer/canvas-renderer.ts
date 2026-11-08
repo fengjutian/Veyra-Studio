@@ -1,4 +1,4 @@
-import { absolutePath, canvasCompositeFor, ellipticalGeometry, gradientLine, radialGeometry, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
+import { absolutePath, canvasCompositeFor, ellipticalGeometry, gradientLine, radialGeometry, LIST_MARKER_GAP, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
 import { layoutRichText, type RichTextStyle } from "@ufira/design-layout";
 import { rotatedBounds, toRadians } from "./rotation";
 import type { SceneBox, SceneNode } from "./scene";
@@ -520,12 +520,13 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
   context.textAlign = "left";
   const maxLines = Math.max(1, Math.floor(height / Math.max(1, text.lineHeight)));
 
-  if (text.runs?.length) {
+  if (text.runs?.length || text.paragraphStyles?.length) {
     // 富文本：换行与导出共用 design-layout 的布局结果，画布只负责按段上色、按 x 落笔。
     setLetterSpacing(context, 0);
     const lines = layoutRichText({
       text: text.value,
       runs: text.runs,
+      paragraphStyles: text.paragraphStyles,
       fontWeight: text.fontWeight,
       fontStyle: text.fontStyle,
       fontSize: text.fontSize,
@@ -541,11 +542,22 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
     let lineY = y;
     for (const line of lines) {
       if (lineY >= y + height) break;
-      const offset = text.align === "center" ? (width - line.width) / 2 : text.align === "right" ? width - line.width : 0;
+      // 缩进后的可用宽度：居中/右对齐在剩余空间里算，缩进不参与对齐。
+      const contentWidth = Math.max(0, width - line.left);
+      const offset = text.align === "center" ? (contentWidth - line.width) / 2 : text.align === "right" ? contentWidth - line.width : 0;
+      // 列表标记画在标记区里，右边缘停在正文左侧一个间隙处——
+      // 编号位数不同（1. / 10. / iv.）时右对齐才不会参差不齐。
+      if (line.marker) {
+        context.font = richFont(text, { fontWeight: text.fontWeight, fontStyle: text.fontStyle, fontSize: text.fontSize });
+        context.fillStyle = text.color;
+        context.textAlign = "right";
+        context.fillText(line.marker, x + line.left - LIST_MARKER_GAP, lineY);
+        context.textAlign = "left";
+      }
       for (const segment of line.segments) {
         context.font = richFont(text, segment.style);
         context.fillStyle = segment.style.color ?? text.color;
-        const lineX = x + offset + segment.x;
+        const lineX = x + line.left + offset + segment.x;
         if (!text.letterSpacing) {
           context.fillText(segment.text, lineX, lineY);
           continue;

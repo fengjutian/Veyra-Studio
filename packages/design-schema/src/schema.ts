@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isValidVectorPath } from "./geometry";
 import { validateTextRuns } from "./rich-text";
+import { validateParagraphStyles } from "./paragraph-styles";
 
 const nonNegative = z.number().finite().nonnegative();
 const id = z.string().min(1);
@@ -241,6 +242,17 @@ const textRunSchema = z.object({
   }),
 });
 
+const paragraphStyleRunSchema = z.object({
+  from: z.number().int().nonnegative(),
+  to: z.number().int().positive(),
+  style: z.object({
+    listType: z.enum(["bullet", "ordered"]).optional(),
+    indent: z.number().int().min(0).max(4).optional(),
+  }).refine(style => style.listType !== undefined || style.indent !== undefined, {
+    message: "Paragraph style must set at least one field",
+  }),
+});
+
 const textNodeSchema = z.object({
   ...baseNodeShape,
   type: z.literal("text"),
@@ -253,11 +265,15 @@ const textNodeSchema = z.object({
   textAlign: z.enum(["left", "center", "right"]).optional(),
   letterSpacing: z.number().finite().optional(),
   runs: z.array(textRunSchema).optional(),
+  paragraphStyles: z.array(paragraphStyleRunSchema).optional(),
 }).superRefine((node, context) => {
   // 区间与文本的对应关系（越界、重叠、切断代理对）无法用字段级 schema 表达，
   // 交给唯一的校验函数，避免 schema 和命令层各写一套判定。
   const error = validateTextRuns(node.text, node.runs);
   if (error) context.addIssue({ code: "custom", message: error, path: ["runs"] });
+  // 段落样式的区间还必须对齐段落边界（`\n` 切出的段），同样交给唯一入口判定。
+  const paragraphError = validateParagraphStyles(node.text, node.paragraphStyles);
+  if (paragraphError) context.addIssue({ code: "custom", message: paragraphError, path: ["paragraphStyles"] });
 });
 
 const imageNodeSchema = z.object({

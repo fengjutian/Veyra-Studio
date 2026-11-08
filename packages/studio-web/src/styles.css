@@ -50,6 +50,10 @@ button.icon-only{padding:5px;min-width:26px}
 .component-variant{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#98a2b3;font-size:11px}
 .rich-text-selection{display:flex;flex-direction:column;gap:6px;margin-top:4px}
 .rich-text-selection button{align-self:flex-start;border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;padding:4px 8px;font-size:12px;cursor:pointer}
+.paragraph-indent{display:flex;align-items:center;gap:4px}
+.paragraph-indent-step{width:24px;height:24px;border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;font-size:13px;line-height:1;cursor:pointer}
+.paragraph-indent-step:disabled{opacity:.4;cursor:default}
+.paragraph-indent-value{min-width:20px;text-align:center;color:#e7e9ee;font-size:12px}
 .segmented{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:3px;background:#1f2430;border:1px solid #363d4b;border-radius:7px;padding:3px}
 .segment{padding:4px 2px;font-size:11px;border:0;background:transparent;color:#98a2b3;border-radius:5px}
 .segment[data-state=on]{background:#4c1d95;color:#fff}

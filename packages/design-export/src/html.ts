@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
+import { LIST_INDENT_STEP, LIST_MARKER_WIDTH, MAX_LIST_INDENT, TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, resolveParagraphs, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -57,7 +57,12 @@ function renderNode(
   const style = nodeStyle(document, node, parent, tokenVariables, options.origin);
   const common = `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
 
-  if (node.type === "text") return `<p ${common}>${textHtml(node)}</p>`;
+  if (node.type === "text") {
+    // 有段落样式时按段落拆块：列表段落用真正的 <ul>/<ol>（浏览器负责画标记），
+    // 普通段落用 <p>。没有段落样式的旧文档仍然输出单个 <p>，产物逐字不变。
+    if (!node.paragraphStyles?.length) return `<p ${common}>${textHtml(node)}</p>`;
+    return `<div ${common}>${paragraphBlocksHtml(node)}</div>`;
+  }
   if (node.type === "image") {
     const asset = document.assets[node.assetId];
     const rawUrl = asset ? options.resolveAsset?.(asset) : undefined;
@@ -452,6 +457,73 @@ function textHtml(node: TextNode): string {
     const body = escapeHtml(segment.text);
     return declarations.length ? `<span style="${escapeAttribute(declarations.join(";"))}">${body}</span>` : body;
   }).join("");
+}
+
+/**
+ * 一段文字的内容（`[from, to)` 区间）。
+ *
+ * 段落级导出按段切片：段内的 `<span>` 只能覆盖本段的那部分文字，
+ * 所以这里用区间版本的段内样式切片，而不是全文切片。
+ */
+function textRangeHtml(node: TextNode, from: number, to: number): string {
+  if (!node.runs?.length) return escapeHtml(node.text.slice(from, to));
+  return textRunSegmentsInRange(node.text, node.runs, from, to).map(segment => {
+    const declarations: string[] = [];
+    if (segment.style.fontWeight !== undefined) declarations.push(`font-weight:${segment.style.fontWeight}`);
+    if (segment.style.fontStyle !== undefined) declarations.push(`font-style:${segment.style.fontStyle}`);
+    if (segment.style.fontSize !== undefined) declarations.push(`font-size:${px(segment.style.fontSize)}`);
+    if (segment.style.color !== undefined) declarations.push(`color:${safeCssValue(segment.style.color)}`);
+    const body = escapeHtml(segment.text);
+    return declarations.length ? `<span style="${escapeAttribute(declarations.join(";"))}">${body}</span>` : body;
+  }).join("");
+}
+
+/**
+ * 按段落拆块输出。
+ *
+ * - 列表段落用真正的 `<ul>` / `<ol>`：浏览器负责画标记，缩进用 `padding-left`，
+ *   编号用 `<li value>` 显式给值（这样每一级的编号与画布一致）。
+ * - 普通段落用 `<p>`。
+ * - 连续同类型的列表段落合并进同一个列表，编号才连续。
+ */
+function paragraphBlocksHtml(node: TextNode): string {
+  const paragraphs = resolveParagraphs(node.text, node.paragraphStyles);
+  const blocks: string[] = [];
+  let index = 0;
+  while (index < paragraphs.length) {
+    const paragraph = paragraphs[index]!;
+    if (!paragraph.style.listType) {
+      blocks.push(`<p class="design-paragraph">${textRangeHtml(node, paragraph.start, paragraph.end)}</p>`);
+      index += 1;
+      continue;
+    }
+    const listType = paragraph.style.listType;
+    const items: string[] = [];
+    while (index < paragraphs.length && paragraphs[index]!.style.listType === listType) {
+      const item = paragraphs[index]!;
+      const indent = item.style.indent ?? 0;
+      // 缩进：标记区宽度 + 级别缩进，与画布的几何一致。
+      const declarations = [`padding-left:${px(indent * LIST_INDENT_STEP + LIST_MARKER_WIDTH)}`];
+      if (listType === "ordered") {
+        declarations.push(`list-style-type:${orderedListStyle(indent)}`);
+      }
+      const value = listType === "ordered" && item.ordinal !== undefined ? ` value="${item.ordinal}"` : "";
+      items.push(`<li${value} style="${escapeAttribute(declarations.join(";"))}">${textRangeHtml(node, item.start, item.end)}</li>`);
+      index += 1;
+    }
+    const tag = listType === "ordered" ? "ol" : "ul";
+    blocks.push(`<${tag} class="design-list" style="margin:0;padding-left:0;list-style-position:outside">${items.join("")}</${tag}>`);
+  }
+  return blocks.join("");
+}
+
+/** 有序列表的编号格式：随缩进级别在数字 / 字母 / 罗马数字之间循环。 */
+function orderedListStyle(indent: number): string {
+  switch (Math.max(0, Math.min(indent, MAX_LIST_INDENT)) % 3) {
+    case 0: return "decimal";
+    case 1: return "lower-alpha";
+    default: return "lower-roman";
+  }
 }
 
 function cssString(value: string): string {

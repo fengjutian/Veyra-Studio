@@ -26,7 +26,7 @@
 | 1 | Grid 布局 | ✅ | ✅ | ✅ 数据模型 + 求解 + 面板 | A | **本轮完成**（缺可视化轨道编辑） |
 | 2 | 组件变体（variant） | ✅ | ✅ | ✅ 变体集 + 实例切换（UI 限单属性） | A | **本轮完成** |
 | 3 | 原型运行时 | ✅ | ✅ | ✅ 预览/状态机/overlay/动画/按下与悬停（缺滚动保持） | A | **本轮完成** |
-| 4 | 富文本（段内混排） | ✅ | ✅ | ✅ 段内字重/字形/字号/颜色（无段落样式） | A | **本轮完成** |
+| 4 | 富文本（段内混排） | ✅ | ✅ | ✅ 段内字重/字形/字号/颜色 + 段落样式（列表/缩进） | A | **已完成**（见 §7） |
 | 5 | 字体管理（上传/缺失字） | ✅ | ✅ | ✅ 上传 + 声明 + 缺失诊断（无子集化） | A | **本轮完成** |
 | 6 | 布尔组（保留运算树） | ✅ | ✅ | ✅ 运算树 + 实时重算（结果无曲线） | A | **本轮完成** |
 | 7 | 混合模式 | ✅ | ✅ | ✅ 16 种全覆盖 + 图层组离屏合成 | A | **已完成**（§4 / §5） |
@@ -61,9 +61,12 @@ areas / layout_data 五个模块，约 1000 行 ClojureScript）。
 manual 定位、背景遮罩与点外部关闭；动画 dissolve/slide/push 用 DOM 层 CSS keyframes
 实现。规格见 `prototype-runtime.md`。按下与悬停/离开事件也已接线（hover 只在进入时触发一次），仍缺 `preserveScroll` 与原型内滚动容器。
 
-**4. 富文本** — 本轮已落地**段内字重/字形/颜色**：`TextNode.runs` 用偏移区间承载样式，
+**4. 富文本** — 已落地**段内字重/字形/颜色**：`TextNode.runs` 用偏移区间承载样式，
 换行统一走 `layoutRichText()`，HTML 出 `<span>`、SVG 出 `<tspan>`，面板选中文字即可
-加粗/变色（规格见 `rich-text.md`）。仍缺段落级样式（缩进、列表）。
+加粗/变色（规格见 `rich-text.md`）。**段落级样式（列表、列表缩进）也已补齐**：
+`TextNode.paragraphStyles` 用对齐段落边界的区间承载，命令 `text.paragraph.set`，
+画布出标记与缩进、HTML 出 `<ul>/<ol>`、SVG 出标记文本（规格见 `paragraph-styles.md`，
+见本轮 §7）。仍缺段落缩进（px）与悬挂列表。
 
 **5. 字体管理** — 本轮已落地：字体文件按内容哈希进项目（与图片共用资产管线），
 `document.fonts` 声明族名/字重/字形的来源，加载失败或系统中也没有的族名会在
@@ -542,22 +545,67 @@ Canvas 没有 `backdrop-filter` 的等价物，但「背景模糊」本质上是
 - 文本属性写纯文本，会清掉被绑定文本节点的段内样式。
 - 属性不能跨组件嵌套引用：组件 A 的属性不会自动传给 A 内部 B 的实例。
 
-## 7. 后续排期
+## 7. 本轮：富文本段落样式（列表 + 缩进）
+
+§2 第 4 项里剩下的那一半。段内样式（`runs`）解决的是「一段话里把几个词加粗」，
+段落样式解决的是「这一段是列表项 / 这一段缩进一级」——
+**列表是信息结构，不是装饰**：功能清单、导航目录、变更日志都要列表。
+
+对 Figma 来说是标配，对本项目更刚需：定位是「本地优先 + 可被 Agent 驱动」，
+而「画布只能画一堆等宽的段落」意味着 Agent 生成的文案稿没法直接用。
+
+完整规格见 `docs/paragraph-styles.md`，这里只记范围与验收。
+
+### 7.1 范围
+
+- **存储**：`TextNode.paragraphStyles?: ParagraphStyleRun[]`，用**对齐段落边界**的
+  UTF-16 区间承载（与 `runs` 同构，但区间语义刻意不同：段落样式必须整段覆盖）。
+- **样式**：`listType`（`bullet` / `ordered`）+ `indent`（0–4 级，对齐 Figma 的 5 级上限）。
+- **编号不存进文档**：渲染期按段落顺序现算（编号 → 字母 → 罗马，随级别循环），
+  插行删行不需要迁移数据。
+- **命令**：`text.paragraph.set`（区间吸附到段落边界、样式增量、
+  `listType: "none"` 取消列表、`indentDelta` 相对缩进）。
+- **文本改写**：改字时用 `remapParagraphStyles()` 按「字符是否还在」重新对齐；
+  段落被换行劈开时两段都继承样式，整段被删时样式一起消失。
+- **UI**：属性面板「文字」区新增「段落」小节（列表类型分段控件 + 缩进步进器）。
+- **不升 schema 版本**：新字段全可选，旧文档无需迁移。
+- **不做**：段落缩进（px）、悬挂列表、列表间距、列表类型混排。
+
+### 7.2 验收
+
+- 段落边界、校验、区间对齐与合并、remap、编号格式有测试覆盖（schema 25 条）；
+- 行偏移、标记区、编号递增与重置、hug 宽度含缩进有测试覆盖（layout 7 条）；
+- 命令层：区间吸附、增量语义、取消列表、文本改写 remap、撤销（runtime 12 条）；
+- 导出层：HTML 的 `<ul>/<ol>` 分组、编号显式给值、缩进 padding；
+  SVG 的标记文本（export 10 条）；
+- 画布层：标记右对齐、正文右移、折行后不再画标记（studio-web 5 条）；
+- 旧文档（无段落样式）画布与导出产物逐字不变——visual 回归 0 像素差异。
+
+### 7.3 已知限制
+
+- 段落缩进（px，Figma 的 Paragraph indent）本轮不做：与列表缩进在几何上重叠，
+  两套缩进并存会让「缩进了多少」说不清。
+- 一个文本节点不能混排多种列表类型（有序里嵌无序）。
+- 组件实例的文本覆盖只同步 `text`，不同步段落样式。
+- SVG 不换行，段落样式只解决缩进与标记。
+
+## 8. 后续排期
 
 | 优先级 | 能力 | 依赖 | 预估 |
 | --- | --- | --- | --- |
 | P0 | Grid 布局 | 已完成（缺可视化轨道编辑） | — |
 | P0 | 组件变体 | 已完成 | — |
 | P0 | 原型运行时 | 已完成（缺 hover 与滚动保持） | — |
-| ~~P1~~ | ~~富文本~~ | 段内样式已完成，剩段内字号与段落样式 | — |
+| ~~P1~~ | ~~富文本~~ | 段内样式 + 段落样式已完成 | — |
 | P1 | 字体管理 | 已完成（剩子集化与导出内联） | — |
 | P1 | 布尔组 | 已完成（剩曲线级布尔） | — |
 | P2 | 混合模式 / 椭圆渐变 / 背景模糊 | **已完成**（画布侧见本轮 §5） | — |
 | ~~P2~~ | ~~组件属性~~ | **已完成**（见本轮 §6） | — |
+| ~~P2~~ | ~~段落样式~~ | **已完成**（见本轮 §7） | — |
 | P2 | 智能锚点吸附 | 吸附基础版 | 中 |
 | ~~P3~~ | ~~画布侧背景模糊与分组混合~~ | 已完成（§5） | — |
 
-## 8. 参照来源
+## 9. 参照来源
 
 - Penpot Grid 实现：`common/src/app/common/geom/shapes/grid_layout/`
   （`params.cljc` 轨道与参数计算、`positions.cljc` 单元格定位、`bounds.cljc` 包围盒、
@@ -567,5 +615,7 @@ Canvas 没有 `backdrop-filter` 的等价物，但「背景模糊」本质上是
 - CSS `mix-blend-mode`：<https://developer.mozilla.org/docs/Web/CSS/mix-blend-mode>
 - CSS `backdrop-filter`：<https://developer.mozilla.org/docs/Web/CSS/backdrop-filter>
 - SVG `radialGradient`：<https://developer.mozilla.org/docs/Web/SVG/Reference/Element/radialGradient>
+- Figma 列表与段落缩进：<https://help.figma.com/hc/en-us/articles/360039827134-Bulleted-and-numbered-lists>
+- Figma 插件 API `TextNode`（`paragraphIndent` / `hangingList`）：<https://www.figma.com/plugin-docs/api/TextNode/>
 - Figma Grid 布局产品文档：<https://help.figma.com/hc/en-us/articles/15339657135383-Guide-to-auto-layout>
 - Penpot / Figma 能力对比：见 `penpot-porting.md` §6

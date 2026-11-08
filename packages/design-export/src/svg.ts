@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
+import { LIST_MARKER_GAP, TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveParagraphs, resolveRadius, resolveStroke, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -112,6 +112,9 @@ function renderNode(
   if (node.type === "text") {
     // SVG 没有 text-align，用 text-anchor + x 表达盒内对齐。
     const textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
+    // 有段落样式时：每个段落单独一组 <text>（标记与正文分开），并按缩进右移。
+    // 没有段落样式的旧节点仍然输出单个 <text>，产物逐字不变。
+    if (node.paragraphStyles?.length) return paragraphTextsSvg(node, box, textAlign, common);
     const x = textAlign === "center" ? box.x + box.width / 2 : textAlign === "right" ? box.x + box.width : box.x;
     const anchor = textAlign === "center" ? " text-anchor=\"middle\"" : textAlign === "right" ? " text-anchor=\"end\"" : "";
     return `<text ${common} x="${num(x)}" y="${num(box.y)}" dominant-baseline="hanging"${anchor}>${textTspans(node)}</text>`;
@@ -431,6 +434,43 @@ function textTspans(node: TextNode): string {
     const body = escapeXml(segment.text);
     return attributes.length ? `<tspan ${attributes.join(" ")}>${body}</tspan>` : body;
   }).join("");
+}
+
+/**
+ * 按段落输出 `<text>`：标记与正文分属两个元素。
+ *
+ * SVG 的 `<text>` 不自动换行，所以这里把每个段落当成一行，按行高往下排——
+ * 这与「段落样式只解决缩进与标记，不解决折行」的限制一致。
+ *
+ * 标记右对齐在正文左侧（`text-anchor="end"`），编号位数不同也不会参差。
+ *
+ * 多段文字包在一个 `<g>` 里：节点级样式与滤镜挂在组上，与其它节点类型一致。
+ */
+function paragraphTextsSvg(node: TextNode, box: ComputedBox, textAlign: string, common: string): string {
+  const paragraphs = resolveParagraphs(node.text, node.paragraphStyles);
+  const lineHeight = node.lineHeight;
+  const parts: string[] = [];
+  paragraphs.forEach((paragraph, index) => {
+    const y = box.y + index * lineHeight;
+    const left = box.x + paragraph.left;
+    if (paragraph.marker) {
+      const markerX = left - LIST_MARKER_GAP;
+      parts.push(`<text x="${num(markerX)}" y="${num(y)}" dominant-baseline="hanging" text-anchor="end">${escapeXml(paragraph.marker)}</text>`);
+    }
+    const x = textAlign === "center" ? left + (box.width - paragraph.left) / 2 : textAlign === "right" ? box.x + box.width : left;
+    const anchor = textAlign === "center" ? " text-anchor=\"middle\"" : textAlign === "right" ? " text-anchor=\"end\"" : "";
+    const body = textRunSegmentsInRange(node.text, node.runs, paragraph.start, paragraph.end).map(segment => {
+      const attributes: string[] = [];
+      if (segment.style.fontWeight !== undefined) attributes.push(`font-weight="${num(segment.style.fontWeight)}"`);
+      if (segment.style.fontStyle !== undefined) attributes.push(`font-style="${segment.style.fontStyle}"`);
+      if (segment.style.fontSize !== undefined) attributes.push(`font-size="${num(segment.style.fontSize)}"`);
+      if (segment.style.color !== undefined) attributes.push(`fill="${escapeXml(segment.style.color)}"`);
+      const content = escapeXml(segment.text);
+      return attributes.length ? `<tspan ${attributes.join(" ")}>${content}</tspan>` : content;
+    }).join("");
+    parts.push(`<text x="${num(x)}" y="${num(y)}" dominant-baseline="hanging"${anchor}>${body}</text>`);
+  });
+  return `<g ${common}>${parts.join("\n")}</g>`;
 }
 
 function escapeXml(value: string): string {

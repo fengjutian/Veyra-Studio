@@ -15,6 +15,7 @@ import type {
   InstanceNode,
   Interaction,
   LayoutSpec,
+  ListType,
   NodeId,
   PageId,
   TextPatch,
@@ -64,6 +65,29 @@ export interface PatchTextCommand {
   payload: {
     id: NodeId;
     patch: TextPatch;
+  };
+}
+
+/**
+ * 改文本节点的段落样式（列表类型 / 列表缩进级别）。
+ *
+ * 单独开一条命令而不是塞进 `TextPatch`：`TextPatch` 是「节点级字段」的整体替换，
+ * 而段落样式是**带区间语义**的结构（区间必须对齐段落边界），两者的失效方式不同。
+ *
+ * `from` / `to` 是 UTF-16 下标（与 `runs` 同口径），命令会把区间吸附到段落边界：
+ * 给到段落中间时，整段都受影响——与 Figma 一致。
+ *
+ * `style` 是增量：没写的字段沿用该段自己的原值；
+ * `listType: "none"` 表示取消列表（缩进级别同时归零）；
+ * `indentDelta` 是相对缩进（每一段按自己的级别加减），对应 Tab / Shift+Tab。
+ */
+export interface SetParagraphStyleCommand {
+  type: "text.paragraph.set";
+  payload: {
+    id: NodeId;
+    from: number;
+    to: number;
+    style: { listType?: ListType | "none"; indent?: number; indentDelta?: number };
   };
 }
 
@@ -286,6 +310,7 @@ export type DesignCommand =
   | CreateNodeCommand
   | PatchNodeCommand
   | PatchTextCommand
+  | SetParagraphStyleCommand
   | DeleteNodeCommand
   | ReparentNodeCommand
   | UpsertAssetCommand

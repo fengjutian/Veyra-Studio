@@ -1,4 +1,4 @@
-import { textRunSegments, type FontStyle, type TextRun } from "@ufira/design-schema";
+import { resolveParagraphs, textRunSegments, type FontStyle, type ParagraphStyleRun, type TextRun } from "@ufira/design-schema";
 
 /** 解析后的字符样式：节点级默认值 + 段内覆盖。 */
 export interface RichTextStyle {
@@ -18,14 +18,25 @@ export interface RichTextSegment {
 
 export interface RichTextLine {
   segments: RichTextSegment[];
+  /** 文字本身的宽度（不含左侧缩进）。 */
   width: number;
   /** 这一行的高度：节点行高与该行最大字号的较大者——大字号不会被上一行压住。 */
   height: number;
+  /** 所属段落序号（与 schema 的段落序号一致）。 */
+  paragraphIndex: number;
+  /** 该行文字相对节点左边界的左偏移（px）：列表缩进 + 标记区宽度。 */
+  left: number;
+  /** 列表标记文本（bullet 或编号）；只有段落的首行带标记。 */
+  marker?: string;
+  /** 标记区宽度（px）；非列表段落为 0。 */
+  markerWidth: number;
 }
 
 export interface RichTextLayoutInput {
   text: string;
   runs?: readonly TextRun[];
+  /** 段落样式区间：决定每段的缩进与列表标记。 */
+  paragraphStyles?: readonly ParagraphStyleRun[];
   /** 节点级默认样式，段内没有覆盖时用它。 */
   fontWeight: number;
   fontStyle: FontStyle;
@@ -53,6 +64,9 @@ function sameStyle(a: RichTextStyle, b: RichTextStyle): boolean {
  *
  * 按码点拆（`Array.from`）而不是按 UTF-16 单元，否则一个 emoji 会被当成两个字符，
  * 换行可能落在它中间。
+ *
+ * 段落序号与 schema 的 `paragraphRanges` 一致：两处都按 `\n` 切，末尾的换行符
+ * 后面算一个空段落，所以下标可以一一对应。
  */
 function toParagraphs(input: RichTextLayoutInput): StyledChar[][] {
   const segments = textRunSegments(input.text, input.runs);
@@ -84,7 +98,7 @@ function trimTrailingSpaces(chars: StyledChar[], from: number, to: number): numb
 }
 
 /** 把段落里的 [from, to) 组装成一行：相邻同样式合并，x 偏移按累计宽度算。 */
-function buildLine(input: RichTextLayoutInput, chars: StyledChar[], from: number, to: number): RichTextLine {
+function buildLine(input: RichTextLayoutInput, chars: StyledChar[], from: number, to: number): Omit<RichTextLine, "paragraphIndex" | "left" | "marker" | "markerWidth"> {
   const segments: RichTextSegment[] = [];
   let x = 0;
   let index = from;
@@ -113,20 +127,44 @@ function lineHeightFor(input: RichTextLayoutInput, chars: StyledChar[], from: nu
  *
  * 逐字符累加宽度；到达行宽时回退到本行最后一个空格断行（拉丁文优先断词，
  * 一个词本身超宽才按字符硬断，中文没有空格因此天然按字断行）。
+ *
+ * 段落样式在这里生效：列表段落整体右移（缩进 + 标记区），可用宽度相应减少，
+ * 所以「加一级缩进」会真的让文字提前换行——这正是 Figma 的行为。
  */
 export function layoutRichText(input: RichTextLayoutInput): RichTextLine[] {
   const paragraphs = toParagraphs(input);
-  const available = input.availableWidth;
+  const resolved = resolveParagraphs(input.text, input.paragraphStyles);
   const lines: RichTextLine[] = [];
 
-  for (const chars of paragraphs) {
+  paragraphs.forEach((chars, paragraphIndex) => {
+    const info = resolved[paragraphIndex];
+    const left = info?.left ?? 0;
+    const marker = info?.marker;
+    const markerWidth = info?.markerWidth ?? 0;
+    // 缩进吃掉一部分可用宽度：文字不能越过文本框右边界。
+    const available = input.availableWidth && input.availableWidth > 0
+      ? Math.max(1, input.availableWidth - left)
+      : undefined;
+    // 标记只画在段落的首行；折行后的行与首行文字左对齐（与 CSS 的列表一致）。
+    let firstLine = true;
+    const push = (line: Omit<RichTextLine, "paragraphIndex" | "left" | "marker" | "markerWidth">) => {
+      lines.push({
+        ...line,
+        paragraphIndex,
+        left,
+        markerWidth,
+        ...(marker && firstLine ? { marker } : {}),
+      });
+      firstLine = false;
+    };
+
     if (!chars.length) {
-      lines.push({ segments: [], width: 0, height: Math.max(1, input.lineHeight) });
-      continue;
+      push({ segments: [], width: 0, height: Math.max(1, input.lineHeight) });
+      return;
     }
-    if (!available || available <= 0) {
-      lines.push(buildLine(input, chars, 0, chars.length));
-      continue;
+    if (!available) {
+      push(buildLine(input, chars, 0, chars.length));
+      return;
     }
 
     let start = 0;
@@ -142,24 +180,25 @@ export function layoutRichText(input: RichTextLayoutInput): RichTextLine[] {
         end += 1;
       }
       if (end >= chars.length) {
-        lines.push(buildLine(input, chars, start, trimTrailingSpaces(chars, start, chars.length)));
+        push(buildLine(input, chars, start, trimTrailingSpaces(chars, start, chars.length)));
         break;
       }
       // 断行点：优先上一处空格，并且把断点处的空格留在行尾之外（CSS 也不会画出行尾空格）；
       // 没有空格（或空格就是行首）就硬断在溢出字符之前。
       const breakAt = lastSpace > start ? lastSpace : end;
-      lines.push(buildLine(input, chars, start, Math.max(start + 1, breakAt)));
+      push(buildLine(input, chars, start, Math.max(start + 1, breakAt)));
       start = lastSpace > start ? lastSpace + 1 : end;
       while (start < chars.length && chars[start]!.value === " ") start += 1;
     }
-  }
+  });
   return lines;
 }
 
 /** 富文本的尺寸：最长行宽（按可用宽度截断）与**各行高度之和**（大字号行会更高）。 */
 export function measureRichText(input: RichTextLayoutInput): { width: number; height: number; lineCount: number } {
   const lines = layoutRichText(input);
-  const longest = lines.reduce((max, line) => Math.max(max, line.width), 0);
+  // 缩进的段落整体更靠右，hug 宽度要把左偏移算进去，否则节点会比文字窄。
+  const longest = lines.reduce((max, line) => Math.max(max, line.left + line.width), 0);
   const width = input.availableWidth && input.availableWidth > 0 ? Math.min(longest, input.availableWidth) : longest;
   const height = lines.reduce((sum, line) => sum + line.height, 0);
   return { width, height: Math.max(1, height), lineCount: Math.max(1, lines.length) };

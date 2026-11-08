@@ -34,6 +34,7 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "node.create": true,
   "node.patch": true,
   "text.patch": true,
+  "text.paragraph.set": true,
   "node.delete": true,
   "node.reparent": true,
   "asset.upsert": true,
