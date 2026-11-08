@@ -175,9 +175,9 @@ export function solveGrid(input: GridSolveInput): GridSolveResult {
   for (const cell of input.cells) {
     // 越界的单元格按最后一格处理：格子不存在时静默跳过会让子节点消失，
     // 落在最后至少还看得见。
+    if (!input.columns.length || !input.rows.length) continue;
     const columnIndex = Math.min(Math.max(0, cell.column - 1), input.columns.length - 1);
     const rowIndex = Math.min(Math.max(0, cell.row - 1), input.rows.length - 1);
-    if (!input.columns.length || !input.rows.length) continue;
 
     const columnSpan = Math.max(1, cell.columnSpan);
     const rowSpan = Math.max(1, cell.rowSpan);
@@ -227,19 +227,21 @@ export function solveGrid(input: GridSolveInput): GridSolveResult {
  * 按顺序把子节点填进格子（没有显式 `cells` 时的缺省行为）。
  *
  * 从左上开始，先按行填满——这是最符合直觉的缺省排布。
+ *
+ * 轨道不够时**不钳位**：多出来的子节点会落到后面的行/列，
+ * 由 {@link ensureTracks} 补出隐式轨道（CSS Grid 的隐式行/列语义）。
+ * 钳到最后一个格子会让两个子节点重叠——重叠比超出更难排查。
  */
-export function assignCellsByOrder(nodeIds: string[], columns: number, rows: number): GridCellInput[] {
+export function assignCellsByOrder(nodeIds: string[], columns: number): GridCellInput[] {
   const cells: GridCellInput[] = [];
   const columnCount = Math.max(1, columns);
-  const rowCount = Math.max(1, rows);
   nodeIds.forEach((nodeId, index) => {
     const row = Math.floor(index / columnCount) + 1;
     const column = (index % columnCount) + 1;
-    // 轨道不够时，多出来的子节点放到最后一行——不静默丢弃。
     cells.push({
       nodeId,
-      row: Math.min(row, rowCount),
-      column: Math.min(column, columnCount),
+      row,
+      column,
       rowSpan: 1,
       columnSpan: 1,
       width: 0,
@@ -247,4 +249,23 @@ export function assignCellsByOrder(nodeIds: string[], columns: number, rows: num
     });
   });
   return cells;
+}
+
+/**
+ * 补出隐式轨道：子节点占用的行列超出已声明的轨道数时，在末尾追加 `auto` 轨道。
+ *
+ * 这与 CSS Grid 的隐式行/列一致——多出来的子节点撑出新的一行，
+ * 而不是被钳回最后一格造成重叠。
+ */
+export function ensureTracks(tracks: GridTrack[], cells: GridCellInput[], axis: "columns" | "rows"): GridTrack[] {
+  const limit = cells.reduce((max, cell) => {
+    const span = axis === "columns" ? (cell.columnSpan ?? 1) : (cell.rowSpan ?? 1);
+    const start = axis === "columns" ? cell.column : cell.row;
+    return Math.max(max, start + span - 1);
+  }, 0);
+
+  if (limit <= tracks.length) return tracks;
+  const extended = tracks.slice();
+  while (extended.length < limit) extended.push({ type: "auto" });
+  return extended;
 }

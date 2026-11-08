@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -214,9 +214,10 @@ function renderVectorPath(
 function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
   const declarations: string[] = [];
   const inStack = parent?.layout.mode === "stack";
+  const inGrid = parent?.layout.mode === "grid";
   // 有几何的矢量节点自己画路径，不能再给它铺一块背景矩形（否则线宽 1px 的直线会变成色块）。
   const pathVector = node.type === "vector" && Boolean(node.geometry);
-  if (!inStack) {
+  if (!inStack && !inGrid) {
     // 只有页面直属的节点用页面坐标定位，导出原点只影响它们；
     // 嵌套节点的坐标相对父节点，会跟着父节点一起平移。
     const offsetX = parent === undefined && origin ? origin.x : 0;
@@ -224,6 +225,14 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
     declarations.push("position:absolute", `left:${px(node.layout.x - offsetX)}`, `top:${px(node.layout.y - offsetY)}`);
   } else {
     declarations.push("position:relative");
+  }
+  if (inGrid) {
+    // Grid 子节点由父容器的 grid 定位，自己不再声明坐标。
+    const cell = parent?.layout.grid?.cells?.[node.id];
+    if (cell) {
+      declarations.push(`grid-column:${cell.column} / span ${cell.columnSpan ?? 1}`);
+      declarations.push(`grid-row:${cell.row} / span ${cell.rowSpan ?? 1}`);
+    }
   }
   addSize(declarations, "width", node.layout.widthMode, node.layout.width, parent);
   addSize(declarations, "height", node.layout.heightMode, node.layout.height, parent);
@@ -286,7 +295,43 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
       `align-items:${alignItems(node.layout.align ?? "start")}`,
     );
   }
+  if (node.layout.mode === "grid" && node.layout.grid) {
+    // Grid 容器输出成 CSS Grid：轨道写法与本项目的五种轨道类型一一对应。
+    const grid = node.layout.grid;
+    const padding = node.layout.padding ?? ZERO_PADDING;
+    declarations.push(
+      "display:grid",
+      `grid-template-columns:${grid.columns.map(gridTrackCss).join(" ")}`,
+      `grid-template-rows:${grid.rows.map(gridTrackCss).join(" ")}`,
+      `column-gap:${px(grid.columnGap)}`,
+      `row-gap:${px(grid.rowGap)}`,
+      `padding:${px(padding.top)} ${px(padding.right)} ${px(padding.bottom)} ${px(padding.left)}`,
+      `align-items:${alignItems(grid.align ?? "start")}`,
+    );
+  }
   return `${declarations.join(";")};`;
+}
+
+/**
+ * Grid 轨道 → CSS 轨道写法。
+ *
+ * 五种轨道类型与 CSS Grid 的 `grid-template-columns/rows` 一一对应：
+ * `fixed` → px、`fraction` → fr、`auto` → auto、
+ * `min-content` / `max-content` → 同名关键字。
+ */
+function gridTrackCss(track: GridTrack): string {
+  switch (track.type) {
+    case "fixed":
+      return px(track.size);
+    case "fraction":
+      return `${num(track.weight)}fr`;
+    case "auto":
+      return "auto";
+    case "min-content":
+      return "min-content";
+    case "max-content":
+      return "max-content";
+  }
 }
 
 function addSize(declarations: string[], axis: "width" | "height", mode: "fixed" | "fill" | "hug", value: number, parent: DesignNode | undefined): void {
@@ -296,6 +341,11 @@ function addSize(declarations: string[], axis: "width" | "height", mode: "fixed"
     const mainAxis = parent.layout.direction === "horizontal" ? "width" : "height";
     if (axis === mainAxis) declarations.push("flex:1 1 0", `${axis}:auto`);
     else declarations.push(`${axis}:100%`);
+  }
+  // Grid 子节点的 fill 尺寸由 grid 轨道决定：宽度填满轨道用 stretch，
+  // 高度同理。这里不写 width/height，让 grid 布局自己算。
+  else if (parent?.layout.mode === "grid") {
+    if (mode === "fill") declarations.push(`${axis}:100%`);
   }
   else declarations.push(`${axis}:100%`);
 }

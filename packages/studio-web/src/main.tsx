@@ -1262,8 +1262,9 @@ function App() {
     const reorders: Array<{ id: string; parentId: string; index: number }> = [];
     for (const node of movable) {
       const parent = document.nodes[node.parentId];
-      // 自动布局容器里子节点的 x/y 由布局引擎算，改 layout 不会动；这时方向键改为调整顺序。
-      if (parent?.layout.mode === "stack") {
+      // 自动布局 / 网格容器里子节点的 x/y 由布局引擎算，改 layout 不会动；
+      // 这时方向键改为调整顺序。
+      if (parent?.layout.mode === "stack" || parent?.layout.mode === "grid") {
         const index = nudgeReorder(parent.childIds, node.id, dx, dy);
         if (index !== undefined) reorders.push({ id: node.id, parentId: parent.id, index });
       } else {

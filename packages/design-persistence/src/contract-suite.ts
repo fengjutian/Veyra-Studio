@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { createDocument, type DesignDocument } from "@ufira/design-schema";
+import { createDocument, CURRENT_SCHEMA_VERSION, type DesignDocument } from "@ufira/design-schema";
 import { DesignRuntime, type TransactionEntry } from "@ufira/design-runtime";
 import { ProjectNotFoundError, SNAPSHOT_RETENTION, SnapshotNotFoundError, type ProjectRepository } from "./contract";
 
@@ -205,11 +205,12 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
       await seed("project:1", legacy);
 
       const opened = await repository.open("project:1");
-      assert.equal(opened.document.schemaVersion, 3);
+      assert.equal(opened.document.schemaVersion, CURRENT_SCHEMA_VERSION);
       assert.equal(opened.migratedFrom, 1);
       assert.deepEqual(opened.document.migrations, [
         { from: 1, to: 2, at: opened.document.migrations?.[0]?.at },
         { from: 2, to: 3, at: opened.document.migrations?.[1]?.at },
+        { from: 3, to: 4, at: opened.document.migrations?.[2]?.at },
       ]);
     });
   });
@@ -223,7 +224,7 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
       const snapshots = await repository.listSnapshots("project:1");
       assert.deepEqual(snapshots.map(item => item.revision), [2, 1, 0]);
       assert.deepEqual(snapshots.map(item => item.current), [true, false, false]);
-      assert.equal(snapshots[0]?.schemaVersion, 3);
+      assert.equal(snapshots[0]?.schemaVersion, CURRENT_SCHEMA_VERSION);
       assert.equal(snapshots[0]?.updatedAt, "2026-11-05T00:00:02.000Z");
     });
   });
@@ -248,7 +249,7 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
       const old = await repository.readSnapshot("project:1", 0);
       assert.equal(old.meta.name, "旧名字");
       assert.equal(old.revision, 0);
-      assert.equal(old.schemaVersion, 3);
+      assert.equal(old.schemaVersion, CURRENT_SCHEMA_VERSION);
     });
   });
 
@@ -270,7 +271,7 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
       assert.equal(snapshots[0]?.current, true);
 
       const document = await repository.readSnapshot("project:1", 0);
-      assert.equal(document.schemaVersion, 3);
+      assert.equal(document.schemaVersion, CURRENT_SCHEMA_VERSION);
       assert.equal(document.meta.name, "Legacy");
     });
   });

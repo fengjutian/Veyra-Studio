@@ -37,9 +37,28 @@ test("migrates a version 1 document to the current version", () => {
 
   assert.equal(result.fromVersion, 1);
   assert.equal(result.toVersion, CURRENT_SCHEMA_VERSION);
-  assert.equal(result.document.schemaVersion, 3);
-  assert.deepEqual(result.applied, [{ from: 1, to: 2, at: "2026-11-06T00:00:00.000Z" }, { from: 2, to: 3, at: "2026-11-06T00:00:00.000Z" }]);
-  assert.deepEqual(result.document.migrations, [{ from: 1, to: 2, at: "2026-11-06T00:00:00.000Z" }, { from: 2, to: 3, at: "2026-11-06T00:00:00.000Z" }]);
+  assert.equal(result.document.schemaVersion, CURRENT_SCHEMA_VERSION);
+  const expectedSteps = [
+    { from: 1, to: 2, at: "2026-11-06T00:00:00.000Z" },
+    { from: 2, to: 3, at: "2026-11-06T00:00:00.000Z" },
+    { from: 3, to: 4, at: "2026-11-06T00:00:00.000Z" },
+  ];
+  assert.deepEqual(result.applied, expectedSteps);
+  assert.deepEqual(result.document.migrations, expectedSteps);
+});
+
+test("migrates a version 3 document to the grid-aware version", () => {
+  // v3 → v4 只加 Grid 能力：旧文档的节点树与内容都不该变。
+  const legacy = legacyDocument();
+  const asV3 = migrateDocument(legacy, { now: "2026-11-06T00:00:00.000Z" }).document;
+  const v3 = { ...asV3, schemaVersion: 3 } as unknown as Record<string, unknown>;
+
+  const result = migrateDocument(v3, { now: "2026-11-07T00:00:00.000Z" });
+  assert.equal(result.fromVersion, 3);
+  assert.equal(result.toVersion, CURRENT_SCHEMA_VERSION);
+  assert.deepEqual(result.applied, [{ from: 3, to: 4, at: "2026-11-07T00:00:00.000Z" }]);
+  // 节点内容不受影响——迁移只补版本号。
+  assert.deepEqual(result.document.nodes["node:1"], asV3.nodes["node:1"]);
 });
 
 test("keeps the node tree intact across a migration", () => {

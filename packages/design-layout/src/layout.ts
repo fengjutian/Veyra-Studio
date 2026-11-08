@@ -1,7 +1,7 @@
 import { resolveGap, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
-import { assignCellsByOrder, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
+import { assignCellsByOrder, ensureTracks, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
 
 const ZERO_PADDING = { top: 0, right: 0, bottom: 0, left: 0 };
 
@@ -119,8 +119,12 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     children: { node: DesignNode; size: Size }[],
   ): Size => {
     const cells = gridCells(node, children);
-    const columnContents = trackContentSizes(cells, columns, "columns");
-    const rowContents = trackContentSizes(cells, rows, "rows");
+    // 子节点超出已声明的轨道数时补出隐式轨道（CSS Grid 语义），
+    // 否则它们会被钳到最后一格造成重叠。
+    const resolvedColumns = ensureTracks(columns, cells, "columns");
+    const resolvedRows = ensureTracks(rows, cells, "rows");
+    const columnContents = trackContentSizes(cells, resolvedColumns, "columns");
+    const rowContents = trackContentSizes(cells, resolvedRows, "rows");
 
     const toInput = (tracks: GridTrack[], contents: Map<number, { width: number; height: number }[]>): GridTrackInput[] =>
       tracks.map((track, index) => ({
@@ -130,8 +134,8 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
         contentSizes: contents.get(index),
       }));
 
-    const columnInput = toInput(columns, columnContents);
-    const rowInput = toInput(rows, rowContents);
+    const columnInput = toInput(resolvedColumns, columnContents);
+    const rowInput = toInput(resolvedRows, rowContents);
 
     // 用「无限可用空间」求解：fraction 轨道此时分不到空间（remainder 为 0），
     // 这正是 hug 容器想要的——只按内容与固定轨道定尺寸。
@@ -164,7 +168,6 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
       const ordered = assignCellsByOrder(
         children.map(child => child.node.id),
         columnCount,
-        rowCount,
       );
       return ordered.map(cell => {
         const child = children.find(item => item.node.id === cell.nodeId);
@@ -234,8 +237,10 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
       if (!grid) return;
       const gridChildren = node.childIds.map(id => ({ node: document.nodes[id]!, size: intrinsic(id) }));
       const cells = gridCells(node, gridChildren);
-      const columnContents = trackContentSizes(cells, grid.columns, "columns");
-      const rowContents = trackContentSizes(cells, grid.rows, "rows");
+      const resolvedColumns = ensureTracks(grid.columns, cells, "columns");
+      const resolvedRows = ensureTracks(grid.rows, cells, "rows");
+      const columnContents = trackContentSizes(cells, resolvedColumns, "columns");
+      const rowContents = trackContentSizes(cells, resolvedRows, "rows");
       const toInput = (tracks: GridTrack[], contents: Map<number, { width: number; height: number }[]>): GridTrackInput[] =>
         tracks.map((track, index) => ({
           type: track.type,
@@ -245,8 +250,8 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
         }));
 
       const solved = solveGrid({
-        columns: toInput(grid.columns, columnContents),
-        rows: toInput(grid.rows, rowContents),
+        columns: toInput(resolvedColumns, columnContents),
+        rows: toInput(resolvedRows, rowContents),
         columnGap: grid.columnGap,
         rowGap: grid.rowGap,
         availableWidth: contentWidth,

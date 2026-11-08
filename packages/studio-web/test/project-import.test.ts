@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDocument } from "@ufira/design-schema";
+import { createDocument, CURRENT_SCHEMA_VERSION } from "@ufira/design-schema";
 import {
   detectImportConflict,
   planBatchImport,
@@ -41,10 +41,11 @@ test("upgrades an imported file from an older format version", () => {
 
   const { document, migratedFrom } = prepareImportedDocument(legacy, { now: "2026-11-05T00:00:00.000Z" });
   assert.equal(migratedFrom, 1);
-  assert.equal(document.schemaVersion, 3);
+  assert.equal(document.schemaVersion, CURRENT_SCHEMA_VERSION);
   assert.deepEqual(document.migrations, [
     { from: 1, to: 2, at: document.migrations?.[0]?.at },
     { from: 2, to: 3, at: document.migrations?.[1]?.at },
+    { from: 3, to: 4, at: document.migrations?.[2]?.at },
   ]);
 });
 

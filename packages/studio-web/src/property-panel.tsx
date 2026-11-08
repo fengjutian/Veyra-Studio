@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
-import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
+import { TEXT_DEFAULTS, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
+import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
 export interface PropertyPanelProps {
   node: DesignNode;
@@ -25,9 +25,16 @@ export interface PropertyPanelProps {
 export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";
+  const isGrid = layout.mode === "grid";
   const padding = resolvePadding(layout);
+  const grid = layout.grid;
 
   const patchLayout = (changes: Partial<LayoutSpec>) => onPatch({ layout: { ...layout, ...changes } });
+  /** Grid 配置整体替换：轨道数组是嵌套结构，浅合并会留下旧轨道。 */
+  const patchGrid = (changes: Partial<NonNullable<LayoutSpec["grid"]>>) => {
+    if (!grid) return;
+    patchLayout({ grid: { ...grid, ...changes } });
+  };
   const patchPadding = (changes: Partial<typeof padding>) => patchLayout({ padding: { ...padding, ...changes } });
   /** 只改一个角：四角数组是整体替换的，先拷贝再赋值。 */
   const patchCorner = (index: number, value: number) => {
@@ -69,6 +76,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
           options={[
             { value: "absolute", label: "绝对" },
             { value: "stack", label: "自动布局" },
+            { value: "grid", label: "网格" },
           ]}
           onChange={mode => onPatch({ layout: switchLayoutMode(layout, mode as LayoutMode) })}
         />
@@ -97,6 +105,26 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
               onChange={align => patchLayout({ align: align as LayoutSpec["align"] })}
             />
             <NumberField label="间距" value={layout.gap ?? 0} disabled={disabled} onCommit={gap => patchLayout({ gap })} />
+          </>
+        )}
+        {isGrid && grid && (
+          <>
+            <Segmented
+              label="对齐"
+              value={grid.align ?? "start"}
+              disabled={disabled}
+              options={[
+                { value: "start", label: "起点" },
+                { value: "center", label: "居中" },
+                { value: "end", label: "终点" },
+                { value: "stretch", label: "拉伸" },
+              ]}
+              onChange={align => patchGrid({ align: align as NonNullable<LayoutSpec["grid"]>["align"] })}
+            />
+            <GridTrackEditor label="列" tracks={grid.columns} disabled={disabled} onChange={columns => patchGrid({ columns })} />
+            <GridTrackEditor label="行" tracks={grid.rows} disabled={disabled} onChange={rows => patchGrid({ rows })} />
+            <NumberField label="列间距" value={grid.columnGap} min={0} disabled={disabled} onCommit={columnGap => patchGrid({ columnGap })} />
+            <NumberField label="行间距" value={grid.rowGap} min={0} disabled={disabled} onCommit={rowGap => patchGrid({ rowGap })} />
           </>
         )}
       </Section>
@@ -359,6 +387,121 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       {children}
     </>
   );
+}
+
+/**
+ * Grid 轨道编辑器。
+ *
+ * 每条轨道一行：类型下拉 + 尺寸/权重输入 + 删除按钮。
+ * 轨道数组是整体替换的——所以每次改动都产出完整的新数组，
+ * 不做「就地修改」（那样 React 拿不到新引用，面板不会重渲染）。
+ */
+function GridTrackEditor({
+  label,
+  tracks,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  tracks: GridTrack[];
+  disabled?: boolean;
+  onChange(tracks: GridTrack[]): void;
+}) {
+  const replace = (index: number, track: GridTrack) => {
+    onChange(tracks.map((current, position) => (position === index ? track : current)));
+  };
+
+  return (
+    <div className="field">
+      <span className="field-label">{label}</span>
+      <div className="grid-tracks">
+        {tracks.map((track, index) => (
+          <div className="grid-track" key={index}>
+            <select
+              className="grid-track-type"
+              value={track.type}
+              disabled={disabled}
+              aria-label={`${label} ${index + 1} 类型`}
+              onChange={event => {
+                const type = event.target.value as GridTrack["type"];
+                // 换类型时尺寸参数要跟着换：fixed 要像素，fraction 要权重。
+                replace(index, track.type === type ? track : defaultTrackOf(type));
+              }}
+            >
+              <option value="fixed">固定</option>
+              <option value="fraction">比例</option>
+              <option value="auto">自适应</option>
+              <option value="min-content">最小内容</option>
+              <option value="max-content">最大内容</option>
+            </select>
+            {track.type === "fixed" && (
+              <input
+                type="number"
+                className="grid-track-size"
+                value={track.size}
+                min={0}
+                disabled={disabled}
+                aria-label={`${label} ${index + 1} 尺寸`}
+                onChange={event => {
+                  const size = Number(event.target.value);
+                  if (Number.isFinite(size) && size >= 0) replace(index, { type: "fixed", size });
+                }}
+              />
+            )}
+            {track.type === "fraction" && (
+              <input
+                type="number"
+                className="grid-track-size"
+                value={track.weight}
+                min={0}
+                step={0.5}
+                disabled={disabled}
+                aria-label={`${label} ${index + 1} 权重`}
+                onChange={event => {
+                  const weight = Number(event.target.value);
+                  // 权重必须为正：0 权重的轨道永远分不到空间。
+                  if (Number.isFinite(weight) && weight > 0) replace(index, { type: "fraction", weight });
+                }}
+              />
+            )}
+            <button
+              type="button"
+              className="grid-track-remove"
+              disabled={disabled || tracks.length <= 1}
+              aria-label={`删除${label} ${index + 1}`}
+              onClick={() => onChange(removeGridTrack(tracks, index))}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="grid-track-add"
+          disabled={disabled}
+          onClick={() => onChange(addGridTrack(tracks, "auto"))}
+        >
+          + 添加{label}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** 换轨道类型时的缺省参数。 */
+function defaultTrackOf(type: GridTrack["type"]): GridTrack {
+  switch (type) {
+    case "fixed":
+      return { type: "fixed", size: 100 };
+    case "fraction":
+      return { type: "fraction", weight: 1 };
+    case "auto":
+      return { type: "auto" };
+    case "min-content":
+      return { type: "min-content" };
+    case "max-content":
+      return { type: "max-content" };
+  }
 }
 
 export function Segmented({

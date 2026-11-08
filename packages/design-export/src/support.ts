@@ -21,6 +21,7 @@ export interface ExportSupportEntry {
 export const EXPORT_SUPPORT_MATRIX: ExportSupportEntry[] = [
   { feature: "layout-absolute", html: "exact", svg: "exact", png: "exact", note: "Absolute positioning and fixed sizes are resolved by the shared layout engine." },
   { feature: "layout-stack", html: "exact", svg: "exact", png: "exact", note: "Stack layout, gap, padding and alignment are resolved before export." },
+  { feature: "layout-grid", html: "exact", svg: "exact", png: "exact", note: "Grid tracks and cells are resolved by the layout engine; HTML emits CSS Grid, SVG/PNG use the resolved absolute boxes." },
   { feature: "sizing", html: "exact", svg: "exact", png: "exact", note: "Fixed / fill / hug sizing is computed once and shared by canvas, export and rasterization." },
   { feature: "text-typography", html: "exact", svg: "exact", png: "exact", note: "Family, size, line height, weight, style, alignment and letter spacing." },
   { feature: "text-wrapping", html: "exact", svg: "exact", png: "exact", note: "Line breaks come from the injected text measurer." },
