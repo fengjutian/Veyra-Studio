@@ -481,14 +481,27 @@ test("copies a variant into the same set and switches an instance between them",
   for (const oldId of oldChildren) assert.equal(snapshot.nodes[oldId], undefined);
 });
 
-test("drops overrides that cannot be mapped onto the new variant", () => {
+test("carries overrides across variants by structural path", () => {
   const runtime = variantRuntime();
   runtime.execute(envelope(4, [{ type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } } }]));
   runtime.execute(envelope(5, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { text: "Hi" } } }]));
   assert.deepEqual(Object.keys((runtime.snapshot().nodes["instance:1"] as any).overrides), ["label"]);
 
   runtime.execute(envelope(6, [{ type: "component.switchVariant", payload: { id: "instance:1", componentId: "component:button-hover" } }]));
-  // 变体由复制产生，源节点 id 不同，覆盖无法按属性映射（v1 限制）——保留会写到错误的节点上。
+  // 变体里同一个角色换了节点 id，覆盖按结构路径迁移到新 id 上，内容仍然是用户写的那份。
+  assert.deepEqual(Object.keys((runtime.snapshot().nodes["instance:1"] as any).overrides), ["component:button-hover--label"]);
+  const copy = runtime.snapshot().nodes["instance:1--component:button-hover--label"];
+  assert.equal(copy?.type === "text" ? copy.text : "", "Hi");
+});
+
+test("drops an override when the new variant no longer has that slot", () => {
+  const runtime = variantRuntime();
+  runtime.execute(envelope(4, [{ type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } } }]));
+  runtime.execute(envelope(5, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { text: "Hi" } } }]));
+  // 把变体里的这个角色删掉：结构路径失效，覆盖只能丢弃。
+  runtime.execute(envelope(6, [{ type: "node.delete", payload: { id: "component:button-hover--label" } }]));
+
+  runtime.execute(envelope(7, [{ type: "component.switchVariant", payload: { id: "instance:1", componentId: "component:button-hover" } }]));
   assert.deepEqual((runtime.snapshot().nodes["instance:1"] as any).overrides, {});
 });
 

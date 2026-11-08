@@ -497,11 +497,46 @@ function createComponentVariant(document: DesignDocument, payload: { sourceCompo
 }
 
 /**
+ * 从组件根到某个节点的结构路径（每层是 `childIds` 下标）。
+ *
+ * 变体由复制产生，节点 id 必然不同，但同一角色在子树里的**位置**相同；
+ * 覆盖按路径迁移才能跨变体保留。
+ */
+function structuralPath(document: DesignDocument, rootId: NodeId, nodeId: NodeId): number[] | undefined {
+  const path: number[] = [];
+  const visited = new Set<NodeId>();
+  let current = nodeId;
+  while (current !== rootId) {
+    if (visited.has(current)) return undefined;
+    visited.add(current);
+    const node = document.nodes[current];
+    if (!node) return undefined;
+    const parent = document.nodes[node.parentId];
+    if (!parent) return undefined;
+    const index = parent.childIds.indexOf(current);
+    if (index < 0) return undefined;
+    path.unshift(index);
+    current = node.parentId;
+  }
+  return path;
+}
+
+/** 按结构路径取节点；路径不存在（两个变体结构不同）时返回 undefined。 */
+function nodeAtPath(document: DesignDocument, rootId: NodeId, path: number[]): NodeId | undefined {
+  let current: NodeId | undefined = rootId;
+  for (const index of path) {
+    current = document.nodes[current]?.childIds[index];
+    if (!current) return undefined;
+  }
+  return current;
+}
+
+/**
  * 把实例切换到同一变体集里的另一个成员。
  *
- * 旧物化子树整体删除、按新组件重新物化；覆盖按源节点 id 保留能对上的部分。
- * 由「复制为变体」创建的变体节点 id 不同，因此这类切换会清空覆盖——
- * 这是 v1 限制（Figma 按属性映射，那需要一套属性→节点的对应表）。
+ * 旧物化子树整体删除、按新组件重新物化；覆盖按**结构路径**迁移到新变体上——
+ * 同一角色（例如按钮里的文字）即使节点 id 不同也能保留用户改过的内容。
+ * 新变体结构不同、路径对不上时，那条覆盖会被丢弃。
  */
 function switchComponentVariant(document: DesignDocument, payload: { id: NodeId; componentId: string }): void {
   const node = requireNode(document, payload.id);
@@ -539,9 +574,19 @@ function switchComponentVariant(document: DesignDocument, payload: { id: NodeId;
   };
 
   const childIds = root.childIds.map(childId => materialize(childId, node.id));
+  const currentRootId = current.rootNodeId;
   const keptOverrides: Record<string, unknown> = {};
   for (const [sourceId, value] of Object.entries(node.overrides ?? {})) {
-    if (copies.has(sourceId)) keptOverrides[sourceId] = value;
+    if (copies.has(sourceId)) {
+      keptOverrides[sourceId] = value;
+      continue;
+    }
+    // 变体是「复制」，节点 id 必然不同；但同一角色在子树里的结构路径相同，
+    // 因此覆盖按路径迁移，而不是整批丢掉。
+    const path = structuralPath(document, currentRootId, sourceId);
+    if (!path) continue;
+    const mapped = nodeAtPath(document, next.rootNodeId, path);
+    if (mapped && copies.has(mapped)) keptOverrides[mapped] = value;
   }
   const instance = structuredClone(node) as InstanceNode;
   instance.componentId = next.id;
