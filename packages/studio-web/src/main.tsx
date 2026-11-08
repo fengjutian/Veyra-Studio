@@ -796,12 +796,18 @@ function App() {
    */
   const handleCanvasDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (tool !== "select") return;
+    // 编辑态里双击锚点 = 切换角点 / 平滑点，不要重新进入编辑态。
+    if (pathEditId && pathEdit.toggleAnchorAt(canvasPointOf(event))) {
+      event.preventDefault();
+      return;
+    }
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (!hit) return;
     const node = document?.nodes[hit];
     if (node?.type === "vector" && node.geometry) {
       setSelectedIds([hit]);
       setPathEditId(hit);
+      setMessage("双击锚点切换角点 / 平滑点，点线段可插点，Delete 删除锚点");
       return;
     }
     if (node?.type === "text") {

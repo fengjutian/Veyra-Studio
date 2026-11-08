@@ -310,3 +310,50 @@ function cubicPoint(p0: PathPoint, p1: PathPoint, p2: PathPoint, p3: PathPoint, 
 function lerp(start: PathPoint, end: PathPoint, t: number): PathPoint {
   return { x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t };
 }
+/**
+ * 切换锚点类型：角点（无手柄）⇄ 平滑点（两侧手柄共线）。
+ *
+ * 平滑化时手柄方向取「前后邻居连线」的方向，长度各取到邻居距离的 1/3——这是把折线
+ * 变成平滑曲线最常用的一组控制点。开放路径的首尾锚点只有一个邻居，就只生成朝内的那一个手柄。
+ */
+export function toggleAnchorType(anchors: readonly EditableAnchor[], index: number, closed: boolean): EditableAnchor[] {
+  const source = anchors[index];
+  if (!source) return [...anchors];
+  const next = anchors.map(anchor => ({ ...anchor }));
+  const anchor = next[index]!;
+
+  // 平滑 → 角点：去掉两侧手柄，两侧线段变成直线。
+  if (anchor.handleIn || anchor.handleOut) {
+    delete anchor.handleIn;
+    delete anchor.handleOut;
+    return next;
+  }
+
+  const count = next.length;
+  const hasPrev = closed || index > 0;
+  const hasNext = closed || index < count - 1;
+  const prev = hasPrev ? next[(index - 1 + count) % count]! : undefined;
+  const following = hasNext ? next[(index + 1) % count]! : undefined;
+  const before = prev ? { x: anchor.x - prev.x, y: anchor.y - prev.y } : undefined;
+  const after = following ? { x: following.x - anchor.x, y: following.y - anchor.y } : undefined;
+  // 切线方向取「前后邻居的连线」。
+  // 注意不能用 `after - before`：三点等距共线时它恒等于 0，正好把最常见的折线情形判成退化。
+  const tangent = prev && following
+    ? { x: following.x - prev.x, y: following.y - prev.y }
+    : after ?? before;
+  if (!tangent) return next;
+  const length = Math.hypot(tangent.x, tangent.y);
+  // 三点重合时方向没有定义，保持原样比造一对长度为 0 的手柄好。
+  if (length < 1e-9) return next;
+  const unit = { x: tangent.x / length, y: tangent.y / length };
+
+  if (before) {
+    const reach = Math.hypot(before.x, before.y) / 3;
+    if (reach > 0) anchor.handleIn = { x: anchor.x - unit.x * reach, y: anchor.y - unit.y * reach };
+  }
+  if (after) {
+    const reach = Math.hypot(after.x, after.y) / 3;
+    if (reach > 0) anchor.handleOut = { x: anchor.x + unit.x * reach, y: anchor.y + unit.y * reach };
+  }
+  return next;
+}

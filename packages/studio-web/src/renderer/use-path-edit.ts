@@ -13,6 +13,7 @@ import {
   moveHandle,
   pathIsClosed,
   removeAnchor,
+  toggleAnchorType,
   type EditableAnchor,
   type HandleRole,
 } from "../path-edit";
@@ -65,6 +66,8 @@ export function usePathEdit(options: PathEditOptions): {
   previewCommands: PathCommand[];
   /** 指针是否停在路径线段上（提示可以插点）。 */
   hoverSegment: boolean;
+  /** 双击锚点：切换角点 / 平滑点；没有命中锚点时返回 false。 */
+  toggleAnchorAt(point: HitPoint): boolean;
 } {
   const [anchors, setAnchors] = useState<EditableAnchor[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -207,6 +210,25 @@ export function usePathEdit(options: PathEditOptions): {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [targetId, selected, closed]);
 
+  /**
+   * 双击锚点切换类型。切换是即时提交（不像拖动那样等 pointerup）：
+   * 双击本身没有「抬起时再确认」的语义，晚提交反而会丢改动。
+   */
+  const toggleAnchorAt = (point: HitPoint): boolean => {
+    if (!options.target) return false;
+    const tolerance = 8 / Math.max(options.zoom, 0.01);
+    const index = hitTestAnchor(anchorsRef.current, point, tolerance);
+    if (index === undefined) return false;
+    const next = toggleAnchorType(anchorsRef.current, index, closed);
+    const result = penGeometry(next, closed);
+    if (!result) return false;
+    anchorsRef.current = next;
+    setAnchors(next);
+    setSelected(index);
+    commitRef.current({ id: options.target.id, geometry: result.geometry, box: result.box });
+    return true;
+  };
+
   const handles = useMemo(() => handlesOf(anchors).map(handle => ({
     anchorIndex: handle.anchorIndex,
     role: handle.role,
@@ -219,6 +241,7 @@ export function usePathEdit(options: PathEditOptions): {
   return {
     /** 指针是否停在路径线段上（用于提示可以插点）。 */
     hoverSegment,
+    toggleAnchorAt,
     handlers,
     anchors,
     handles,
