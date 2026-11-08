@@ -35,9 +35,24 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
     radii[index] = value;
     onPatch({ appearance: { ...node.appearance, cornerRadii: radii } });
   };
-  /** 填充层目前只支持一层，所以「改填充」= 整体替换 `fills`。 */
-  const paint = node.appearance.fills?.[0];
-  const patchPaint = (next: Paint | undefined) => onPatch({ appearance: { ...node.appearance, fills: next ? [next] : undefined } });
+  /** 填充层：数组顺序是「第 0 层在最底下」，面板只编辑当前选中的那一层。 */
+  const paints = node.appearance.fills ?? [];
+  const [paintIndex, setPaintIndex] = useState(0);
+  // 删掉一层后下标可能越界，取最小值兜底，避免编辑到不存在的层。
+  const activeIndex = paints.length ? Math.min(paintIndex, paints.length - 1) : 0;
+  const paint = paints[activeIndex];
+  const patchPaint = (next: Paint | undefined) => {
+    const nextFills = paints.length
+      ? paints
+        .map((current, index) => (index === activeIndex ? next : current))
+        .filter((value): value is Paint => Boolean(value))
+      : next ? [next] : [];
+    onPatch({ appearance: { ...node.appearance, fills: nextFills.length ? nextFills : undefined } });
+  };
+  const addPaint = () => {
+    onPatch({ appearance: { ...node.appearance, fills: [...paints, { type: "solid", color: "#8b5cf6" }] } });
+    setPaintIndex(paints.length);
+  };
   /** 阴影是整体替换的对象：合并时保留没改的字段，空对象就是「新建默认阴影」。 */
   const patchShadow = (changes: Partial<ShadowSpec>) => {
     const shadow: ShadowSpec = { x: 0, y: 4, blur: 12, color: "#00000040", ...node.appearance.shadow, ...changes };
@@ -139,6 +154,25 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
       )}
 
       <Section title="外观">
+        {/* 多层填充：数字按钮切换当前编辑的层，顺序即叠放顺序（1 在最底下）。 */}
+        <div className="paint-layers">
+          {paints.map((layer, index) => (
+            <button
+              key={index}
+              type="button"
+              className={`paint-layer${index === activeIndex ? " active" : ""}`}
+              disabled={disabled}
+              title={layer.type === "linear" ? "线性渐变层" : "实色层"}
+              onClick={() => setPaintIndex(index)}
+            >
+              {index + 1}{layer.type === "linear" ? "渐变" : ""}
+            </button>
+          ))}
+          <button type="button" className="paint-layer" disabled={disabled} title="添加填充层" onClick={addPaint}>＋</button>
+          {paints.length > 0 && (
+            <button type="button" className="paint-layer" disabled={disabled} title="移除当前层" onClick={() => patchPaint(undefined)}>－</button>
+          )}
+        </div>
         {paint?.type === "linear" ? (
           <>
             <NumberField label="渐变角度" value={paint.angle} disabled={disabled} onCommit={angle => patchPaint({ ...paint, angle })} />

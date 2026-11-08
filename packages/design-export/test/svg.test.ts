@@ -213,3 +213,14 @@ test("exports a linear gradient as defs and a paint reference", () => {
   assert.match(result.svg, /<stop offset="0" stop-color="#111111" \/>/);
   assert.match(result.svg, /fill:url\(#paint-1\)/);
 });
+test("exports every fill layer as its own shape", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#ff0000" }, { type: "solid", color: "#00ff00" }] },
+  };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  // 底层先画，上层后画：两个独立的 rect，各自带 fill。
+  assert.match(result.svg, /<rect [^>]*fill="#ff0000"/);
+  assert.match(result.svg, /<rect [^>]*fill="#00ff00"/);
+});

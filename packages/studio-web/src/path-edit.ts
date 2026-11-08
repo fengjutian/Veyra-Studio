@@ -190,3 +190,123 @@ function segment(from: EditableAnchor, to: EditableAnchor): PathCommand {
 function distance(a: PathPoint, b: PathPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
+
+/** 线段命中结果：`index` 是线段起点锚点的下标，`t` 是参数（0–1）。 */
+export interface SegmentHit {
+  index: number;
+  t: number;
+  point: PathPoint;
+  distance: number;
+}
+
+/** 线段数量：开放路径 n-1 段，闭合路径 n 段（最后一段回到第一个锚点）。 */
+export function segmentCount(anchors: readonly EditableAnchor[], closed: boolean): number {
+  if (anchors.length < 2) return 0;
+  return closed ? anchors.length : anchors.length - 1;
+}
+
+/**
+ * 找到离目标点最近的线段。
+ *
+ * 直线段直接投影；曲线段先粗采样再在相邻区间做三分搜索——纯解三次方程当然更漂亮，
+ * 但「插点」只需精确到亚像素，三分搜索 24 轮足够，而且没有求根公式的数值边界。
+ */
+export function closestSegment(anchors: readonly EditableAnchor[], closed: boolean, target: PathPoint, tolerance: number): SegmentHit | undefined {
+  let best: SegmentHit | undefined;
+  const count = segmentCount(anchors, closed);
+  for (let index = 0; index < count; index += 1) {
+    const hit = closestOnSegment(anchors, index, target);
+    if (!hit || hit.distance > tolerance) continue;
+    if (!best || hit.distance < best.distance) best = hit;
+  }
+  return best;
+}
+
+/**
+ * 在线段上插入锚点，保持曲线形状不变。
+ *
+ * 用 de Casteljau 在 t 处把三次曲线切成两段：新锚点拿中点，两侧锚点各自收下切分后的
+ * 控制点。直线段不生成控制点——否则一条直线会被「插」成曲线。
+ */
+export function insertAnchor(anchors: readonly EditableAnchor[], closed: boolean, segmentIndex: number, t: number): EditableAnchor[] {
+  const count = segmentCount(anchors, closed);
+  if (segmentIndex < 0 || segmentIndex >= count) return [...anchors];
+  const next = anchors.map(anchor => ({ ...anchor }));
+  const start = next[segmentIndex]!;
+  const end = next[(segmentIndex + 1) % next.length]!;
+  const ratio = Math.min(1, Math.max(0, t));
+  // 闭合边插在数组末尾：`commandsFromAnchors` 的闭合段总是从最后一个锚点回到第一个。
+  const at = segmentIndex + 1;
+
+  if (!start.handleOut && !end.handleIn) {
+    const point = lerp(start, end, ratio);
+    next.splice(at, 0, { x: point.x, y: point.y });
+    return next;
+  }
+
+  const control1 = start.handleOut ?? { x: start.x, y: start.y };
+  const control2 = end.handleIn ?? { x: end.x, y: end.y };
+  const first = lerp(start, control1, ratio);
+  const middle = lerp(control1, control2, ratio);
+  const last = lerp(control2, end, ratio);
+  const left = lerp(first, middle, ratio);
+  const right = lerp(middle, last, ratio);
+  const point = lerp(left, right, ratio);
+  start.handleOut = first;
+  end.handleIn = last;
+  next.splice(at, 0, { x: point.x, y: point.y, handleIn: left, handleOut: right });
+  return next;
+}
+
+function closestOnSegment(anchors: readonly EditableAnchor[], index: number, target: PathPoint): SegmentHit | undefined {
+  const start = anchors[index];
+  const end = anchors[(index + 1) % anchors.length];
+  if (!start || !end) return undefined;
+  if (!start.handleOut && !end.handleIn) {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy;
+    const raw = lengthSquared === 0 ? 0 : ((target.x - start.x) * dx + (target.y - start.y) * dy) / lengthSquared;
+    const t = Math.min(1, Math.max(0, raw));
+    const point = lerp(start, end, t);
+    return { index, t, point, distance: distance(point, target) };
+  }
+  const control1 = start.handleOut ?? { x: start.x, y: start.y };
+  const control2 = end.handleIn ?? { x: end.x, y: end.y };
+  const at = (value: number) => cubicPoint(start, control1, control2, end, value);
+  const STEPS = 32;
+  let bestT = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let step = 0; step <= STEPS; step += 1) {
+    const value = step / STEPS;
+    const current = distance(at(value), target);
+    if (current < bestDistance) {
+      bestDistance = current;
+      bestT = value;
+    }
+  }
+  let low = Math.max(0, bestT - 1 / STEPS);
+  let high = Math.min(1, bestT + 1 / STEPS);
+  for (let step = 0; step < 24; step += 1) {
+    const first = low + (high - low) / 3;
+    const second = high - (high - low) / 3;
+    if (distance(at(first), target) < distance(at(second), target)) high = second;
+    else low = first;
+  }
+  const t = (low + high) / 2;
+  const point = at(t);
+  return { index, t, point, distance: distance(point, target) };
+}
+
+function cubicPoint(p0: PathPoint, p1: PathPoint, p2: PathPoint, p3: PathPoint, t: number): PathPoint {
+  const mt = 1 - t;
+  const a = mt * mt * mt;
+  const b = 3 * mt * mt * t;
+  const c = 3 * mt * t * t;
+  const d = t * t * t;
+  return { x: a * p0.x + b * p1.x + c * p2.x + d * p3.x, y: a * p0.y + b * p1.y + c * p2.y + d * p3.y };
+}
+
+function lerp(start: PathPoint, end: PathPoint, t: number): PathPoint {
+  return { x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t };
+}

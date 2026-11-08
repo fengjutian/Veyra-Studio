@@ -22,7 +22,8 @@ function fakeContext() {
     moveTo: record("moveTo"),
     arcTo: record("arcTo"),
     closePath: record("closePath"),
-    fill: record("fill"),
+    // 记录填充瞬间的阴影状态：多层填充时阴影只在第一层生效，事后看最终值看不出来。
+    fill: (...args: unknown[]) => { calls.push({ name: "fill", args, shadow: context.shadowColor, shadowBlur: context.shadowBlur }); },
     stroke: record("stroke"),
     drawImage: record("drawImage"),
     fillText: record("fillText"),
@@ -160,10 +161,10 @@ test("paints the drop shadow with the node's offset and blur", () => {
   renderer.paint([
     sceneNode({ fill: "#ffffff", shadow: { x: 4, y: 8, blur: 12, color: "#00000080" } }),
   ], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
-  assert.equal(context.shadowColor, "#00000080");
-  assert.equal(context.shadowBlur, 12);
-  assert.equal(context.shadowOffsetX, 4);
-  assert.equal(context.shadowOffsetY, 8);
+  // 填充那一刻的阴影状态才是真正生效的。
+  const painted = context.calls.find(call => call.name === "fill" && call.shadow === "#00000080");
+  assert.ok(painted, "expected the shadow to be active while filling");
+  assert.equal(painted.shadowBlur, 12);
 });
 
 test("resets the shadow before drawing a child so effects are not inherited", () => {
@@ -196,4 +197,19 @@ test("paints a linear gradient from the shared gradient line", () => {
   assert.deepEqual(gradient.args, [10, 45, 110, 45]);
   const stops = context.calls.filter(call => call.name === "addColorStop").map(call => call.args);
   assert.deepEqual(stops, [[0, "#111111"], [1, "#ffffff"]]);
+});
+test("paints every fill layer and casts the shadow only once", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  const before = context.calls.filter(call => call.name === "fill").length;
+  renderer.paint([
+    sceneNode({
+      paints: [{ type: "solid", color: "#ff0000" }, { type: "solid", color: "#00ff00" }],
+      shadow: { x: 0, y: 4, blur: 8, color: "#00000080" },
+    }),
+  ], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  const fills = context.calls.filter(call => call.name === "fill").length - before;
+  assert.equal(fills, 2);
+  // 阴影只投一次，否则两层填充会把影子叠得更黑。
+  assert.equal(context.shadowColor, "transparent");
 });

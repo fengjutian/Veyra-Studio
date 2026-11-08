@@ -3,10 +3,12 @@ import type { PathCommand, VectorGeometry } from "@ufira/design-schema";
 import { hitTestVectorPath } from "@ufira/design-schema";
 import {
   anchorsFromPath,
+  closestSegment,
   commandsFromAnchors,
   handlesOf,
   hitTestAnchor,
   hitTestHandle,
+  insertAnchor,
   moveAnchor,
   moveHandle,
   pathIsClosed,
@@ -61,9 +63,12 @@ export function usePathEdit(options: PathEditOptions): {
   selected: number | null;
   /** 编辑中的整条路径（绝对场景坐标），用于画布预览。 */
   previewCommands: PathCommand[];
+  /** 指针是否停在路径线段上（提示可以插点）。 */
+  hoverSegment: boolean;
 } {
   const [anchors, setAnchors] = useState<EditableAnchor[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
+  const [hoverSegment, setHoverSegment] = useState(false);
   const dragRef = useRef<Drag | null>(null);
   const dirtyRef = useRef(false);
   const anchorsRef = useRef<EditableAnchor[]>([]);
@@ -120,6 +125,16 @@ export function usePathEdit(options: PathEditOptions): {
         event.currentTarget.setPointerCapture?.(event.pointerId);
         return;
       }
+      // 点在路径线段上：插入一个锚点，并顺势进入拖动状态（Figma 里点线段也是这个行为）。
+      const segment = closestSegment(anchorsRef.current, closed, point, tolerance);
+      if (segment) {
+        update(insertAnchor(anchorsRef.current, closed, segment.index, segment.t));
+        setSelected(segment.index + 1);
+        dragRef.current = { kind: "anchor", index: segment.index + 1 };
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+        return;
+      }
       // 点在图形本体上：保持编辑态，只取消锚点选中（Figma 同样不会因此退出）。
       if (hitTestVectorPath(options.target.commands, options.target.box, point)) {
         setSelected(null);
@@ -130,7 +145,14 @@ export function usePathEdit(options: PathEditOptions): {
     },
     onPointerMove: event => {
       const drag = dragRef.current;
-      if (!drag || !options.target) return;
+      if (!options.target) return;
+      if (!drag) {
+        // 没有拖动时跟踪指针：悬停在路径线段上就提示「可以插点」。
+        const tolerance = 8 / Math.max(options.zoom, 0.01);
+        const over = Boolean(closestSegment(anchorsRef.current, closed, options.pointOf(event), tolerance));
+        setHoverSegment(current => current === over ? current : over);
+        return;
+      }
       const point = options.pointOf(event);
       if (drag.kind === "anchor") {
         update(moveAnchor(anchorsRef.current, drag.index, point));
@@ -194,5 +216,13 @@ export function usePathEdit(options: PathEditOptions): {
 
   const previewCommands = useMemo(() => commandsFromAnchors(anchors, closed), [anchors, closed]);
 
-  return { handlers, anchors, handles, selected, previewCommands };
+  return {
+    /** 指针是否停在路径线段上（用于提示可以插点）。 */
+    hoverSegment,
+    handlers,
+    anchors,
+    handles,
+    selected,
+    previewCommands,
+  };
 }

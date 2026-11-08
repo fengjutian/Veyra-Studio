@@ -56,6 +56,9 @@ button.icon-only{padding:5px;min-width:26px}
 .warning-row:hover:not(:disabled){border-color:#d97706}
 .warning-code{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#fbbf24}
 .warning-message{color:#e7e9ee;line-height:1.4}
+.paint-layers{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px}.paint-layer{padding:2px 8px;font-size:11px}
+.canvas.rotate-hover{cursor:grab}
+.canvas.segment-hover{cursor:copy}
 .canvas-scroller{position:absolute;inset:0;overflow:auto;padding:16px}
 .canvas-controls{position:absolute;right:14px;bottom:14px;z-index:3;display:flex;align-items:center;gap:4px;padding:4px;background:#171a21;border:1px solid #2b303b;border-radius:9px}
 .canvas-controls .icon-only{width:28px;height:26px}

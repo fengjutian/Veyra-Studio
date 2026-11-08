@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, gradientLine, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -96,7 +96,10 @@ function renderNode(
   // 布局引擎给出的坐标是页面绝对坐标，所以导出原点对所有节点统一平移。
   const raw = boxes[nodeId] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
   const box = shiftBox(raw, options.origin);
-  const style = nodeStyle(document, node, tokenVariables, paintValue(document, node, box, tokenVariables, state));
+  // 填充层：多层时样式里的 fill 置空，改由下面逐层输出的图元自己带 fill。
+  const fillValues = paintValues(document, node, box, tokenVariables, state);
+  const multiFill = fillValues.length > 1;
+  const style = nodeStyle(document, node, tokenVariables, multiFill ? "none" : fillValues[0] ?? "none");
   // 旋转绕盒子中心，与画布/HTML 一致；导出坐标已经平移到视口，中心也一起平移。
   const rotation = node.layout.rotation ?? 0;
   const transform = rotation
@@ -136,7 +139,8 @@ function renderNode(
       // 这样导出结果与画布/命中用的是同一套几何，不依赖 `<g>` 的 transform。
       const d = pathDataFromCommands(absolutePath(commands, box));
       const vectorChildren = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep, state);
-      return `<g ${common}><path d="${escapeXml(d)}" />${vectorChildren ? `\n${indent(vectorChildren, 2)}\n` : ""}</g>`;
+      const vectorPaths = fillValues.length ? fillValues.map(fill => `<path d="${escapeXml(d)}" fill="${escapeXml(fill)}" />`).join("") : `<path d="${escapeXml(d)}" />`;
+      return `<g ${common}>${multiFill ? vectorPaths : `<path d="${escapeXml(d)}" />`}${vectorChildren ? `\n${indent(vectorChildren, 2)}\n` : ""}</g>`;
     }
   }
   if (node.type === "instance") {
@@ -152,17 +156,31 @@ function renderNode(
   const perCorner = radii && radii.some(value => value !== radii[0]);
 
   if (node.type === "ellipse") {
-    return `<ellipse ${common} cx="${num(box.x + box.width / 2)}" cy="${num(box.y + box.height / 2)}" rx="${num(box.width / 2)}" ry="${num(box.height / 2)}" />${children ? `\n${indent(children, 2)}\n` : ""}`;
+    const cx = num(box.x + box.width / 2);
+    const cy = num(box.y + box.height / 2);
+    const rx = num(box.width / 2);
+    const ry = num(box.height / 2);
+    if (multiFill) {
+      const layers = fillValues.map(fill => `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="${escapeXml(fill)}" />`).join("");
+      return `<g ${common}>${layers}${children ? `\n${indent(children, 2)}\n` : ""}</g>`;
+    }
+    return `<ellipse ${common} cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" />${children ? `\n${indent(children, 2)}\n` : ""}`;
   }
 
   if (radii && perCorner) {
     // SVG 的 <rect rx> 只有单值，四角不同只能用路径表达（圆弧是导出产物，不是文档格式）。
     const d = roundedRectPathData(box, radii);
-    return `<g ${common}><path d="${escapeXml(d)}" />${children ? `\n${indent(children, 2)}\n` : ""}</g>`;
+    const roundedLayers = multiFill
+      ? fillValues.map(fill => `<path d="${escapeXml(d)}" fill="${escapeXml(fill)}" />`).join("")
+      : `<path d="${escapeXml(d)}" />`;
+    return `<g ${common}>${roundedLayers}${children ? `\n${indent(children, 2)}\n` : ""}</g>`;
   }
 
   const radius = radii ? radii[0]! : resolveRadius(document, node) ?? 0;
-  return `<g ${common}>  <rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""} />${children ? `\n${indent(children, 2)}\n` : ""}</g>`;
+  const rectLayers = multiFill
+    ? fillValues.map(fill => `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""} fill="${escapeXml(fill)}" />`).join("") + "  "
+    : `  <rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""} />`;
+  return `<g ${common}>${rectLayers}${children ? `\n${indent(children, 2)}\n` : ""}</g>`;
 }
 
 /**
@@ -398,9 +416,12 @@ function registerEffect(node: DesignNode, state: MaskState): string {
  * 渐变坐标用 `userSpaceOnUse` + 导出坐标系里的盒子，和画布/HTML 用同一套 `gradientLine`，
  * 所以三处朝向一致；`objectBoundingBox` 会在非等比盒子上把方向拉歪。
  */
-function paintValue(document: DesignDocument, node: DesignNode, box: ComputedBox, tokenVariables: Record<string, string>, state: MaskState): string {
-  const paint = resolveFills(document, node)[0];
-  if (!paint) return "none";
+function paintValues(document: DesignDocument, node: DesignNode, box: ComputedBox, tokenVariables: Record<string, string>, state: MaskState): string[] {
+  return resolveFills(document, node).map(paint => paintValue(document, node, paint, box, tokenVariables, state));
+}
+
+/** 单层填充的值（多层由 {@link paintValues} 逐层生成）。 */
+function paintValue(document: DesignDocument, node: DesignNode, paint: Paint, box: ComputedBox, tokenVariables: Record<string, string>, state: MaskState): string {
   if (paint.type === "solid") return boundValue(node.bindings?.fill, paint.color, tokenVariables);
   const id = `paint-${state.nextId++}`;
   const line = gradientLine(box, paint.angle);

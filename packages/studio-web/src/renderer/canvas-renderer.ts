@@ -123,11 +123,21 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
 }
 
 function drawShape(context: CanvasRenderingContext2D, node: SceneNode): void {
-  const paint = node.paints?.[0];
-  if (node.fill || paint) {
+  const paints = node.paints?.length ? node.paints : node.fill ? [{ type: "solid" as const, color: node.fill }] : [];
+  if (paints.length) {
     shapePath(context, node);
-    context.fillStyle = paint ? canvasPaint(context, node, paint) : node.fill!;
-    context.fill();
+    // 从下往上逐层覆盖：数组顺序就是 Figma 的填充层顺序（第 0 层在最底下）。
+    paints.forEach((paint, index) => {
+      context.fillStyle = canvasPaint(context, node, paint);
+      context.fill();
+      // 阴影只需要投一次：多层填充各投一次会让影子叠得更黑。
+      if (index === 0) {
+        context.shadowColor = "transparent";
+        context.shadowBlur = 0;
+        context.shadowOffsetX = 0;
+        context.shadowOffsetY = 0;
+      }
+    });
   }
   if (node.stroke && node.strokeWidth > 0) {
     shapePath(context, node);

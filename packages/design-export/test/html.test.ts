@@ -180,3 +180,20 @@ test("exports a linear gradient as css", () => {
   const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
   assert.match(result.html, /background:linear-gradient\(180deg, #111111 0%, #ffffff 100%\)/);
 });
+test("stacks multiple fills with background-color and background-image", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: {
+      ...defaultAppearance(),
+      fills: [
+        { type: "solid", color: "#ff0000" },
+        { type: "linear", angle: 180, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] },
+      ],
+    },
+  };
+  const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  // 最底层实色用 background-color，其余层进 background-image。
+  assert.match(result.html, /background-color:#ff0000/);
+  assert.match(result.html, /background-image:linear-gradient\(180deg/);
+});

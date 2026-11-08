@@ -174,26 +174,35 @@ function renderVectorPath(
   const d = pathDataFromCommands(absolutePath(commands, { x: 0, y: 0, width, height }));
   // 填充层：实色走 CSS 变量，渐变走 linear-gradient（角度与画布/SVG 同一套约定）。
   const fills = resolveFills(document, node);
-  const paint = fills[0];
-  let fill = "none";
-  let paintDefs = "";
-  if (paint?.type === "solid") {
-    fill = boundValue(node.bindings?.fill, paint.color, tokenVariables);
-  } else if (paint?.type === "linear") {
-    // 内联 <svg> 里不能用 CSS 渐变函数，只能生成一条 gradient；坐标用 viewBox 的本地空间。
-    const line = gradientLine({ x: 0, y: 0, width, height }, paint.angle);
-    const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
-      .map(stop => `<stop offset="${num(stop.offset)}" stop-color="${escapeAttribute(stop.color)}" />`)
-      .join("");
-    paintDefs = `<defs><linearGradient id="paint" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient></defs>`;
-    fill = "url(#paint)";
-  }
+  const defs: string[] = [];
   const hasStroke = Boolean(resolveStroke(document, node) || node.bindings?.stroke);
   const stroke = hasStroke ? boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables) : "none";
   const strokeWidth = node.appearance.strokeWidth ?? 1;
-  const attributes = [`d="${escapeAttribute(d)}"`, `fill="${escapeAttribute(fill)}"`, `stroke="${escapeAttribute(stroke)}"`];
-  if (hasStroke) attributes.push(`stroke-width="${num(strokeWidth)}"`);
-  return `<div ${common}><svg viewBox="0 0 ${num(width)} ${num(height)}" preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:visible">${paintDefs}<path ${attributes.join(" ")} /></svg></div>`;
+  const attributesOf = (paint: Paint | undefined, index: number): string => {
+    let fill = "none";
+    if (paint?.type === "solid") {
+      fill = boundValue(node.bindings?.fill, paint.color, tokenVariables);
+    } else if (paint?.type === "linear") {
+      // 内联 <svg> 里不能用 CSS 渐变函数，只能生成一条 gradient；坐标用 viewBox 的本地空间。
+      const id = `paint-${index}`;
+      const line = gradientLine({ x: 0, y: 0, width, height }, paint.angle);
+      const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
+        .map(stop => `<stop offset="${num(stop.offset)}" stop-color="${escapeAttribute(stop.color)}" />`)
+        .join("");
+      defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
+      fill = `url(#${id})`;
+    }
+    const parts = [`d="${escapeAttribute(d)}"`, `fill="${escapeAttribute(fill)}"`];
+    // 描边只画一次：多层填充重复的是路径本身，不是描边。
+    if (index === 0) {
+      parts.push(`stroke="${escapeAttribute(stroke)}"`);
+      if (hasStroke) parts.push(`stroke-width="${num(strokeWidth)}"`);
+    }
+    return parts.join(" ");
+  };
+  const paths = fills.length ? fills.map((paint, index) => `<path ${attributesOf(paint, index)} />`) : [`<path ${attributesOf(undefined, 0)} />`];
+  const paintDefs = defs.length ? `<defs>${defs.join("")}</defs>` : "";
+  return `<div ${common}><svg viewBox="0 0 ${num(width)} ${num(height)}" preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:visible">${paintDefs}${paths.join("")}</svg></div>`;
 }
 
 function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
@@ -215,7 +224,20 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   declarations.push(`opacity:${node.appearance.opacity}`);
   if (!node.visible) declarations.push("display:none");
   const fills = resolveFills(document, node);
-  if (fills[0] && !pathVector) declarations.push(`background:${cssPaint(node, fills[0], tokenVariables)}`);
+  if (fills[0] && !pathVector) {
+    if (fills.length === 1) {
+      // 单层（实色或渐变）保持 `background:` 简写：输出与引入多层之前逐字一致。
+      declarations.push(`background:${cssPaint(node, fills[0]!, tokenVariables)}`);
+    } else {
+      // 多层：CSS 的 background-image 列表是「第一个在最上面」，所以按数组倒序输出。
+      const bottom = fills[0]!;
+      if (bottom.type === "solid") declarations.push(`background-color:${cssPaint(node, bottom, tokenVariables)}`);
+      const layers = (bottom.type === "solid" ? fills.slice(1) : fills)
+        .map(paint => cssBackgroundLayer(node, paint, tokenVariables))
+        .reverse();
+      if (layers.length) declarations.push(`background-image:${layers.join(", ")}`);
+    }
+  }
   // 旋转绕元素中心（transform-origin 的初始值就是 50% 50%），与画布、SVG 一致。
   if (node.layout.rotation) declarations.push(`transform:rotate(${num(node.layout.rotation)}deg)`);
   if (node.appearance.shadow) {
@@ -368,4 +390,17 @@ function cssPaint(node: DesignNode, paint: Paint, tokenVariables: Record<string,
     .map(stop => `${safeCssValue(stop.color)} ${num(stop.offset * 100)}%`)
     .join(", ");
   return `linear-gradient(${num(paint.angle)}deg, ${stops})`;
+}
+/**
+ * 多层填充时的一层 CSS 背景图。
+ *
+ * `background-color` 只有一个，所以除最底层外的实色必须写成 `linear-gradient(色, 色)`，
+ * 才能作为 background-image 参与叠层。
+ */
+function cssBackgroundLayer(node: DesignNode, paint: Paint, tokenVariables: Record<string, string>): string {
+  if (paint.type === "solid") {
+    const color = boundValue(node.bindings?.fill, paint.color, tokenVariables);
+    return `linear-gradient(${color}, ${color})`;
+  }
+  return cssPaint(node, paint, tokenVariables);
 }
