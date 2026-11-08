@@ -38,6 +38,15 @@ const paintSchema = z.discriminatedUnion("type", [
     // 少于两个色标画不出渐变。
     stops: z.array(z.object({ offset: z.number().min(0).max(1), color: z.string().min(1) })).min(2),
   }),
+  z.object({
+    type: z.literal("radial"),
+    // 中心可以落在盒子外（负值/大于 1 是有效设计），所以不做范围限制。
+    cx: z.number().finite(),
+    cy: z.number().finite(),
+    // 半径必须是正数：0 或负数的圆什么也画不出来。
+    r: z.number().finite().positive(),
+    stops: z.array(z.object({ offset: z.number().min(0).max(1), color: z.string().min(1) })).min(2),
+  }),
 ]);
 
 const appearanceSchema = z.object({

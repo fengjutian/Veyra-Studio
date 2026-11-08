@@ -248,7 +248,9 @@ AI 原型：
   HTML 用 `box-shadow`/`filter`，支持矩阵新增 `effects` 行；
 - 渐变与文档格式 v3（P6.2）：填充改为 `appearance.fills: Paint[]`（实色 / 线性渐变），
   `CURRENT_SCHEMA_VERSION` 升到 3 并登记 v2 → v3 迁移；`resolveFills()` 收敛所有读取点，
-  `gradientLine()` 让画布、HTML、SVG 共用同一套渐变几何；
+  `gradientLine()` 让画布、HTML、SVG 共用同一套渐变几何；多层填充已接通（画布逐层、
+  HTML 倒序 background-image、SVG 逐层图元），面板可增删与切换层；径向渐变
+  （`{ type: "radial", cx, cy, r, stops }`）与线性共享色标与几何入口；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 
 ### `0.4.0`：布局、文本与视觉一致性

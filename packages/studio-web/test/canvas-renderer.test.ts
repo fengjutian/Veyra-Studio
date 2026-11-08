@@ -29,6 +29,7 @@ function fakeContext() {
     fillText: record("fillText"),
     measureText: (value: string) => ({ width: value.length * 10 }),
     createLinearGradient: (...args: unknown[]) => { calls.push({ name: "createLinearGradient", args }); return { addColorStop: (offset: number, color: string) => calls.push({ name: "addColorStop", args: [offset, color] }) }; },
+    createRadialGradient: (...args: unknown[]) => { calls.push({ name: "createRadialGradient", args }); return { addColorStop: (offset: number, color: string) => calls.push({ name: "addColorStop", args: [offset, color] }) }; },
     save: () => { stack.push({ alpha: state.alpha, fillStyle: state.fillStyle, font: state.font, textAlign: state.textAlign }); calls.push({ name: "save", args: [] }); },
     restore: () => {
       const previous = stack.pop();
@@ -212,4 +213,15 @@ test("paints every fill layer and casts the shadow only once", () => {
   assert.equal(fills, 2);
   // 阴影只投一次，否则两层填充会把影子叠得更黑。
   assert.equal(context.shadowColor, "transparent");
+});
+test("paints a radial gradient from the box centre", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([
+    sceneNode({ paints: [{ type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }] }),
+  ], { width: 120, height: 40, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  const radial = context.calls.find(call => call.name === "createRadialGradient");
+  assert.ok(radial);
+  // 测试夹具的盒子是 100×50、位于 (10,20)：中心 (60,45)，半径 = 长边(100) × 0.5 = 50。
+  assert.deepEqual(radial.args, [60, 45, 0, 60, 45, 50]);
 });

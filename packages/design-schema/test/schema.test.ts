@@ -189,3 +189,25 @@ test("validates paint layers", () => {
   assert.throws(() => validateDocument(make([{ type: "linear", angle: 45, stops: [{ offset: 0, color: "#fff" }] }])), /fills/);
   assert.throws(() => validateDocument(make([{ type: "linear", angle: 45, stops: [{ offset: 2, color: "#fff" }, { offset: 1, color: "#000" }] }])), /fills/);
 });
+test("validates radial paints", () => {
+  const make = (fills: unknown) => {
+    const document = createDocument("doc:1", "Demo");
+    document.nodes["node:1"] = {
+      id: "node:1",
+      type: "rectangle",
+      name: "Card",
+      parentId: "page:1",
+      childIds: [],
+      visible: true,
+      locked: false,
+      layout: defaultLayout(),
+      appearance: { ...defaultAppearance(), fills: fills as never },
+    };
+    document.pages["page:1"]!.childIds = ["node:1"];
+    return document;
+  };
+  const stops = [{ offset: 0, color: "#fff" }, { offset: 1, color: "#000" }];
+  assert.ok(validateDocument(make([{ type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops }])));
+  // 半径必须为正：0 画不出任何东西。
+  assert.throws(() => validateDocument(make([{ type: "radial", cx: 0.5, cy: 0.5, r: 0, stops }])), /fills/);
+});

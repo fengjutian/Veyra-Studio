@@ -76,7 +76,12 @@ export interface PaintStop {
  */
 export type Paint =
   | { type: "solid"; color: string }
-  | { type: "linear"; angle: number; stops: PaintStop[] };
+  | { type: "linear"; angle: number; stops: PaintStop[] }
+  /**
+   * 径向渐变：`cx`/`cy` 是相对盒子的归一化中心（0–1），`r` 是半径占盒子长边的比例。
+   * 三处渲染都用「盒子长边 × r」算圆半径，非等比盒子上也是一个正圆（不是椭圆）。
+   */
+  | { type: "radial"; cx: number; cy: number; r: number; stops: PaintStop[] };
 
 export interface AppearanceSpec {
   opacity: number;

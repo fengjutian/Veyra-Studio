@@ -31,3 +31,24 @@ export function gradientLine(box: { x: number; y: number; width: number; height:
   const dy = (-cos * length) / 2;
   return { x1: centerX - dx, y1: centerY - dy, x2: centerX + dx, y2: centerY + dy };
 }
+
+/** 径向渐变的绝对几何：中心与半径都在场景坐标里。 */
+export interface RadialGeometry {
+  cx: number;
+  cy: number;
+  r: number;
+}
+
+/**
+ * 径向渐变 → 场景坐标里的圆。
+ *
+ * 半径取「盒子长边 × r」：这样非等比盒子上也是一个正圆。用短边或对角线做基准都试过，
+ * 长边最符合「r = 0.5 时刚好盖住整个盒子」的直觉（正方形上精确成立）。
+ */
+export function radialGeometry(box: { x: number; y: number; width: number; height: number }, paint: { cx: number; cy: number; r: number }): RadialGeometry {
+  return {
+    cx: box.x + paint.cx * box.width,
+    cy: box.y + paint.cy * box.height,
+    r: Math.max(paint.r, 1e-6) * Math.max(box.width, box.height),
+  };
+}

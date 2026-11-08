@@ -15,7 +15,7 @@ import {
   starPathData,
   vectorPathCommands,
 } from "../src/geometry";
-import { gradientLine } from "../src/paint";
+import { gradientLine, radialGeometry } from "../src/paint";
 
 const BOX = { x: 100, y: 50, width: 200, height: 100 };
 
@@ -203,4 +203,14 @@ test("gradient line follows the CSS angle convention", () => {
   assert.ok(right.x1 < right.x2);
   assert.equal(right.y1, 50);
   assert.equal(right.y2, 50);
+});
+test("radial geometry scales the radius with the longer side", () => {
+  const box = { x: 10, y: 20, width: 100, height: 50 };
+  const geometry = radialGeometry(box, { cx: 0.5, cy: 0.5, r: 0.5 });
+  assert.deepEqual(geometry, { cx: 60, cy: 45, r: 50 });
+  // 中心可以落在盒子外（左上角的 -10%）。
+  const offset = radialGeometry(box, { cx: -0.1, cy: -0.1, r: 1 });
+  assert.equal(offset.cx, 0);
+  assert.equal(offset.cy, 15);
+  assert.equal(offset.r, 100);
 });

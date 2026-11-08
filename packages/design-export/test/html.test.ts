@@ -197,3 +197,12 @@ test("stacks multiple fills with background-color and background-image", () => {
   assert.match(result.html, /background-color:#ff0000/);
   assert.match(result.html, /background-image:linear-gradient\(180deg/);
 });
+test("exports a radial gradient as css", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), fills: [{ type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }] },
+  };
+  const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /background:radial-gradient\(circle \d+px at 50% 50%, #ffffff 0%, #000000 100%\)/);
+});

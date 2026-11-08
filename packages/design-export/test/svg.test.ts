@@ -224,3 +224,13 @@ test("exports every fill layer as its own shape", () => {
   assert.match(result.svg, /<rect [^>]*fill="#ff0000"/);
   assert.match(result.svg, /<rect [^>]*fill="#00ff00"/);
 });
+test("exports a radial gradient as defs with a circle", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), fills: [{ type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }] },
+  };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /<radialGradient id="paint-1" gradientUnits="userSpaceOnUse" cx="[^"]+" cy="[^"]+" r="[^"]+">/);
+  assert.match(result.svg, /fill:url\(#paint-1\)/);
+});

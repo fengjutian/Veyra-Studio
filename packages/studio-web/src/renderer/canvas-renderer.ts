@@ -1,4 +1,4 @@
-import { absolutePath, gradientLine, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
+import { absolutePath, gradientLine, radialGeometry, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
 import type { SceneBox, SceneNode } from "./scene";
 
 /**
@@ -315,8 +315,16 @@ function clamp(value: number, min: number, max: number): number {
  */
 function canvasPaint(context: CanvasRenderingContext2D, node: SceneNode, paint: Paint): string | CanvasGradient {
   if (paint.type === "solid") return paint.color;
-  const line = gradientLine(node.box, paint.angle);
-  const gradient = context.createLinearGradient(line.x1, line.y1, line.x2, line.y2);
+  const gradient = paint.type === "linear"
+    ? (() => {
+      const line = gradientLine(node.box, paint.angle);
+      return context.createLinearGradient(line.x1, line.y1, line.x2, line.y2);
+    })()
+    : (() => {
+      const radial = radialGeometry(node.box, paint);
+      // 内外圆同心、内半径 0：色标从中心一圈圈扩散出去。
+      return context.createRadialGradient(radial.cx, radial.cy, 0, radial.cx, radial.cy, radial.r);
+    })();
   for (const stop of [...paint.stops].sort((a, b) => a.offset - b.offset)) gradient.addColorStop(stop.offset, stop.color);
   return gradient;
 }

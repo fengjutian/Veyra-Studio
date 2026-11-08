@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, gradientLine, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -182,14 +182,20 @@ function renderVectorPath(
     let fill = "none";
     if (paint?.type === "solid") {
       fill = boundValue(node.bindings?.fill, paint.color, tokenVariables);
-    } else if (paint?.type === "linear") {
+    } else if (paint) {
       // 内联 <svg> 里不能用 CSS 渐变函数，只能生成一条 gradient；坐标用 viewBox 的本地空间。
       const id = `paint-${index}`;
-      const line = gradientLine({ x: 0, y: 0, width, height }, paint.angle);
+      const local = { x: 0, y: 0, width, height };
       const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
         .map(stop => `<stop offset="${num(stop.offset)}" stop-color="${escapeAttribute(stop.color)}" />`)
         .join("");
-      defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
+      if (paint.type === "linear") {
+        const line = gradientLine(local, paint.angle);
+        defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
+      } else {
+        const radial = radialGeometry(local, paint);
+        defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${num(radial.cx)}" cy="${num(radial.cy)}" r="${num(radial.r)}">${stops}</radialGradient>`);
+      }
       fill = `url(#${id})`;
     }
     const parts = [`d="${escapeAttribute(d)}"`, `fill="${escapeAttribute(fill)}"`];
@@ -389,7 +395,11 @@ function cssPaint(node: DesignNode, paint: Paint, tokenVariables: Record<string,
   const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
     .map(stop => `${safeCssValue(stop.color)} ${num(stop.offset * 100)}%`)
     .join(", ");
-  return `linear-gradient(${num(paint.angle)}deg, ${stops})`;
+  if (paint.type === "linear") return `linear-gradient(${num(paint.angle)}deg, ${stops})`;
+  // CSS 的 circle 半径不接受百分比，所以用 px：按布局尺寸算，和画布/SVG 的半径一致。
+  // 代价是节点被拉伸时渐变的半径不会跟着缩放（导出产物里通常无所谓）。
+  const radius = paint.r * Math.max(node.layout.width, node.layout.height);
+  return `radial-gradient(circle ${num(radius)}px at ${num(paint.cx * 100)}% ${num(paint.cy * 100)}%, ${stops})`;
 }
 /**
  * 多层填充时的一层 CSS 背景图。

@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, gradientLine, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -424,10 +424,15 @@ function paintValues(document: DesignDocument, node: DesignNode, box: ComputedBo
 function paintValue(document: DesignDocument, node: DesignNode, paint: Paint, box: ComputedBox, tokenVariables: Record<string, string>, state: MaskState): string {
   if (paint.type === "solid") return boundValue(node.bindings?.fill, paint.color, tokenVariables);
   const id = `paint-${state.nextId++}`;
-  const line = gradientLine(box, paint.angle);
   const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
     .map(stop => `<stop offset="${num(stop.offset)}" stop-color="${escapeXml(stop.color)}" />`)
     .join("");
-  state.defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
+  if (paint.type === "linear") {
+    const line = gradientLine(box, paint.angle);
+    state.defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
+  } else {
+    const radial = radialGeometry(box, paint);
+    state.defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${num(radial.cx)}" cy="${num(radial.cy)}" r="${num(radial.r)}">${stops}</radialGradient>`);
+  }
   return `url(#${id})`;
 }

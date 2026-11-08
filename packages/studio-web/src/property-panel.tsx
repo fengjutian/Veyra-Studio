@@ -182,13 +182,29 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
               改回纯色
             </button>
           </>
+        ) : paint?.type === "radial" ? (
+          <>
+            <NumberField label="中心X%" value={Math.round(paint.cx * 100)} disabled={disabled} onCommit={value => patchPaint({ ...paint, cx: value / 100 })} />
+            <NumberField label="中心Y%" value={Math.round(paint.cy * 100)} disabled={disabled} onCommit={value => patchPaint({ ...paint, cy: value / 100 })} />
+            <NumberField label="半径%" value={Math.round(paint.r * 100)} min={1} disabled={disabled} onCommit={value => patchPaint({ ...paint, r: Math.max(value, 1) / 100 })} />
+            <TextField label="起始色" value={paint.stops[0]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, 0, color))} />
+            <TextField label="结束色" value={paint.stops[paint.stops.length - 1]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, paint.stops.length - 1, color))} />
+            <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint({ type: "solid", color: paint.stops[0]?.color ?? "#8b5cf6" })}>
+              改回纯色
+            </button>
+          </>
         ) : (
           <>
             <TextField label="填充" value={paint?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(color ? { type: "solid", color } : undefined)} />
             {paint?.type === "solid" && (
-              <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint(toGradient(paint.color))}>
-                改为线性渐变
-              </button>
+              <>
+                <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint(toGradient(paint.color))}>
+                  改为线性渐变
+                </button>
+                <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint(toRadial(paint.color))}>
+                  改为径向渐变
+                </button>
+              </>
             )}
           </>
         )}
@@ -461,7 +477,12 @@ function toGradient(color: string): Paint {
   return { type: "linear", angle: 180, stops: [{ offset: 0, color }, { offset: 1, color: "#ffffff" }] };
 }
 
-/** 改一个色标，其余保持不变。 */
-function withStop(paint: Extract<Paint, { type: "linear" }>, index: number, color: string): Paint {
+/** 改一个色标，其余保持不变（线性与径向共用）。 */
+function withStop(paint: Extract<Paint, { type: "linear" | "radial" }>, index: number, color: string): Paint {
   return { ...paint, stops: paint.stops.map((stop, position) => position === index ? { ...stop, color } : stop) };
+}
+
+/** 纯色 → 径向渐变：默认从中心向外，半径盖住盒子长边的一半。 */
+function toRadial(color: string): Paint {
+  return { type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops: [{ offset: 0, color }, { offset: 1, color: "#ffffff" }] };
 }
