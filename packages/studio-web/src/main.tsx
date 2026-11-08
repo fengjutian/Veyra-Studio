@@ -32,7 +32,8 @@ import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
 import { collectFontFamilies, collectMissingFonts, loadDocumentFonts, prepareFonts } from "./font-loading";
 import { CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
 import { clampScroll, panScroll } from "./canvas-pan";
-import { listComponents, makeInstanceNode, variantOptions } from "./components";
+import { formatVariant, listComponents, makeInstanceNode, variantOptions } from "./components";
+import { currentValuesFromForm, nextValuesFromForm, parseVariantProperties, validateVariantForm, variantCurrentFields, variantNextFields } from "./variant-form";
 import { PropertyPanel } from "./property-panel";
 import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
@@ -1299,53 +1300,67 @@ function App() {
   /**
    * 从现有组件复制出一个变体。
    *
-   * 首次创建变体时顺带建立单属性变体集（属性名可改，默认 state），并把当前组件
-   * 登记为 `默认值`；三条命令放在同一个事务里，失败不会留下「有集合没成员」的半成品。
+   * 首次创建变体时先问属性名（可多个，逗号分隔），再让用户填「当前值 / 新值」；
+   * 已经有变体集时只填新值。建集、登记当前组件、复制新变体三条命令在同一个事务里，
+   * 失败不会留下「有集合没成员」的半成品。
    */
   const createComponentVariant = (componentId: string) => void run(async () => {
     const component = document.components[componentId];
     if (!component) return;
     const existingSet = component.variantSetId ? document.componentSets?.[component.variantSetId] : undefined;
-    const property = existingSet?.properties[0] ?? "state";
-    const currentValue = component.variant?.[property] ?? "default";
+    let properties: string[];
+    let setId: string;
+    if (existingSet) {
+      properties = existingSet.properties;
+      setId = existingSet.id;
+    } else {
+      const raw = await askText({
+        title: `为「${component.name}」建立变体集`,
+        description: "属性名用逗号分隔，例如 state, size。建立后集合属性不可修改。",
+        label: "变体属性",
+        defaultValue: "state",
+        validate: value => parseVariantProperties(value).error,
+      });
+      if (raw === null) return;
+      properties = parseVariantProperties(raw).properties;
+      setId = `set:${crypto.randomUUID().slice(0, 8)}`;
+    }
+
+    const includeCurrent = !component.variantSetId;
+    const current = component.variant ?? {};
     const values = await askForm({
       title: `为「${component.name}」创建变体`,
-      description: existingSet ? `变体集属性：${property}` : "首次创建变体会建立单属性变体集（默认属性 state）",
+      description: includeCurrent
+        ? `属性：${properties.join(" / ")}（首次创建会建立变体集并登记当前组件）`
+        : `当前变体：${formatVariant(properties, current)}`,
       fields: [
-        { key: "property", label: "属性名", defaultValue: property },
-        { key: "current", label: "当前组件的值", defaultValue: currentValue },
-        { key: "next", label: "新变体的值", placeholder: "例如 hover", defaultValue: "" },
+        ...(includeCurrent ? variantCurrentFields(properties) : []),
+        ...variantNextFields(properties, current),
       ],
-      validate: input => {
-        if (!input.next?.trim()) return "新变体的值不能为空";
-        if (!/^[A-Za-z0-9_-]+$/.test(input.next.trim())) return "只能用字母、数字、- 和 _";
-        if (!input.current?.trim()) return "当前组件的值不能为空";
-        return undefined;
-      },
+      validate: input => validateVariantForm(properties, input, { includeCurrent }),
     });
     if (!values) return;
-    const propertyName = values.property?.trim() || property;
-    const nextValue = values.next!.trim();
-    const currentTrimmed = values.current!.trim();
-    const setId = existingSet?.id ?? `set:${crypto.randomUUID().slice(0, 8)}`;
+
+    const nextValues = nextValuesFromForm(properties, values);
+    const currentValues = includeCurrent ? currentValuesFromForm(properties, values) : current;
     const commands: DesignCommand[] = [];
     if (!existingSet) {
-      commands.push({ type: "component.setCreate", payload: { set: { id: setId, name: `${component.name} 变体`, properties: [propertyName] } } });
+      commands.push({ type: "component.setCreate", payload: { set: { id: setId, name: `${component.name} 变体`, properties } } });
     }
     if (!component.variantSetId) {
-      commands.push({ type: "component.setVariant", payload: { id: componentId, variantSetId: setId, variant: { [propertyName]: currentTrimmed } } });
+      commands.push({ type: "component.setVariant", payload: { id: componentId, variantSetId: setId, variant: currentValues } });
     }
     commands.push({
       type: "component.createVariant",
       payload: {
         sourceComponentId: componentId,
         componentId: `component:${crypto.randomUUID().slice(0, 8)}`,
-        name: `${component.name} / ${nextValue}`,
-        values: { [propertyName]: nextValue },
+        name: `${component.name} / ${formatVariant(properties, nextValues)}`,
+        values: nextValues,
       },
     });
     await execute(commands);
-    setMessage(`已创建变体「${propertyName}=${nextValue}」`);
+    setMessage(`已创建变体「${formatVariant(properties, nextValues)}」`);
   });
   /** 编组：把同级的多个对象包进一个不带填充的 frame。 */
   const groupSelection = () => {
