@@ -93,11 +93,12 @@ export function ellipticalGradientMatrix(geometry: EllipticalGeometry, angle = 0
   const radians = (angle * Math.PI) / 180;
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
+  // `+ 0` 把 -0 归一成 0：SVG 里写 "matrix(40 0 -0 20 …)" 很难看。
   return [
-    cos * geometry.rx,
-    sin * geometry.rx,
-    -sin * geometry.ry,
-    cos * geometry.ry,
+    cos * geometry.rx + 0,
+    sin * geometry.rx + 0,
+    -sin * geometry.ry + 0,
+    cos * geometry.ry + 0,
     geometry.cx,
     geometry.cy,
   ];

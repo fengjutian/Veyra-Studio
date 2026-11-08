@@ -319,9 +319,13 @@ test("validates elliptical paints", () => {
   };
   const stops = [{ offset: 0, color: "#fff" }, { offset: 1, color: "#000" }];
   assert.ok(validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.5, stops }])));
+  // 旋转角是可选的：缺省 0 = 不旋转。
+  assert.ok(validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.5, angle: 45, stops }])));
   // 两个半轴都必须为正：0 或负数画不出椭圆。
   assert.throws(() => validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0, ry: 0.5, stops }])), /fills/);
   assert.throws(() => validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: -1, stops }])), /fills/);
+  // 旋转角必须是有限数。
+  assert.throws(() => validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.5, angle: Number.NaN, stops }])), /fills/);
 });
 test("validates blend mode and background blur", () => {
   const make = (appearance: Record<string, unknown>) => {

@@ -1,5 +1,6 @@
 import { absolutePath, canvasCompositeFor, ellipticalGeometry, gradientLine, radialGeometry, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
 import { layoutRichText, type RichTextStyle } from "@ufira/design-layout";
+import { rotatedBounds, toRadians } from "./rotation";
 import type { SceneBox, SceneNode } from "./scene";
 
 /**
@@ -209,10 +210,12 @@ function drawBlendedGroup(
 
 /** 节点 + 子树的包围盒（含阴影与图层模糊的溢出余量）。 */
 function subtreeBounds(node: SceneNode): SceneBox {
-  let minX = node.box.x;
-  let minY = node.box.y;
-  let maxX = node.box.x + node.box.width;
-  let maxY = node.box.y + node.box.height;
+  // 旋转过的节点要用旋转后的轴对齐包围盒，否则离屏层会把转出去的部分裁掉。
+  const own = node.rotation ? rotatedBounds(node.box, toRadians(node.rotation)) : node.box;
+  let minX = own.x;
+  let minY = own.y;
+  let maxX = own.x + own.width;
+  let maxY = own.y + own.height;
   for (const child of node.children) {
     // 蒙版自身不绘制，不占包围盒。
     if (child.mask) continue;
@@ -280,6 +283,14 @@ function paintBackgroundBlur(context: CanvasRenderingContext2D, node: SceneNode,
     return;
   }
   context.save();
+  // 裁剪形状要和节点自身的旋转一致——否则旋转过的节点会裁出一个歪的遮罩。
+  if (node.rotation) {
+    const centerX = node.box.x + node.box.width / 2;
+    const centerY = node.box.y + node.box.height / 2;
+    context.translate(centerX, centerY);
+    context.rotate(toRadians(node.rotation));
+    context.translate(-centerX, -centerY);
+  }
   shapePath(context, node);
   context.clip();
   context.drawImage(surface.canvas, box.x, box.y, box.width, box.height);

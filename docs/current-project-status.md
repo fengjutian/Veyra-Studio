@@ -44,8 +44,15 @@
   椭圆渐变在画布上走**离屏合成**（正圆渐变 + 按外接矩形贴回 + 按形状裁剪），
   SVG 用「单位圆 + `gradientTransform`」，HTML 用 `radial-gradient(ellipse …)`；
   背景模糊在 HTML 是 `backdrop-filter`，SVG 是「背景副本 + 裁剪 + 模糊」
-  （近似，不含祖先背景），画布侧本轮**只警告不实现**（需要离屏合成）。
-  详见 `figma-gap-roadmap.md` §4；
+  （近似，不含祖先背景），画布侧是「离屏快照 + 模糊 + 按形状裁剪」。
+  混合模式在画布上是**图层组语义**：节点连同整棵子树先画进离屏层，
+  再作为一个整体与背景混合——Canvas 的合成操作是「就地」的，没有图层组概念，
+  分组语义只能靠离屏合成实现。椭圆渐变另有可选 `angle`（旋转角）：
+  画布与 SVG 精确（SVG 写进 `gradientTransform`），HTML 因 CSS
+  `radial-gradient` 不支持旋转而降级并给出诊断。
+  **Canvas 支持全部 16 种混合模式**（实测与 CSS 逐像素一致，
+  探针见 `studio-web/visual/blend-probe.ts`）；
+  详见 `figma-gap-roadmap.md` §5；
 - `packages/design-runtime`：早期命令和运行时原型；`text.patch` 接受并校验上述文本样式字段；
 - `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
   连续重放已提交事务的崩溃恢复原型；仓库契约收敛为单一入口 `contract.ts`：
