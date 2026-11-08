@@ -9,7 +9,7 @@ interface Call { name: string; args: unknown[] }
 function fakeContext() {
   const calls: Call[] = [];
   const stack: Array<{ alpha: number; fillStyle: string; font: string; textAlign: string }> = [];
-  const state = { alpha: 1, fillStyle: "#000", strokeStyle: "#000", lineWidth: 1, font: "", textAlign: "left", textBaseline: "alphabetic", letterSpacing: "" };
+  const state = { alpha: 1, fillStyle: "#000", strokeStyle: "#000", lineWidth: 1, font: "", textAlign: "left", textBaseline: "alphabetic", letterSpacing: "", composite: "source-over" };
   const record = (name: string) => (...args: unknown[]) => { calls.push({ name, args }); };
   const context = {
     calls,
@@ -52,6 +52,9 @@ function fakeContext() {
     set textBaseline(value: string) { state.textBaseline = value; },
     get letterSpacing() { return state.letterSpacing; },
     set letterSpacing(value: string) { state.letterSpacing = value; },
+    // 混合模式落到 Canvas 的 globalCompositeOperation。
+    get globalCompositeOperation() { return state.composite; },
+    set globalCompositeOperation(value: string) { state.composite = value; calls.push({ name: "globalCompositeOperation", args: [value] }); },
     // 渲染器用 `"filter" in context` 判断浏览器是否支持 canvas filter。
     filter: "none",
   };
@@ -224,4 +227,61 @@ test("paints a radial gradient from the box centre", () => {
   assert.ok(radial);
   // 测试夹具的盒子是 100×50、位于 (10,20)：中心 (60,45)，半径 = 长边(100) × 0.5 = 50。
   assert.deepEqual(radial.args, [60, 45, 0, 60, 45, 50]);
+});
+
+test("混合模式落到 Canvas 的合成操作上", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([sceneNode({ fill: "#000000", blendMode: "multiply" })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  assert.equal(context.globalCompositeOperation, "multiply");
+});
+
+test("Canvas 不支持的混合模式退回 normal 并给出警告，而不是画错", () => {
+  const context = fakeContext();
+  const warnings: string[] = [];
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([sceneNode({ fill: "#000000", blendMode: "hue" })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), onWarning: message => warnings.push(message) });
+  assert.equal(context.globalCompositeOperation, "source-over");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /混合模式 hue/);
+});
+
+test("背景模糊在画布上只给警告，不假装画出来了", () => {
+  const context = fakeContext();
+  const warnings: string[] = [];
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([sceneNode({ fill: "#000000", backgroundBlur: 6 })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), onWarning: message => warnings.push(message) });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /背景模糊/);
+});
+
+test("椭圆渐变用离屏画布贴回外接矩形，并按形状裁剪", () => {
+  const context = fakeContext();
+  const image = { width: 512, height: 512 } as CanvasImageSource;
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([
+    sceneNode({ paints: [{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.25, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }] }),
+  ], {
+    width: 120, height: 40, zoom: 1, devicePixelRatio: 1, images: new Map(),
+    gradientSurface: () => ({ image }),
+  });
+  const draws = context.calls.filter(call => call.name === "drawImage");
+  assert.equal(draws.length, 1);
+  // 盒子 100×50 位于 (10,20)：中心 (60,45)，半轴 (50,12.5) → 外接矩形 (10,32.5,100,25)。
+  assert.deepEqual(draws[0]?.args.slice(1), [10, 32.5, 100, 25]);
+  // 渐变必须被裁到形状里，否则会糊到形状外面。
+  assert.ok(context.calls.some(call => call.name === "clip"));
+});
+
+test("椭圆渐变缺少离屏画布时退化成圆形渐变并给出警告", () => {
+  const context = fakeContext();
+  const warnings: string[] = [];
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([
+    sceneNode({ paints: [{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.25, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }] }),
+  ], { width: 120, height: 40, zoom: 1, devicePixelRatio: 1, images: new Map(), onWarning: message => warnings.push(message) });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /椭圆渐变/);
+  // 退化路径至少要画出一个圆形径向渐变，而不是什么都不画。
+  assert.ok(context.calls.some(call => call.name === "createRadialGradient"));
 });

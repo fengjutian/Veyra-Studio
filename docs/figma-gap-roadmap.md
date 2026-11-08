@@ -208,7 +208,7 @@ Penpot 也是这样（`:blend-mode` 与 `:opacity` / `:shadow` / `:blur` 同级�
   `color-dodge` / `color-burn` / `hard-light` / `soft-light` /
   `difference` / `exclusion` / `hue` / `saturation` / `color` / `luminosity`。
 - **三处渲染**：
-  - 画布：Canvas 2D 的 `globalCompositeOperation`（覆盖其中 15 种，
+  - 画布：Canvas 2D 的 `globalCompositeOperation`（其中 12 种能对上，
     `normal` 是缺省行为）；
   - HTML：`mix-blend-mode`；
   - SVG：`mix-blend-mode`（写在节点样式上）。
@@ -259,7 +259,87 @@ CSS 的对应物是 `backdrop-filter: blur(Npx)`。
 
 ### 4.5 落地结果（2026-11-08）
 
-（待本轮实现完成后填写）
+三项能力全部落地。**schema 版本不变**（`blendMode` / `backgroundBlur` /
+`elliptical` 都是可选字段，旧文档用默认值即可兼容，不需要迁移）。
+
+#### 混合模式
+
+- **数据模型**：`AppearanceSpec.blendMode?: BlendMode`，16 个取值与 CSS
+  `mix-blend-mode` 完全一致。
+- **映射表**：`packages/design-schema/src/blend.ts`——
+  `BLEND_MODES` / `canvasCompositeFor` / `isBlendModeSupportedOnCanvas` /
+  `cssBlendMode`。Canvas 的合成操作名与 CSS 不同，所以有一张显式的翻译表。
+- **画布**：12 种能对上 `globalCompositeOperation`；`hue` / `saturation` /
+  `color` / `luminosity` 在 Canvas 里没有等价物 → **退回 normal 并给出警告**，
+  不画「看起来差不多但其实错」的结果。
+- **HTML / SVG**：名字与 CSS 相同，原样输出即可，不需要翻译。
+- **隔离**：页面（HTML）与 SVG 根元素在**确实存在混合模式时**加
+  `isolation:isolate`，让混合只发生在设计内部，而不是跟浏览器窗口底色混在一起。
+  没有混合模式的旧文档导出产物**逐字不变**（这条是条件写入，不是无条件加）。
+
+#### 椭圆渐变
+
+- **数据模型**：`Paint` 新增 `{ type: "elliptical"; cx; cy; rx; ry; stops }`。
+  `rx` / `ry` 分别是半轴占盒子**宽 / 高**的比例——与径向渐变的「半径占长边」
+  基准不同（径向只有一个半径，只能挑一个基准；椭圆有两个轴，各自对各自的边
+  才说得清）。
+- **几何**：`paint.ts` 的 `ellipticalGeometry()`，画布 / SVG / HTML 三处共用，
+  导出与画布不会各算一套。
+- **画布**：Canvas 的 `createRadialGradient` 只能画正圆。做法是**离屏合成**：
+  在离屏画布上画一个正圆渐变，再按椭圆的外接矩形贴回主画布并按形状裁剪——
+  圆形被非等比缩放后正是椭圆，而被填充的形状一点没变形。离屏画布按色标缓存，
+  同一渐变不重复绘制。
+  *没有离屏画布时*（老浏览器 / 测试环境）退化成圆形渐变并给出警告。
+- **SVG**：`<radialGradient r="1" gradientTransform="matrix(rx 0 0 ry cx cy)">`
+  ——单位圆 + 缩放矩阵，SVG 没有原生的椭圆径向渐变。
+- **HTML**：`radial-gradient(ellipse <rx>px <ry>px at <cx>% <cy>%, ...)`。
+
+#### 背景模糊
+
+- **数据模型**：`AppearanceSpec.backgroundBlur?: number`（px）。
+- **HTML**：`backdrop-filter:blur(Npx)`，语义与 Figma 一致（节点自身不模糊）。
+- **SVG**：SVG 没有 `backdrop-filter`。做法是把**同层里排在它前面的兄弟**
+  复制一份，按节点形状裁剪后用 `<feGaussianBlur stdDeviation="N/2">` 模糊，
+  压在节点下面。
+  *已知近似*：副本里不含祖先节点自己的背景，所以支持矩阵里 SVG 一栏记为
+  `approximated` 而不是 `exact`。
+- **画布**：Canvas 2D 没有等价物，要做需要离屏合成，**本轮不实现**——
+  只给出警告。属性面板里也写明了「导出到 HTML/SVG 才生效」，
+  免得用户在画布上看不出效果以为功能坏了。
+
+#### 其他
+
+- **属性面板**：新增「混合模式」下拉（16 项）、「背景模糊」数值框、
+  椭圆渐变的四个参数（中心 X/Y、横半轴、纵半轴），以及实色层的
+  「改为椭圆渐变」入口。
+- **支持矩阵**：新增 `blend-mode` / `gradient-elliptical` / `background-blur`
+  三行，等级据实标注（不夸大）。
+- **测试**：`design-schema/test/blend.test.ts`（10 条）、
+  `design-schema/test/schema.test.ts`（+2）、
+  `design-export/test/appearance.test.ts`（10 条）、
+  `studio-web/test/canvas-renderer.test.ts`（+5）、
+  `studio-web/test/renderer-scene.test.ts`（+1）。
+
+#### 实现中避开的四个坑
+
+1. **画布椭圆渐变不能靠 `ctx.scale` 实现**：变换矩阵会同时作用到路径，
+   圆角矩形的圆角会被拉成椭圆弧——形状本身变形了。离屏贴图绕开了这一点。
+2. **SVG 椭圆渐变不能沿用径向渐变的写法**：直接写 `cx/cy/r` 画出来的还是正圆，
+   必须用「单位圆 + `gradientTransform`」。
+3. **SVG 背景模糊不能直接给节点加 `<feGaussianBlur>`**：那样模糊的是节点自己，
+   不是它后面的内容——语义正好相反。
+4. **`design-schema` 不引 DOM lib**：Canvas 的 `GlobalCompositeOperation`
+   类型在包里不可用，于是包内自己声明了一份同名子集
+   （`CanvasCompositeOperation`），赋值给 `context.globalCompositeOperation`
+   时类型依然兼容。
+
+#### 尚未实现
+
+- 画布侧的背景模糊与完整混合模式（都要离屏合成，列入 P3）。
+- 混合模式在画布上的**分组语义**：Figma 里父层的混合模式作用于整个图层组，
+  Canvas 没有分组合成，本项目是「父层的合成操作被子层继承」的近似。
+- 椭圆渐变的旋转角（Figma 支持旋转渐变，本项目只支持居中不旋转）。
+
 
 ## 5. 后续排期
 
@@ -271,7 +351,7 @@ CSS 的对应物是 `backdrop-filter: blur(Npx)`。
 | ~~P1~~ | ~~富文本~~ | 段内样式已完成，剩段内字号与段落样式 | — |
 | P1 | 字体管理 | 已完成（剩子集化与导出内联） | — |
 | P1 | 布尔组 | 已完成（剩曲线级布尔） | — |
-| P2 | 混合模式 / 椭圆渐变 / 背景模糊 | **本轮** | — |
+| P2 | 混合模式 / 椭圆渐变 / 背景模糊 | **已完成**（画布侧背景模糊与完整混合模式仍缺） | — |
 | P2 | 组件属性 | 组件变体 | 中 |
 | P2 | 智能锚点吸附 | 吸附基础版 | 中 |
 | P3 | 画布侧背景模糊（离屏合成） | 渲染管线 | 大 |

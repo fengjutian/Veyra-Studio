@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -26,7 +26,7 @@ export function exportPageToSvg(documentInput: DesignDocument, options: SvgExpor
   const title = escapeXml(options.title ?? `${document.meta.name} — ${page.name}`);
 
   const svg = [
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${num(options.viewport.width)}" height="${num(options.viewport.height)}" viewBox="0 0 ${num(options.viewport.width)} ${num(options.viewport.height)}" data-page-id="${escapeXml(page.id)}">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${num(options.viewport.width)}" height="${num(options.viewport.height)}" viewBox="0 0 ${num(options.viewport.width)} ${num(options.viewport.height)}" data-page-id="${escapeXml(page.id)}"${documentUsesBlendMode(document) ? ' style="isolation:isolate"' : ""}>`,
     `  <title>${title}</title>`,
     renderTokenStyles(document, tokenVariables),
     body ? indent(body, 2) : "",
@@ -258,6 +258,11 @@ function renderSiblingList(
     if (childNode.mask) { masks.push(childNode); continue; }
     const rendered = renderNode(document, childId, boxes, options, tokenVariables, diagnostics, keep, state);
     if (!rendered) continue;
+    // 背景模糊：SVG 没有 backdrop-filter，只能用「背景副本 + 按节点形状裁剪 + 模糊」近似。
+    // 副本压在节点下面，所以节点自身不会被模糊——与 Figma 的语义一致。
+    if (childNode.appearance.backgroundBlur && parts.length) {
+      parts.push(backgroundBlurLayer(document, childNode, boxes, options, state, parts.join("\n")));
+    }
     if (!masks.length) { parts.push(rendered); continue; }
     // 多层蒙版：每层包一个 <g>，嵌套即叠加。
     let wrapped = rendered;
@@ -304,8 +309,33 @@ function maskShape(document: DesignDocument, mask: DesignNode, box: ComputedBox)
   return `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""} />`;
 }
 
-/** 把页面绝对坐标平移到导出视口的坐标系。 */
-function shiftBox(box: ComputedBox, origin?: { x: number; y: number }): ComputedBox {
+/**
+ * 背景模糊层：把背景副本按节点形状裁剪后模糊。
+ *
+ * `feGaussianBlur` 的 `stdDeviation` 与 CSS 模糊半径不是同一量纲（CSS 半径 ≈ 2 × stdDeviation），
+ * 所以这里除以 2，和图层模糊用同一套换算。
+ *
+ * 已知近似：副本只包含**同一层里排在它前面的兄弟**，不包含祖先节点自己的背景。
+ */
+function backgroundBlurLayer(
+  document: DesignDocument,
+  node: DesignNode,
+  boxes: Record<string, ComputedBox>,
+  options: SvgExportOptions,
+  state: MaskState,
+  backdrop: string,
+): string {
+  const serial = state.nextId++;
+  const raw = boxes[node.id] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
+  const box = shiftBox(raw, options.origin);
+  const clipId = `bgblur-clip-${serial}`;
+  const filterId = `bgblur-${serial}`;
+  state.defs.push(`<clipPath id="${clipId}" clipPathUnits="userSpaceOnUse">${maskShape(document, node, box)}</clipPath>`);
+  state.defs.push(`<filter id="${filterId}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${num((node.appearance.backgroundBlur ?? 0) / 2)}" /></filter>`);
+  return `<g clip-path="url(#${clipId})" filter="url(#${filterId})">\n${indent(backdrop, 2)}\n</g>`;
+}
+
+/** 把页面绝对坐标平移到导出视口的坐标系。 */function shiftBox(box: ComputedBox, origin?: { x: number; y: number }): ComputedBox {
   if (!origin) return box;
   return { ...box, x: box.x - origin.x, y: box.y - origin.y };
 }
@@ -314,6 +344,9 @@ function nodeStyle(document: DesignDocument, node: DesignNode, tokenVariables: R
   const declarations: string[] = [];
   declarations.push(`opacity:${num(node.appearance.opacity)}`);
   declarations.push(`fill:${fillValue}`);
+  // 混合模式：SVG 里没有 presentation attribute，但 CSS 的 mix-blend-mode 一样生效。
+  const blend = cssBlendMode(node.appearance.blendMode);
+  if (blend) declarations.push(`mix-blend-mode:${blend}`);
   if (resolveStroke(document, node) || node.bindings?.stroke) {
     declarations.push(`stroke:${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
     declarations.push(`stroke-width:${num(node.appearance.strokeWidth ?? 1)}`);
@@ -460,9 +493,19 @@ function paintValue(document: DesignDocument, node: DesignNode, paint: Paint, bo
   if (paint.type === "linear") {
     const line = gradientLine(box, paint.angle);
     state.defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
-  } else {
+  } else if (paint.type === "radial") {
     const radial = radialGeometry(box, paint);
     state.defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${num(radial.cx)}" cy="${num(radial.cy)}" r="${num(radial.r)}">${stops}</radialGradient>`);
+  } else {
+    // 椭圆渐变：SVG 没有原生的椭圆径向渐变，用「单位圆 + gradientTransform 缩放」表达。
+    // 矩阵把以原点为中心、半径 1 的圆映射成以 (cx,cy) 为心、半轴 (rx,ry) 的椭圆。
+    const ellipse = ellipticalGeometry(box, paint);
+    state.defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="matrix(${num(ellipse.rx)} 0 0 ${num(ellipse.ry)} ${num(ellipse.cx)} ${num(ellipse.cy)})">${stops}</radialGradient>`);
   }
   return `url(#${id})`;
+}
+
+/** 文档里有没有节点真的用了混合模式（`normal` 不算）。 */
+function documentUsesBlendMode(document: DesignDocument): boolean {
+  return Object.values(document.nodes).some(node => node.visible !== false && cssBlendMode(node.appearance.blendMode) !== undefined);
 }

@@ -32,6 +32,20 @@
   HTML 导出输出 CSS Grid，SVG/PNG 用布局引擎解出的绝对盒子。
   语义对齐 Penpot 的 grid-layout，见 `figma-gap-roadmap.md`；
   **尚未实现**：拖拽调整轨道、命名网格区域、自动轨道（`auto-fill` / `auto-fit`）；
+- **表现层能力**（混合模式 / 椭圆渐变 / 背景模糊）：三项都是**可选字段**，
+  文档格式版本不变（仍是 v4），旧文档无需迁移。
+  `AppearanceSpec.blendMode` 取值与 CSS `mix-blend-mode` 对齐（16 种）；
+  `Paint` 新增 `elliptical`（`cx`/`cy` 是归一化中心，`rx`/`ry` 分别是半轴占盒子
+  宽 / 高的比例）；`AppearanceSpec.backgroundBlur` 是背景模糊半径（px）。
+  Canvas / CSS / SVG 三处的名字映射集中在 `design-schema/src/blend.ts`：
+  CSS 与 SVG 直接用同一套名字，Canvas 需要一张到 `globalCompositeOperation` 的
+  翻译表——Canvas 的合成是 Porter-Duff 语义，`hue` / `saturation` / `color` /
+  `luminosity` 没有等价物，画布侧**退回 normal 并给出警告**，不画错；
+  椭圆渐变在画布上走**离屏合成**（正圆渐变 + 按外接矩形贴回 + 按形状裁剪），
+  SVG 用「单位圆 + `gradientTransform`」，HTML 用 `radial-gradient(ellipse …)`；
+  背景模糊在 HTML 是 `backdrop-filter`，SVG 是「背景副本 + 裁剪 + 模糊」
+  （近似，不含祖先背景），画布侧本轮**只警告不实现**（需要离屏合成）。
+  详见 `figma-gap-roadmap.md` §4；
 - `packages/design-runtime`：早期命令和运行时原型；`text.patch` 接受并校验上述文本样式字段；
 - `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
   连续重放已提交事务的崩溃恢复原型；仓库契约收敛为单一入口 `contract.ts`：

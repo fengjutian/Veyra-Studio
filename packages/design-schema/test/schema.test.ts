@@ -300,3 +300,51 @@ test("validates radial paints", () => {
   // 半径必须为正：0 画不出任何东西。
   assert.throws(() => validateDocument(make([{ type: "radial", cx: 0.5, cy: 0.5, r: 0, stops }])), /fills/);
 });
+test("validates elliptical paints", () => {
+  const make = (fills: unknown) => {
+    const document = createDocument("doc:1", "Demo");
+    document.nodes["node:1"] = {
+      id: "node:1",
+      type: "rectangle",
+      name: "Card",
+      parentId: "page:1",
+      childIds: [],
+      visible: true,
+      locked: false,
+      layout: defaultLayout(),
+      appearance: { ...defaultAppearance(), fills: fills as never },
+    };
+    document.pages["page:1"]!.childIds = ["node:1"];
+    return document;
+  };
+  const stops = [{ offset: 0, color: "#fff" }, { offset: 1, color: "#000" }];
+  assert.ok(validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.5, stops }])));
+  // 两个半轴都必须为正：0 或负数画不出椭圆。
+  assert.throws(() => validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0, ry: 0.5, stops }])), /fills/);
+  assert.throws(() => validateDocument(make([{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: -1, stops }])), /fills/);
+});
+test("validates blend mode and background blur", () => {
+  const make = (appearance: Record<string, unknown>) => {
+    const document = createDocument("doc:1", "Demo");
+    document.nodes["node:1"] = {
+      id: "node:1",
+      type: "rectangle",
+      name: "Card",
+      parentId: "page:1",
+      childIds: [],
+      visible: true,
+      locked: false,
+      layout: defaultLayout(),
+      appearance: { ...defaultAppearance(), ...appearance } as never,
+    };
+    document.pages["page:1"]!.childIds = ["node:1"];
+    return document;
+  };
+  assert.ok(validateDocument(make({ blendMode: "multiply" })));
+  assert.ok(validateDocument(make({ blendMode: "luminosity" })));
+  assert.ok(validateDocument(make({ backgroundBlur: 8 })));
+  // 不认识的混合模式名会被拒绝：拼错的值不该静默变成 normal。
+  assert.throws(() => validateDocument(make({ blendMode: "multiplyy" })), /appearance/);
+  // 模糊半径不能为负。
+  assert.throws(() => validateDocument(make({ backgroundBlur: -1 })), /appearance/);
+});

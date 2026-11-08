@@ -120,11 +120,14 @@ function round(value: number): number {
 /**
  * 把填充层压成一句给模型看的描述。
  *
- * 必须按 `type` 收窄：`Paint` 是 solid / linear / radial 三选一，早先这里只判断了
- * `solid` 就直接读 `angle`，径向渐变一进文档就让 dts 构建失败（TS2339）。
+ * 必须按 `type` 收窄：`Paint` 是 solid / linear / radial / elliptical 四选一，
+ * 早先这里只判断了 `solid` 就直接读 `angle`，径向渐变一进文档就让 dts 构建失败（TS2339）；
+ * 椭圆渐变加进来后，末尾那个「否则就是径向」的兜底也会读错字段（半径变成 NaN），
+ * 所以每种类型都单独收窄。
  */
 function describePaint(paint: Paint): string {
   if (paint.type === "solid") return paint.color;
   if (paint.type === "linear") return `线性渐变(${paint.angle}deg)`;
+  if (paint.type === "elliptical") return `椭圆渐变(中心 ${round(paint.cx * 100)}%,${round(paint.cy * 100)}%，半轴 ${round(paint.rx * 100)}%×${round(paint.ry * 100)}%)`;
   return `径向渐变(中心 ${round(paint.cx * 100)}%,${round(paint.cy * 100)}%，半径 ${round(paint.r * 100)}%)`;
 }

@@ -371,15 +371,24 @@ function addSize(declarations: string[], axis: "width" | "height", mode: "fixed"
 
 function buildCss(document: DesignDocument, options: HtmlExportOptions, tokenVariables: Record<string, string>): string {
   const variables = Object.entries(document.tokens).map(([name, token]) => `  ${tokenVariables[name]}: ${cssTokenValue(token.value)};`).join("\n");
+  // 页面里有混合模式时给页面加 isolation：混合只应该在页面内部发生，
+  // 不然会跟页面外的背景（浏览器窗口底色）混在一起。
+  // 没有混合模式的旧文档不加这一行，导出产物逐字不变。
+  const isolation = documentUsesBlendMode(document) ? " isolation:isolate;" : "";
   return [
     ":root {",
     variables,
     "}",
     "* { box-sizing: border-box; }",
     "html, body { margin: 0; min-height: 100%; }",
-    `.design-page { position: relative; overflow: hidden; width: ${px(options.viewport.width)}; height: ${px(options.viewport.height)}; }`,
+    `.design-page { position: relative; overflow: hidden; width: ${px(options.viewport.width)}; height: ${px(options.viewport.height)};${isolation} }`,
     ".design-node { min-width: 0; min-height: 0; }",
   ].filter(Boolean).join("\n");
+}
+
+/** 文档里有没有节点真的用了混合模式（`normal` 不算）。 */
+function documentUsesBlendMode(document: DesignDocument): boolean {
+  return Object.values(document.nodes).some(node => node.visible !== false && cssBlendMode(node.appearance.blendMode) !== undefined);
 }
 
 function createTokenVariables(document: DesignDocument): Record<string, string> {

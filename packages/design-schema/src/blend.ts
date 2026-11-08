@@ -9,6 +9,26 @@
 
 import type { BlendMode } from "./types";
 
+/**
+ * Canvas 2D 的合成操作名。
+ *
+ * 本包不引入 DOM lib，所以这里自己声明一份与 `GlobalCompositeOperation` 同名的子集——
+ * 值与浏览器一致，赋值给 `context.globalCompositeOperation` 时类型也兼容。
+ */
+export type CanvasCompositeOperation =
+  | "source-over"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten"
+  | "color-dodge"
+  | "color-burn"
+  | "hard-light"
+  | "soft-light"
+  | "difference"
+  | "exclusion";
+
 /** 全部混合模式（与 CSS `mix-blend-mode` 一致）。 */
 export const BLEND_MODES: BlendMode[] = [
   "normal",
@@ -40,7 +60,7 @@ export const BLEND_MODES: BlendMode[] = [
  * `hard-light` / `soft-light` 在 Canvas 里的名字与 CSS **不同**，
  * 这里做一次翻译。
  */
-const CANVAS_COMPOSITE: Partial<Record<BlendMode, GlobalCompositeOperation>> = {
+const CANVAS_COMPOSITE: Partial<Record<BlendMode, CanvasCompositeOperation>> = {
   normal: "source-over",
   multiply: "multiply",
   screen: "screen",
@@ -62,7 +82,7 @@ const CANVAS_COMPOSITE: Partial<Record<BlendMode, GlobalCompositeOperation>> = {
  * 不能随便挑一个近似的：画出一个「看起来差不多但其实错」的结果，
  * 比明确地说「这个模式画布上不支持」糟糕得多。
  */
-export function canvasCompositeFor(blendMode: BlendMode | undefined): GlobalCompositeOperation | undefined {
+export function canvasCompositeFor(blendMode: BlendMode | undefined): CanvasCompositeOperation | undefined {
   if (!blendMode || blendMode === "normal") return undefined;
   return CANVAS_COMPOSITE[blendMode];
 }

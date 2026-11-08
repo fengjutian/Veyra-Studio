@@ -120,3 +120,16 @@ test("a radius token still resolves to a uniform radius", () => {
   // 四角相同不写 radii，导出与升级前逐字一致。
   assert.equal(scene?.radii, undefined);
 });
+
+test("carries blend mode and background blur into the scene", () => {
+  const document = documentWith([
+    node("d", "page:1", "rectangle", { appearance: { ...defaultAppearance(), blendMode: "multiply", backgroundBlur: 6 } }),
+    node("e", "page:1", "rectangle", { appearance: { ...defaultAppearance(), blendMode: "normal" } }),
+  ]);
+  const [blended, normal] = buildScene(document, "page:1", {});
+  assert.equal(blended?.blendMode, "multiply");
+  assert.equal(blended?.backgroundBlur, 6);
+  // normal 是缺省行为，不往场景里塞。
+  assert.equal(normal?.blendMode, undefined);
+  assert.equal(normal?.backgroundBlur, undefined);
+});

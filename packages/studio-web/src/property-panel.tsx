@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, applyTextRunStyle, runStyleAt, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, applyTextRunStyle, runStyleAt, type BlendMode, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 import type { BooleanOperation } from "./boolean";
 
@@ -216,10 +216,10 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
               type="button"
               className={`paint-layer${index === activeIndex ? " active" : ""}`}
               disabled={disabled}
-              title={layer.type === "linear" ? "线性渐变层" : "实色层"}
+              title={paintLayerTitle(layer.type)}
               onClick={() => setPaintIndex(index)}
             >
-              {index + 1}{layer.type === "linear" ? "渐变" : ""}
+              {index + 1}{layer.type === "solid" ? "" : "渐变"}
             </button>
           ))}
           <button type="button" className="paint-layer" disabled={disabled} title="添加填充层" onClick={addPaint}>＋</button>
@@ -247,6 +247,19 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
               改回纯色
             </button>
           </>
+        ) : paint?.type === "elliptical" ? (
+          <>
+            <NumberField label="中心X%" value={Math.round(paint.cx * 100)} disabled={disabled} onCommit={value => patchPaint({ ...paint, cx: value / 100 })} />
+            <NumberField label="中心Y%" value={Math.round(paint.cy * 100)} disabled={disabled} onCommit={value => patchPaint({ ...paint, cy: value / 100 })} />
+            <NumberField label="横半轴%" value={Math.round(paint.rx * 100)} min={1} disabled={disabled} onCommit={value => patchPaint({ ...paint, rx: Math.max(value, 1) / 100 })} />
+            <NumberField label="纵半轴%" value={Math.round(paint.ry * 100)} min={1} disabled={disabled} onCommit={value => patchPaint({ ...paint, ry: Math.max(value, 1) / 100 })} />
+            <TextField label="起始色" value={paint.stops[0]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, 0, color))} />
+            <TextField label="结束色" value={paint.stops[paint.stops.length - 1]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, paint.stops.length - 1, color))} />
+            <p className="field-hint">横/纵半轴是占盒子宽/高的比例：50% / 50% 时椭圆正好内接于盒子。</p>
+            <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint({ type: "solid", color: paint.stops[0]?.color ?? "#8b5cf6" })}>
+              改回纯色
+            </button>
+          </>
         ) : (
           <>
             <TextField label="填充" value={paint?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(color ? { type: "solid", color } : undefined)} />
@@ -257,6 +270,9 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
                 </button>
                 <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint(toRadial(paint.color))}>
                   改为径向渐变
+                </button>
+                <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint(toElliptical(paint.color))}>
+                  改为椭圆渐变
                 </button>
               </>
             )}
@@ -290,6 +306,15 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
           </>
         )}
         <NumberField label="透明度" value={opacityToPercent(node.appearance.opacity)} disabled={disabled} onCommit={percent => onPatch({ appearance: { ...node.appearance, opacity: percentToOpacity(percent) } })} />
+        <SelectField
+          label="混合模式"
+          value={node.appearance.blendMode ?? "normal"}
+          disabled={disabled}
+          options={blendModeOptions}
+          onChange={value => onPatch({ appearance: { ...node.appearance, blendMode: value as BlendMode } })}
+        />
+        <NumberField label="背景模糊" value={node.appearance.backgroundBlur ?? 0} min={0} disabled={disabled} onCommit={value => onPatch({ appearance: { ...node.appearance, backgroundBlur: value > 0 ? value : undefined } })} />
+        <p className="field-hint">背景模糊只影响节点后面的内容；画布暂时画不出来，导出到 HTML/SVG 才生效。</p>
         {MASKABLE_TYPES.has(node.type) && (
           <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ mask: node.mask ? undefined : true })}>
             {node.mask ? "取消蒙版" : "用作蒙版（裁剪上方兄弟层）"}
@@ -423,6 +448,39 @@ const imageFitOptions = [
   { value: "contain", label: "适应" },
   { value: "fill", label: "拉伸" },
 ];
+
+/**
+ * 混合模式选项：取值与 CSS `mix-blend-mode` 一致，标签用通行中文名。
+ *
+ * 画布只支持其中 12 种（Canvas 的 `globalCompositeOperation` 没有颜色类混合），
+ * 其余 4 种在画布上会退回 normal 并给出警告；导出到 HTML/SVG 则是准确的。
+ */
+const blendModeOptions = [
+  { value: "normal", label: "正常" },
+  { value: "multiply", label: "正片叠底" },
+  { value: "screen", label: "滤色" },
+  { value: "overlay", label: "叠加" },
+  { value: "darken", label: "变暗" },
+  { value: "lighten", label: "变亮" },
+  { value: "color-dodge", label: "颜色减淡" },
+  { value: "color-burn", label: "颜色加深" },
+  { value: "hard-light", label: "强光" },
+  { value: "soft-light", label: "柔光" },
+  { value: "difference", label: "差异" },
+  { value: "exclusion", label: "排除" },
+  { value: "hue", label: "色相" },
+  { value: "saturation", label: "饱和度" },
+  { value: "color", label: "颜色" },
+  { value: "luminosity", label: "明度" },
+];
+
+/** 填充层的按钮提示：按类型说清楚是哪一层。 */
+function paintLayerTitle(type: Paint["type"]): string {
+  if (type === "linear") return "线性渐变层";
+  if (type === "radial") return "径向渐变层";
+  if (type === "elliptical") return "椭圆渐变层";
+  return "实色层";
+}
 
 /** 约束选项：水平方向贴左/贴右，垂直方向贴上/贴下，其余三个轴通用。 */
 const horizontalConstraintOptions = [
@@ -608,6 +666,37 @@ export function Segmented({
 }
 
 /**
+ * A single-choice dropdown.
+ *
+ * Used for long option lists (blend modes) where a segmented control would wrap
+ * into an unreadable wall of buttons.
+ */
+export function SelectField({
+  label,
+  value,
+  options,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  disabled?: boolean;
+  onChange(value: string): void;
+}) {
+  return (
+    <label className="field field-inline">
+      <span className="field-label">{label}</span>
+      <select disabled={disabled} value={value} onChange={event => onChange(event.target.value)}>
+        {options.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/**
  * A numeric input.
  *
  * `mixed` marks a field whose value differs across a selection: the input stays
@@ -729,12 +818,17 @@ function toGradient(color: string): Paint {
   return { type: "linear", angle: 180, stops: [{ offset: 0, color }, { offset: 1, color: "#ffffff" }] };
 }
 
-/** 改一个色标，其余保持不变（线性与径向共用）。 */
-function withStop(paint: Extract<Paint, { type: "linear" | "radial" }>, index: number, color: string): Paint {
-  return { ...paint, stops: paint.stops.map((stop, position) => position === index ? { ...stop, color } : stop) };
-}
-
 /** 纯色 → 径向渐变：默认从中心向外，半径盖住盒子长边的一半。 */
 function toRadial(color: string): Paint {
   return { type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops: [{ offset: 0, color }, { offset: 1, color: "#ffffff" }] };
+}
+
+/** 纯色 → 椭圆渐变：默认居中、两个半轴都内接于盒子。 */
+function toElliptical(color: string): Paint {
+  return { type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.5, stops: [{ offset: 0, color }, { offset: 1, color: "#ffffff" }] };
+}
+
+/** 改一个色标，其余保持不变（线性、径向与椭圆共用）。 */
+function withStop(paint: Extract<Paint, { type: "linear" | "radial" | "elliptical" }>, index: number, color: string): Paint {
+  return { ...paint, stops: paint.stops.map((stop, position) => position === index ? { ...stop, color } : stop) };
 }

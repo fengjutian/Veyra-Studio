@@ -112,7 +112,7 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): SceneRenderer
  * 两个都没有时返回 undefined——调用方会退化成圆形渐变并给出警告，而不是画错。
  */
 function defaultGradientSurfaceFactory(paint: Extract<Paint, { type: "elliptical" }>, size: number): GradientSurface | undefined {
-  const scope = globalThis as {
+  const scope = globalThis as unknown as {
     OffscreenCanvas?: new (width: number, height: number) => { width: number; height: number; getContext(type: "2d"): CanvasRenderingContext2D | null };
     document?: { createElement(tag: string): HTMLCanvasElement };
   };
