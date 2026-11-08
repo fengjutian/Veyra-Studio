@@ -1,4 +1,4 @@
-import { createCachedTextMeasurer, createHostTextMeasurer, resolveFontFamily, type CachedTextMeasurer, type TextMeasurementRequest, type TextMeasurer } from "@ufira/design-layout";
+import { createCachedTextMeasurer, createHostTextMeasurer, measureRichText, resolveFontFamily, type CachedTextMeasurer, type RichTextStyle, type TextMeasurementRequest, type TextMeasurer } from "@ufira/design-layout";
 
 /**
  * Measures text with a real font engine.
@@ -50,8 +50,13 @@ function measure(
  * predictable width instead of measuring whichever face the browser picks.
  */
 function fontShorthand(request: TextMeasurementRequest): string {
-  const style = request.fontStyle === "italic" ? "italic " : "";
-  return `${style}${request.fontWeight} ${request.fontSize}px ${resolveFontFamily(request.fontFamily)}`;
+  return fontFor(request, request.fontWeight, request.fontStyle);
+}
+
+/** 指定字重/字形的 CSS font 简写；段内样式切换字体时逐段换。 */
+function fontFor(request: TextMeasurementRequest, fontWeight: number, fontStyle: string): string {
+  const style = fontStyle === "italic" ? "italic " : "";
+  return `${style}${fontWeight} ${request.fontSize}px ${resolveFontFamily(request.fontFamily)}`;
 }
 
 /**
@@ -69,9 +74,27 @@ function measureWithCanvas(
   context: CanvasRenderingContext2D,
   request: TextMeasurementRequest,
 ): { width: number; height: number } {
-  context.font = fontShorthand(request);
   context.textBaseline = "alphabetic";
 
+  if (request.runs?.length) {
+    // 富文本：逐段换字体量宽，换行也必须走同一套（否则 hug 高度和画布行数会打架）。
+    const measured = measureRichText({
+      text: request.text,
+      runs: request.runs,
+      fontWeight: request.fontWeight,
+      fontStyle: request.fontStyle,
+      lineHeight: request.lineHeight,
+      letterSpacing: request.letterSpacing,
+      availableWidth: request.availableWidth,
+      measure: (value: string, style: RichTextStyle) => {
+        context.font = fontFor(request, style.fontWeight, style.fontStyle);
+        return context.measureText(value).width;
+      },
+    });
+    return { width: measured.width, height: measured.height };
+  }
+
+  context.font = fontShorthand(request);
   const paragraphs = request.text.split("\n");
   let longest = 0;
   const lineWidths: number[] = [];

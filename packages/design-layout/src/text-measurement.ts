@@ -1,5 +1,6 @@
 import { TEXT_DEFAULTS, type TextNode } from "@ufira/design-schema";
 import type { Size, TextMeasurer, TextMeasurementRequest } from "./types";
+import { measureRichText, type RichTextStyle } from "./rich-text-layout";
 
 /**
  * Average advance width ratio per character, expressed as a fraction of font size.
@@ -101,6 +102,21 @@ export function createEstimateTextMeasurer(): TextMeasurer {
     measure(node: TextNode, availableWidth?: number): Size {
       const letterSpacing = node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
       const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+      const fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
+      if (node.runs?.length) {
+        // 富文本必须按区间量宽：一段加粗文字比常规文字更宽，忽略它 hug 高度就会算错。
+        const measured = measureRichText({
+          text: node.text,
+          runs: node.runs,
+          fontWeight,
+          fontStyle,
+          lineHeight: node.lineHeight,
+          letterSpacing,
+          availableWidth,
+          measure: (value, style) => estimateWidth(value, node.fontSize, style),
+        });
+        return { width: measured.width, height: measured.height };
+      }
       const scale = fontAdvanceScale(fontWeight);
       const lines = wrapTextLines(node.text, node.fontSize, availableWidth, letterSpacing, fontWeight);
       const longest = lines.reduce((max, line) => {
@@ -111,6 +127,12 @@ export function createEstimateTextMeasurer(): TextMeasurer {
       return { width, height: Math.max(1, lines.length) * node.lineHeight };
     },
   };
+}
+
+/** 估算器量一段同款样式的文字（不含字距，字距由 rich-text-layout 统一补）。 */
+function estimateWidth(text: string, fontSize: number, style: RichTextStyle): number {
+  const scale = fontAdvanceScale(style.fontWeight);
+  return Array.from(text).reduce((sum, character) => sum + advanceRatio(character.codePointAt(0) ?? 0) * fontSize * scale, 0);
 }
 
 /**
@@ -133,6 +155,7 @@ export function createHostTextMeasurer(
         fontWeight: node.fontWeight ?? TEXT_DEFAULTS.fontWeight,
         fontStyle: node.fontStyle ?? TEXT_DEFAULTS.fontStyle,
         letterSpacing: node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing,
+        ...(node.runs?.length ? { runs: node.runs } : {}),
         availableWidth,
       });
       return {

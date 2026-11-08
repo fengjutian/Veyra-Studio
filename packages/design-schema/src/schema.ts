@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isValidVectorPath } from "./geometry";
+import { validateTextRuns } from "./rich-text";
 
 const nonNegative = z.number().finite().nonnegative();
 const id = z.string().min(1);
@@ -189,6 +190,18 @@ const ellipseNodeSchema = z.object({ ...genericNodeShape, type: z.literal("ellip
 const vectorNodeSchema = z.object({ ...genericNodeShape, type: z.literal("vector"), geometry: vectorGeometrySchema.optional() });
 const componentNodeSchema = z.object({ ...genericNodeShape, type: z.literal("component") });
 
+const textRunSchema = z.object({
+  from: z.number().int().nonnegative(),
+  to: z.number().int().positive(),
+  style: z.object({
+    fontWeight: z.number().int().min(100).max(900).optional(),
+    fontStyle: z.enum(["normal", "italic"]).optional(),
+    color: z.string().min(1).optional(),
+  }).refine(style => style.fontWeight !== undefined || style.fontStyle !== undefined || style.color !== undefined, {
+    message: "Text run style must set at least one field",
+  }),
+});
+
 const textNodeSchema = z.object({
   ...baseNodeShape,
   type: z.literal("text"),
@@ -200,6 +213,12 @@ const textNodeSchema = z.object({
   fontStyle: z.enum(["normal", "italic"]).optional(),
   textAlign: z.enum(["left", "center", "right"]).optional(),
   letterSpacing: z.number().finite().optional(),
+  runs: z.array(textRunSchema).optional(),
+}).superRefine((node, context) => {
+  // 区间与文本的对应关系（越界、重叠、切断代理对）无法用字段级 schema 表达，
+  // 交给唯一的校验函数，避免 schema 和命令层各写一套判定。
+  const error = validateTextRuns(node.text, node.runs);
+  if (error) context.addIssue({ code: "custom", message: error, path: ["runs"] });
 });
 
 const imageNodeSchema = z.object({

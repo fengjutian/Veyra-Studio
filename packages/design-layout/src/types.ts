@@ -1,4 +1,4 @@
-import type { FontStyle, NodeId, TextNode } from "@ufira/design-schema";
+import type { FontStyle, NodeId, TextNode, TextRun } from "@ufira/design-schema";
 
 export interface Size {
   width: number;
@@ -18,6 +18,8 @@ export interface TextMeasurementRequest {
   fontWeight: number;
   fontStyle: FontStyle;
   letterSpacing: number;
+  /** 段内样式覆盖；宿主测量器要按区间换字体量宽，否则 hug 高度会算错。 */
+  runs?: readonly TextRun[];
   availableWidth?: number;
 }
 

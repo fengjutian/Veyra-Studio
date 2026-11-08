@@ -6,6 +6,7 @@ export type AssetId = string;
 
 import type { VectorGeometry } from "./geometry";
 import type { Interaction } from "./interactions";
+import type { TextRun } from "./rich-text";
 
 export interface DocumentMeta {
   name: string;
@@ -252,10 +253,17 @@ export interface TextNode extends BaseNode {
   textAlign?: TextAlign;
   /** 字间距，单位 px，可为负。缺省等同于 `TEXT_DEFAULTS.letterSpacing`。 */
   letterSpacing?: number;
+  /**
+   * 段内样式覆盖（富文本）：一段文字里局部加粗/斜体/变色。
+   *
+   * 用「偏移 + 样式」的区间表示，而不是把文本拆成数组：`text` 仍是唯一的内容真相，
+   * 纯文本编辑器、AI 计划、搜索和导出拿 `text` 就能工作，不必理解富文本结构。
+   */
+  runs?: TextRun[];
 }
 
 /** 可以一次改动掉的文本字段。 */
-export type TextPatch = Partial<Pick<TextNode, "text" | "fontFamily" | "fontSize" | "lineHeight" | "fontWeight" | "fontStyle" | "textAlign" | "letterSpacing">>;
+export type TextPatch = Partial<Pick<TextNode, "text" | "fontFamily" | "fontSize" | "lineHeight" | "fontWeight" | "fontStyle" | "textAlign" | "letterSpacing" | "runs">>;
 
 export interface ImageNode extends BaseNode {
   type: "image";

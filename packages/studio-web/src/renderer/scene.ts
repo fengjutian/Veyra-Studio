@@ -11,6 +11,7 @@ import {
   type Paint,
   type PathCommand,
   type ShadowSpec,
+  type TextRun,
 } from "@ufira/design-schema";
 
 /**
@@ -40,6 +41,8 @@ export interface SceneText {
   align: "left" | "center" | "right";
   letterSpacing: number;
   color: string;
+  /** 段内样式覆盖；为空表示整段用节点级样式。 */
+  runs?: TextRun[];
 }
 
 export interface SceneImage {
@@ -152,6 +155,7 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
       align: node.textAlign === "center" || node.textAlign === "right" ? node.textAlign : "left",
       letterSpacing: node.letterSpacing ?? 0,
       color: fill ?? "#111111",
+      ...(node.runs?.length ? { runs: node.runs } : {}),
     };
   }
   if (node.type === "image" && node.assetId) {

@@ -20,6 +20,8 @@ export function textMeasurementKey(node: TextNode, availableWidth?: number): str
     node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing,
     availableWidth ?? "",
     node.text,
+    // 段内样式必须进键：同一段文字改成局部加粗后宽度不同，共用缓存会拿到旧尺寸。
+    node.runs?.length ? JSON.stringify(node.runs) : "",
   ].join("\u0000");
 }
 
