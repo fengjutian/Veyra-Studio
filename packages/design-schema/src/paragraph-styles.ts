@@ -14,6 +14,28 @@ export interface ParagraphStyle {
   listType?: ListType;
   /** 缩进级别，0–4（对齐 Figma 的 5 级上限）。只在列表段落上有意义。 */
   indent?: number;
+  /**
+   * 段落缩进（px）——Figma 的 Paragraph indent。
+   *
+   * 与 `indent`（列表级别）的区别：级别缩进是「列表结构」，
+   * 段落缩进是「这一段整体往右推多少像素」，两者叠加。
+   *
+   * 只对**左对齐**生效（与 Figma 一致）：居中/右对齐时布局会把它扣掉。
+   */
+  paragraphIndent?: number;
+  /**
+   * 悬挂列表（hanging list）。
+   *
+   * 普通列表项的标记占住正文左侧的宽度；悬挂列表的标记**不占宽度**，
+   * 画在文本框左边界之外——于是文字从框的左边缘开始，标记悬在外面。
+   */
+  hanging?: boolean;
+  /**
+   * 列表间距（px）：这一段**之后**额外留出的垂直空间。
+   *
+   * 用来把一组列表项拉开距离（目录、导航项的呼吸感）。
+   */
+  listSpacing?: number;
 }
 
 /**
@@ -42,11 +64,19 @@ export const MAX_LIST_INDENT = 4;
 export const LIST_TYPES = ["bullet", "ordered"] as const;
 
 export function isEmptyParagraphStyle(style: ParagraphStyle): boolean {
-  return style.listType === undefined && style.indent === undefined;
+  return style.listType === undefined
+    && style.indent === undefined
+    && style.paragraphIndent === undefined
+    && style.hanging === undefined
+    && style.listSpacing === undefined;
 }
 
 export function sameParagraphStyle(a: ParagraphStyle, b: ParagraphStyle): boolean {
-  return a.listType === b.listType && a.indent === b.indent;
+  return a.listType === b.listType
+    && a.indent === b.indent
+    && a.paragraphIndent === b.paragraphIndent
+    && a.hanging === b.hanging
+    && a.listSpacing === b.listSpacing;
 }
 
 /** 一个段落在文本中的字符区间 `[start, end)`；尾随换行符不计入任何段落。 */
@@ -117,6 +147,18 @@ function validateParagraphStyle(style: ParagraphStyle, index: number): string | 
   if (style.indent !== undefined
     && (!Number.isInteger(style.indent) || style.indent < 0 || style.indent > MAX_LIST_INDENT)) {
     return `paragraphStyles.${index}.style.indent must be an integer between 0 and ${MAX_LIST_INDENT}`;
+  }
+  if (style.paragraphIndent !== undefined
+    && (!Number.isFinite(style.paragraphIndent) || style.paragraphIndent < 0)) {
+    return `paragraphStyles.${index}.style.paragraphIndent must be a non-negative number`;
+  }
+  if (style.listSpacing !== undefined
+    && (!Number.isFinite(style.listSpacing) || style.listSpacing < 0)) {
+    return `paragraphStyles.${index}.style.listSpacing must be a non-negative number`;
+  }
+  // 悬挂列表只对列表段落有意义：没有列表类型就没有标记可悬挂。
+  if (style.hanging !== undefined && style.listType === undefined) {
+    return `paragraphStyles.${index}.style.hanging requires a listType`;
   }
   // 缩进级别只对列表段落有意义：非列表段落上的缩进会被渲染器忽略，
   // 那属于「写了但没生效」的静默失败，直接在写入前拒绝。
