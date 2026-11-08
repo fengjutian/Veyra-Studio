@@ -21,7 +21,8 @@
     "@ufira/design-layout": "*",
     "@ufira/design-persistence": "*",
     "@ufira/design-runtime": "*",
-    "@ufira/design-schema": "*"
+    "@ufira/design-schema": "*",
+    "paper": "^0.17.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",

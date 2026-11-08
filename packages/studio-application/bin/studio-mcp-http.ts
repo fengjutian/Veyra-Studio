@@ -18,10 +18,14 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { FileSystemProjectRepository } from "@ufira/design-persistence/filesystem";
 import { StudioProject } from "../src/studio-project";
+import { installPaperBooleanEngine } from "../src/boolean-engine";
 import { createMcpServer } from "../src/mcp-server";
 import { createMcpHttpHandler } from "../src/mcp-http";
 import type { McpPolicy } from "../src/mcp";
 import type { DesignCommand } from "@ufira/design-runtime";
+
+// 曲线级布尔：导出 HTML / SVG 时布尔组保留贝塞尔曲线。
+installPaperBooleanEngine();
 
 const directory = process.env.STUDIO_PROJECT_DIR;
 const projectId = process.env.STUDIO_PROJECT_ID;

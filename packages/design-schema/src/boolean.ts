@@ -15,6 +15,34 @@ export type BooleanOperation = "union" | "subtract" | "intersect" | "exclude";
 
 export const BOOLEAN_OPERATIONS: readonly BooleanOperation[] = ["union", "subtract", "intersect", "exclude"];
 
+/**
+ * 曲线级布尔引擎。
+ *
+ * 引擎由**上层注入**（见 `studio-application/src/boolean-engine.ts`）：
+ * schema 层不依赖任何几何库，核心包保持零依赖；装了引擎就走曲线级布尔，
+ * 没装就退回多边形近似（结果仍然是正确的形状，只是曲线被离散成折线）。
+ */
+export interface BooleanEngine {
+  /**
+   * 把多个操作数的绝对坐标路径合成一条结果路径。
+   *
+   * 返回 `undefined` 表示算不出来——调用方据此退回多边形近似。
+   */
+  combine(operands: readonly PathCommand[][], operation: BooleanOperation): PathCommand[] | undefined;
+}
+
+let engine: BooleanEngine | undefined;
+
+/** 安装（或卸下）曲线级布尔引擎。 */
+export function setBooleanEngine(next: BooleanEngine | undefined): void {
+  engine = next;
+}
+
+/** 当前引擎；没装就是 `undefined`（退回多边形近似）。 */
+export function getBooleanEngine(): BooleanEngine | undefined {
+  return engine;
+}
+
 export interface Box {
   x: number;
   y: number;
@@ -44,6 +72,20 @@ export function computeBooleanPath(
     .filter((child): child is DesignNode => Boolean(child) && child!.visible !== false);
   if (operands.length < 2) return undefined;
 
+  // 优先走曲线级引擎（上层注入）：结果保留贝塞尔曲线，而不是折线近似。
+  const paths: PathCommand[][] = [];
+  for (const operand of operands) {
+    const path = operandPath(document, operand, boxes);
+    if (path?.length) paths.push(path);
+  }
+  if (paths.length < 2) return undefined;
+  const active = getBooleanEngine();
+  if (active) {
+    const result = active.combine(paths, node.operation);
+    if (result?.length) return result;
+  }
+
+  // 没装引擎（或引擎算不出来）：退回多边形近似。
   const polygons: ClipPolygon[] = [];
   for (const operand of operands) {
     const polygon = operandPolygon(document, operand, boxes);
@@ -58,6 +100,86 @@ export function computeBooleanPath(
     : clipXor(base!, ...rest);
   const commands = multiPolygonToCommands(result);
   return commands.length ? commands : undefined;
+}
+
+/**
+ * 操作数 → 绝对坐标路径（保留曲线）。
+ *
+ * 矩形是四条直线，椭圆是四段三次贝塞尔（不用折线近似——那正是要消灭的近似）。
+ */
+function operandPath(document: DesignDocument, node: DesignNode, boxes: Record<NodeId, Box | undefined>): PathCommand[] | undefined {
+  const box = boxes[node.id] ?? node.layout;
+  switch (node.type) {
+    case "rectangle":
+      return rectanglePath(box);
+    case "ellipse":
+      return ellipsePath(box);
+    case "vector": {
+      if (!node.geometry) return undefined;
+      return absolutePath(vectorPathCommands(node.geometry.d), box);
+    }
+    case "boolean":
+      return computeBooleanPath(document, node, boxes);
+    default:
+      return undefined;
+  }
+}
+
+/** 矩形的绝对坐标路径。 */
+function rectanglePath(box: Box): PathCommand[] {
+  return [
+    { command: "M", point: { x: box.x, y: box.y } },
+    { command: "L", point: { x: box.x + box.width, y: box.y } },
+    { command: "L", point: { x: box.x + box.width, y: box.y + box.height } },
+    { command: "L", point: { x: box.x, y: box.y + box.height } },
+    { command: "Z" },
+  ];
+}
+
+/** 用三次贝塞尔表示的圆弧系数（0.5522847498 ≈ 4/3·(√2−1)）。 */
+const ELLIPSE_KAPPA = 0.5522847498307936;
+
+/**
+ * 椭圆的绝对坐标路径：四段三次贝塞尔。
+ *
+ * 一段 32 边的折线近似在视觉上几乎一样，但布尔运算的输入是曲线时，
+ * 折线近似会把曲线边界变成锯齿——这正是本轮要消灭的问题。
+ */
+function ellipsePath(box: Box): PathCommand[] {
+  const radiusX = box.width / 2;
+  const radiusY = box.height / 2;
+  const centerX = box.x + radiusX;
+  const centerY = box.y + radiusY;
+  const control = radiusX * ELLIPSE_KAPPA;
+  const controlY = radiusY * ELLIPSE_KAPPA;
+  return [
+    { command: "M", point: { x: centerX + radiusX, y: centerY } },
+    {
+      command: "C",
+      control1: { x: centerX + radiusX, y: centerY + controlY },
+      control2: { x: centerX + control, y: centerY + radiusY },
+      point: { x: centerX, y: centerY + radiusY },
+    },
+    {
+      command: "C",
+      control1: { x: centerX - control, y: centerY + radiusY },
+      control2: { x: centerX - radiusX, y: centerY + controlY },
+      point: { x: centerX - radiusX, y: centerY },
+    },
+    {
+      command: "C",
+      control1: { x: centerX - radiusX, y: centerY - controlY },
+      control2: { x: centerX - control, y: centerY - radiusY },
+      point: { x: centerX, y: centerY - radiusY },
+    },
+    {
+      command: "C",
+      control1: { x: centerX + control, y: centerY - radiusY },
+      control2: { x: centerX + radiusX, y: centerY - controlY },
+      point: { x: centerX + radiusX, y: centerY },
+    },
+    { command: "Z" },
+  ];
 }
 
 /**
