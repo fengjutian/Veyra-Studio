@@ -46,7 +46,7 @@ function formatOf(mimeType: string | undefined): string | undefined {
  * 读取字体文件的族名与字重。
  *
  * 读不出来（格式不支持、文件损坏、不是字体）时返回 `undefined`——
- * 调用方回落��文件名猜测。
+ * 调用方回落文件名猜测。
  */
 export async function readFontMetadata(bytes: Uint8Array, mimeType?: string): Promise<FontMetadata | undefined> {
   const format = formatOf(mimeType);
