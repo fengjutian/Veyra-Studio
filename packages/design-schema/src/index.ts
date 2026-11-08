@@ -1,5 +1,6 @@
 export * from "./types";
 export * from "./geometry";
+export * from "./boolean";
 export * from "./arc-to-bezier";
 export * from "./svg-path";
 export * from "./interactions";

@@ -9,6 +9,7 @@ import type { VectorGeometry } from "./geometry";
 import type { Interaction } from "./interactions";
 import type { TextRun } from "./rich-text";
 import type { DocumentFont } from "./fonts";
+import type { BooleanOperation } from "./boolean";
 
 export interface DocumentMeta {
   name: string;
@@ -178,7 +179,8 @@ export type NodeType =
   | "ellipse"
   | "vector"
   | "component"
-  | "instance";
+  | "instance"
+  | "boolean";
 
 /** 约束：父级尺寸变化时子节点的行为。缺省 `start`（贴左/贴上，不随父级变化）。 */
 export type ConstraintAxis = "start" | "end" | "center" | "stretch" | "scale";
@@ -286,10 +288,16 @@ export interface VectorNode extends BaseNode {
 }
 
 export interface GenericNode extends BaseNode {
-  type: Exclude<NodeType, "text" | "image" | "instance" | "vector">;
+  type: Exclude<NodeType, "text" | "image" | "instance" | "vector" | "boolean">;
 }
 
-export type DesignNode = TextNode | ImageNode | InstanceNode | VectorNode | GenericNode;
+/** 布尔组：子节点是操作数（第一个为基准层），几何在读取时按运算树计算。 */
+export interface BooleanNode extends BaseNode {
+  type: "boolean";
+  operation: BooleanOperation;
+}
+
+export type DesignNode = TextNode | ImageNode | InstanceNode | VectorNode | BooleanNode | GenericNode;
 
 export interface ComponentDefinition {
   id: ComponentId;

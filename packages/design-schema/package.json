@@ -16,6 +16,7 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
+    "polygon-clipping": "^0.15.7",
     "zod": "4.6.7"
   },
   "devDependencies": {

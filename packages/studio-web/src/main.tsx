@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, defaultAppearance, defaultLayout, normalizePath, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -47,7 +47,7 @@ import { usePathEdit, type PathEditTarget } from "./renderer/use-path-edit";
 import { constrainedBoxes } from "./constraint-preview";
 import { TOOLS, clampRect, defaultRectFor, isDrawTool, isVectorTool, nextToolAfterDraw, shortcutTool, toolSpec, type DrawToolId, type ToolId, type VectorToolId } from "./tools";
 import { buildVectorShape, type VectorShape } from "./shapes";
-import { BOOLEAN_OPERATIONS, applyBoolean, booleanOperands, type BooleanOperation } from "./boolean";
+import { BOOLEAN_OPERATIONS, type BooleanOperation } from "./boolean";
 import type { Rect } from "./renderer/selection";
 import { TextEditOverlay } from "./renderer/text-edit-overlay";
 import { CanvasA11yLayer } from "./renderer/a11y-layer";
@@ -713,28 +713,25 @@ function App() {
     };
     void run(() => execute([{ type: "vector.patch", payload: { id: change.id, patch: { geometry: change.geometry, layout } } }]));
   };
+  /** 选区能否合成布尔组：同级、至少两个、都是形状、未锁定未旋转。 */
+  const canBoolean = (ids: string[]) => {
+    const nodes = ids.map(id => document.nodes[id]).filter((node): node is DesignNode => Boolean(node));
+    return nodes.length >= 2
+      && nodes.every(node => supportsBooleanOperand(node) && !node.locked && !node.layout.rotation)
+      && new Set(nodes.map(node => node.parentId)).size === 1;
+  };
   /**
-   * 布尔运算：把选区烘焙成一条路径，用结果替换掉操作数。
+   * 布尔运算：把选区合成**布尔组**（保留运算树），而不是烘焙成一条路径。
    *
-   * 一个事务里同时「创建结果」和「删除操作数」，所以一次撤销就回到运算前；结果插在
-   * 基准层原来的位置，视觉上是原地替换而不是跳到最上层。
+   * 命令层只存子节点 + 运算类型，几何在渲染/导出时按运算树计算，
+   * 所以之后改操作数或换运算类型都会立刻反映到结果上；一次撤销回到运算前。
    */
   const applyBooleanToSelection = (operation: BooleanOperation, ids: string[]) => {
-    const operands = booleanOperands(ids, document, canvasLayout.boxes);
-    if (!operands) { setMessage("布尔运算需要至少两个同级的形状或路径"); return; }
-    const result = applyBoolean(operands, operation);
-    if (!result) { setMessage("布尔运算结果为空"); return; }
-    const base = operands[0]!;
-    const parent = document.pages[base.node.parentId] ?? document.nodes[base.node.parentId];
-    const index = Math.max(0, parent?.childIds.indexOf(base.node.id) ?? 0);
-    const node = makeBooleanNode(base.node, result, operation);
+    const id = `boolean:${crypto.randomUUID().slice(0, 8)}`;
     void run(async () => {
-      await execute([
-        { type: "node.create", payload: { node, index } },
-        ...operands.map(operand => ({ type: "node.delete" as const, payload: { id: operand.node.id } })),
-      ]);
-      setSelectedIds([node.id]);
-      setMessage(`已${BOOLEAN_OPERATIONS.find(spec => spec.id === operation)?.label ?? "运算"} · ${node.layout.width}×${node.layout.height}`);
+      await execute([{ type: "boolean.create", payload: { id, operation, nodeIds: ids } }]);
+      setSelectedIds([id]);
+      setMessage(`已${BOOLEAN_OPERATIONS.find(spec => spec.id === operation)?.label ?? "运算"}（可继续编辑操作数）`);
     });
   };
   /**
@@ -1631,7 +1628,7 @@ function App() {
                 <ContextMenuItem
                   key={spec.id}
                   icon={spec.icon}
-                  disabled={busy || !booleanOperands(contextIds, document, canvasLayout.boxes)}
+                  disabled={busy || !canBoolean(contextIds)}
                   onSelect={() => applyBooleanToSelection(spec.id, contextIds)}
                 >
                   {spec.label}
@@ -1693,7 +1690,13 @@ function App() {
             ? (
               <section className="inspector-section">
                 <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
-                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} fontSuggestions={fontSuggestions} />
+                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} fontSuggestions={fontSuggestions}
+                  onSetBooleanOperation={operation => void run(() => execute([{ type: "boolean.setOperation", payload: { id: selected.id, operation } }]))}
+                  onReleaseBoolean={() => void run(async () => {
+                    const children = [...(document.nodes[selected.id]?.childIds ?? [])];
+                    await execute([{ type: "boolean.release", payload: { id: selected.id } }]);
+                    setSelectedIds(children);
+                  })} />
                 <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
@@ -1938,32 +1941,7 @@ function makePenNode(parentId: string, box: { x: number; y: number; width: numbe
   };
 }
 
-/**
- * 布尔运算的结果节点：外观取基准层，几何是烘焙好的路径。
- *
- * 结果命名与操作一致（合并/减去/交集/排除），方便在图层树里认出来这是一次运算的产物。
- */
-function makeBooleanNode(base: DesignNode, result: { box: Rect; geometry: VectorGeometry }, operation: BooleanOperation): DesignNode {
-  const spec = BOOLEAN_OPERATIONS.find(item => item.id === operation);
-  return {
-    id: `vector:${crypto.randomUUID().slice(0, 8)}`,
-    type: "vector",
-    name: spec?.label ?? "布尔运算",
-    parentId: base.parentId,
-    childIds: [],
-    visible: true,
-    locked: false,
-    layout: {
-      ...defaultLayout(),
-      x: Math.round(result.box.x),
-      y: Math.round(result.box.y),
-      width: Math.max(1, Math.round(result.box.width)),
-      height: Math.max(1, Math.round(result.box.height)),
-    },
-    appearance: structuredClone(base.appearance),
-    geometry: result.geometry,
-  };
-}
+
 
 /**
  * 拖拽结果 → 矢量几何。

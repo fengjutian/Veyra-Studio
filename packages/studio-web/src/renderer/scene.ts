@@ -3,6 +3,7 @@ import {
   resolveFills,
   resolveRadius,
   resolveStroke,
+  computeBooleanGeometry,
   vectorPathCommands,
   type CornerRadii,
   type DesignDocument,
@@ -120,7 +121,10 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
   const radii = resolveCornerRadii(document, node);
   // 只有真正四角不同才带 `radii`：四角相同的文档继续走单值分支，导出产物不变。
   const perCorner = radii && radii.some(value => value !== radii[0]) ? radii : undefined;
-  const children = applySiblingMasks(node.childIds
+  // 布尔组只画运算结果：几何在读取时按运算树算出来，再归一化到自己的盒子，
+  // 这样画布、命中测试、导出都复用 vector 的同一套路径管线。
+  const booleanPath = node.type === "boolean" ? computeBooleanGeometry(document, node, boxes, box) : undefined;
+  const children = node.type === "boolean" ? [] : applySiblingMasks(node.childIds
     .map(childId => buildNode(document, document.nodes[childId], boxes))
     .filter((child): child is SceneNode => Boolean(child)));
   const scene: SceneNode = {
@@ -137,6 +141,7 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     radius: resolveRadius(document, node) ?? 0,
     ...(perCorner ? { radii: perCorner } : {}),
     ...(node.type === "vector" && node.geometry ? { path: vectorPathCommands(node.geometry.d) } : {}),
+    ...(booleanPath ? { path: booleanPath } : {}),
     ...(node.mask ? { mask: true } : {}),
     ...(node.layout.rotation ? { rotation: node.layout.rotation } : {}),
     ...(node.appearance.shadow ? { shadow: node.appearance.shadow } : {}),

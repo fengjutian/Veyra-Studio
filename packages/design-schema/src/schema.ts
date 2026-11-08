@@ -189,6 +189,11 @@ const rectangleNodeSchema = z.object({ ...genericNodeShape, type: z.literal("rec
 const ellipseNodeSchema = z.object({ ...genericNodeShape, type: z.literal("ellipse") });
 const vectorNodeSchema = z.object({ ...genericNodeShape, type: z.literal("vector"), geometry: vectorGeometrySchema.optional() });
 const componentNodeSchema = z.object({ ...genericNodeShape, type: z.literal("component") });
+const booleanNodeSchema = z.object({
+  ...genericNodeShape,
+  type: z.literal("boolean"),
+  operation: z.enum(["union", "subtract", "intersect", "exclude"]),
+});
 
 const textRunSchema = z.object({
   from: z.number().int().nonnegative(),
@@ -244,6 +249,7 @@ export const designNodeSchema = z.discriminatedUnion("type", [
   ellipseNodeSchema,
   vectorNodeSchema,
   componentNodeSchema,
+  booleanNodeSchema,
   textNodeSchema,
   imageNodeSchema,
   instanceNodeSchema,

@@ -2,6 +2,7 @@ import type {
   AssetMetadata,
   ComponentDefinition,
   ComponentSetDefinition,
+  BooleanOperation,
   ComponentSetId,
   DesignDocument,
   DesignNode,
@@ -211,6 +212,24 @@ export interface RegisterFontCommand {
   payload: { font: DocumentFont };
 }
 
+/** 把若干同级形状合成布尔组：子节点是操作数（第一个为基准层）。 */
+export interface CreateBooleanCommand {
+  type: "boolean.create";
+  payload: { id: string; name?: string; operation: BooleanOperation; nodeIds: NodeId[] };
+}
+
+/** 切换布尔组的运算类型；几何在读取时重算，因此不需要重新烘焙。 */
+export interface SetBooleanOperationCommand {
+  type: "boolean.setOperation";
+  payload: { id: NodeId; operation: BooleanOperation };
+}
+
+/** 解除布尔组：操作数回到原父级，坐标保持不变，布尔节点删除。 */
+export interface ReleaseBooleanCommand {
+  type: "boolean.release";
+  payload: { id: NodeId };
+}
+
 /** 删除字体声明；还有文本节点在用这个族名时拒绝。 */
 export interface RemoveFontCommand {
   type: "font.remove";
@@ -284,6 +303,9 @@ export type DesignCommand =
   | SwitchComponentVariantCommand
   | RegisterFontCommand
   | RemoveFontCommand
+  | CreateBooleanCommand
+  | SetBooleanOperationCommand
+  | ReleaseBooleanCommand
   | RemoveComponentCommand
   | InstantiateComponentCommand
   | DetachComponentCommand

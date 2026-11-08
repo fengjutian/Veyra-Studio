@@ -1,4 +1,4 @@
-import { findOwningComponentId, fontKey, isFontMimeType, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, findOwningComponentId, fontKey, isFontMimeType, supportsBooleanOperand, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type BooleanNode, type BooleanOperation, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -239,6 +239,9 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.switchVariant": return switchComponentVariant(document, command.payload);
     case "font.register": return registerFont(document, command.payload.font);
     case "font.remove": return removeFont(document, command.payload);
+    case "boolean.create": return createBoolean(document, command.payload);
+    case "boolean.setOperation": return setBooleanOperation(document, command.payload);
+    case "boolean.release": return releaseBoolean(document, command.payload);
     case "component.remove": return removeComponent(document, command.payload.id);
     case "component.instantiate": return instantiateComponent(document, command.payload.node, command.payload.index);
     case "component.detach": return detachComponent(document, command.payload.id);
@@ -841,6 +844,11 @@ function createNode(document: DesignDocument, node: DesignNode, index?: number):
 function deleteNode(document: DesignDocument, id: NodeId): void {
   const node = requireNode(document, id);
   const owner = requireContainer(document, node.parentId);
+  // 布尔组至少要有两个操作数；删到只剩一个时几何会消失，先让用户解除布尔组。
+  const parentNode = document.nodes[node.parentId];
+  if (parentNode?.type === "boolean" && parentNode.childIds.length <= 2) {
+    throw new CommandError(`Boolean ${parentNode.id} needs at least two operands; release the group first`);
+  }
   owner.childIds = owner.childIds.filter(childId => childId !== id);
   const remove = (nodeId: NodeId) => {
     const current = document.nodes[nodeId];
@@ -878,7 +886,7 @@ function requireNode(document: DesignDocument, id: NodeId): DesignNode {
 function requireContainer(document: DesignDocument, id: string): { childIds: NodeId[] } {
   const container = document.nodes[id] ?? document.pages[id];
   if (!container) throw new CommandError(`Parent ${id} does not exist`);
-  if ("type" in container && !["frame", "component", "instance"].includes(container.type)) throw new CommandError(`Node ${id} cannot contain children`);
+  // 布尔组也持有子节点（操作数），因此允许当作容器；文本/图片/矢量仍然不行。\n  if ("type" in container && !["frame", "component", "instance", "boolean"].includes(container.type)) throw new CommandError(`Node ${id} cannot contain children`);
   return container;
 }
 
@@ -907,4 +915,83 @@ function collectWarnings(document: DesignDocument): string[] {
 
 function validateHistoryTimestamp(committedAt?: string): void {
   if (committedAt !== undefined && Number.isNaN(Date.parse(committedAt))) throw new CommandError(`Invalid commit timestamp ${committedAt}`);
+}
+
+/**
+ * 把若干同级形状合成布尔组。
+ *
+ * 只保存运算树：布尔节点持有操作数子节点，几何在渲染/导出时由
+ * `computeBooleanPath()` 计算。因此改操作数、改运算类型都会立刻反映到结果上。
+ * 操作数保持 z 序（`childIds` 顺序），第一个是基准层；布尔节点插在最高层操作数的位置。
+ */
+function createBoolean(document: DesignDocument, payload: { id: string; name?: string; operation: BooleanOperation; nodeIds: NodeId[] }): void {
+  if (!payload.id.trim()) throw new CommandError("Boolean node id cannot be empty");
+  if (document.nodes[payload.id]) throw new CommandError(`Node ${payload.id} already exists`);
+  if (!BOOLEAN_OPERATIONS.includes(payload.operation)) throw new CommandError(`Unknown boolean operation ${payload.operation}`);
+  const operands = payload.nodeIds.map(id => requireNode(document, id));
+  if (operands.length < 2) throw new CommandError("Boolean group needs at least two operands");
+  if (new Set(operands.map(node => node.id)).size !== operands.length) throw new CommandError("Boolean operands must be unique");
+  if (!operands.every(supportsBooleanOperand)) throw new CommandError("Only shapes can be boolean operands");
+  if (operands.some(node => node.locked)) throw new CommandError("Locked nodes cannot be boolean operands");
+  if (operands.some(node => node.layout.rotation)) throw new CommandError("Rotated nodes cannot be boolean operands yet");
+  const parentId = operands[0]!.parentId;
+  if (operands.some(node => node.parentId !== parentId)) throw new CommandError("Boolean operands must share the same parent");
+  const parent = requireContainer(document, parentId);
+
+  const minX = Math.min(...operands.map(node => node.layout.x));
+  const minY = Math.min(...operands.map(node => node.layout.y));
+  const maxX = Math.max(...operands.map(node => node.layout.x + node.layout.width));
+  const maxY = Math.max(...operands.map(node => node.layout.y + node.layout.height));
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+
+  const ordered = [...operands].sort((a, b) => parent.childIds.indexOf(a.id) - parent.childIds.indexOf(b.id));
+  const topIndex = Math.max(...ordered.map(node => parent.childIds.indexOf(node.id)));
+  const operandIds = new Set(payload.nodeIds);
+  const remaining = parent.childIds.filter(childId => !operandIds.has(childId));
+  const insertIndex = parent.childIds.slice(0, topIndex).filter(childId => !operandIds.has(childId)).length;
+  remaining.splice(insertIndex, 0, payload.id);
+  parent.childIds = remaining;
+
+  const booleanNode: BooleanNode = {
+    id: payload.id,
+    type: "boolean",
+    name: payload.name?.trim() || "布尔组",
+    parentId,
+    childIds: ordered.map(node => node.id),
+    visible: true,
+    locked: false,
+    layout: { mode: "absolute", x: minX, y: minY, width, height, widthMode: "fixed", heightMode: "fixed" },
+    appearance: { opacity: 1 },
+    operation: payload.operation,
+  };
+  document.nodes[payload.id] = booleanNode;
+  for (const operand of ordered) {
+    operand.parentId = payload.id;
+    operand.layout = { ...operand.layout, x: operand.layout.x - minX, y: operand.layout.y - minY };
+  }
+}
+
+function setBooleanOperation(document: DesignDocument, payload: { id: NodeId; operation: BooleanOperation }): void {
+  const node = requireNode(document, payload.id);
+  if (node.type !== "boolean") throw new CommandError(`Node ${payload.id} is not a boolean group`);
+  if (!BOOLEAN_OPERATIONS.includes(payload.operation)) throw new CommandError(`Unknown boolean operation ${payload.operation}`);
+  node.operation = payload.operation;
+}
+
+/** 解除布尔组：操作数回到原父级并恢复绝对坐标，布尔节点删除、操作数 id 不变。 */
+function releaseBoolean(document: DesignDocument, payload: { id: NodeId }): void {
+  const node = requireNode(document, payload.id);
+  if (node.type !== "boolean") throw new CommandError(`Node ${payload.id} is not a boolean group`);
+  const owner = requireContainer(document, node.parentId);
+  const index = owner.childIds.indexOf(node.id);
+  const children = node.childIds.map(id => requireNode(document, id));
+  for (const child of children) {
+    child.parentId = node.parentId;
+    child.layout = { ...child.layout, x: child.layout.x + node.layout.x, y: child.layout.y + node.layout.y };
+  }
+  const next = [...owner.childIds];
+  next.splice(index < 0 ? next.length : index, 1, ...children.map(child => child.id));
+  owner.childIds = next;
+  delete document.nodes[node.id];
 }

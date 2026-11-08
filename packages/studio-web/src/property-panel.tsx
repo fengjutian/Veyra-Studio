@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import { TEXT_DEFAULTS, applyTextRunStyle, runStyleAt, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
+import type { BooleanOperation } from "./boolean";
 
 export interface PropertyPanelProps {
   node: DesignNode;
@@ -11,6 +12,9 @@ export interface PropertyPanelProps {
   onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints">>): void;
   onPatchText(patch: TextPatch): void;
   onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
+/** 布尔组的运算类型切换与解除。 */
+  onSetBooleanOperation?(operation: BooleanOperation): void;
+  onReleaseBoolean?(): void;
   /** 属性面板的字体建议（已加载 + 文档声明过的族名）。 */
   fontSuggestions?: string[];
   /** 换一张图：只改节点引用的资源，节点本身不重建。 */
@@ -24,7 +28,7 @@ export interface PropertyPanelProps {
  * absolute and stack modes, fixed/fill/hug sizing, gap, padding and alignment —
  * so the editor can drive the same semantics the exporters use.
  */
-export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage, fontSuggestions }: PropertyPanelProps) {
+export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage, fontSuggestions, onSetBooleanOperation, onReleaseBoolean }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";  const isGrid = layout.mode === "grid";
   const padding = resolvePadding(layout);
@@ -325,6 +329,19 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
         </Section>
       )}
 
+      {node.type === "boolean" && (
+        <Section title="布尔运算">
+          <Segmented
+            label="类型"
+            value={node.operation}
+            disabled={disabled}
+            options={booleanOperationOptions}
+            onChange={operation => onSetBooleanOperation?.(operation as BooleanOperation)}
+          />
+          <p className="field-hint">几何按操作数实时计算：改子节点或换类型都会立刻生效。</p>
+          <button type="button" disabled={disabled} onClick={onReleaseBoolean}>解除布尔组</button>
+        </Section>
+      )}
       {node.type === "text" && (
         <Section title="文字">
           <TextAreaField
@@ -387,6 +404,13 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
     </>
   );
 }
+
+const booleanOperationOptions = [
+  { value: "union", label: "合并" },
+  { value: "subtract", label: "减去" },
+  { value: "intersect", label: "交集" },
+  { value: "exclude", label: "排除" },
+];
 
 const sizeModeOptions = [
   { value: "fixed", label: "固定" },

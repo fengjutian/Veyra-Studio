@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -128,6 +128,18 @@ function renderNode(
     return `<image ${common} x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}" href="${escapeXml(url)}" preserveAspectRatio="${preserveAspectRatio(node.fit)}" />`;
   }
 
+  if (node.type === "boolean") {
+    const commands = computeBooleanGeometry(document, node, boxes, box);
+    if (!commands?.length) {
+      // 空结果也不能把操作数当普通子节点导出：它们只是运算输入。
+      diagnostics.push({ nodeId, feature: "boolean", support: "unsupported", message: "Boolean group produced an empty shape" });
+      return `<g ${common}></g>`;
+    } else {
+      const d = pathDataFromCommands(absolutePath(commands, box));
+      const booleanPaths = fillValues.length ? fillValues.map(fill => `<path d="${escapeXml(d)}" fill="${escapeXml(fill)}" />`).join("") : `<path d="${escapeXml(d)}" />`;
+      return `<g ${common}>${multiFill ? booleanPaths : `<path d="${escapeXml(d)}" />`}</g>`;
+    }
+  }
   if (node.type === "vector") {
     const commands = node.geometry ? vectorPathCommands(node.geometry.d) : [];
     if (!commands.length) {

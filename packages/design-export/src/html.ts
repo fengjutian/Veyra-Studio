@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -62,6 +62,16 @@ function renderNode(
       return `<div ${common} role="img" aria-label="${escapeAttribute(node.name)}"></div>`;
     }
     return `<img ${common} src="${escapeAttribute(url)}" alt="${escapeAttribute(node.name)}">`;
+  }
+  if (node.type === "boolean") {
+    const commands = computeBooleanGeometry(document, node, {}, node.layout);
+    if (!commands?.length) {
+      // 空结果也不能把操作数当普通子节点导出：它们只是运算输入。
+      diagnostics.push({ nodeId, feature: "boolean", support: "unsupported", message: "Boolean group produced an empty shape" });
+      return `<div ${common}></div>`;
+    } else {
+      return renderVectorPath(document, node as unknown as DesignNode & { type: "vector" }, common, commands, tokenVariables);
+    }
   }
   if (node.type === "vector") {
     const commands = node.geometry ? vectorPathCommands(node.geometry.d) : [];
@@ -216,7 +226,7 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   const inStack = parent?.layout.mode === "stack";
   const inGrid = parent?.layout.mode === "grid";
   // 有几何的矢量节点自己画路径，不能再给它铺一块背景矩形（否则线宽 1px 的直线会变成色块）。
-  const pathVector = node.type === "vector" && Boolean(node.geometry);
+  const pathVector = (node.type === "vector" && Boolean(node.geometry)) || node.type === "boolean";
   if (!inStack && !inGrid) {
     // 只有页面直属的节点用页面坐标定位，导出原点只影响它们；
     // 嵌套节点的坐标相对父节点，会跟着父节点一起平移。
