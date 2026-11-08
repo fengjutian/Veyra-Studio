@@ -188,23 +188,104 @@ export type GridTrack =
 
 未实现（下一轮）：拖拽调整轨道、命名网格区域、自动轨道（`auto-fill` / `auto-fit`）。
 
-## 4. 后续排期
+## 4. 本轮：表现层能力（混合模式 / 椭圆渐变 / 背景模糊）
+
+前三轮（Grid、组件变体、原型运行时）已经做完，线 A 的缺口收缩到了**表现层**——
+「画出来对不对」这一类能力。这三项在 Figma 里都是日常高频操作，
+而本项目此前完全空缺（只有 legacy Vibma 代码里有 mix-blend-mode 的痕迹，
+独立 Studio 的 schema / 渲染 / 导出三层都没有）。
+
+### 4.1 混合模式
+
+Figma 的混合模式是**图层级**属性（与 opacity、阴影、模糊平级），
+Penpot 也是这样（`:blend-mode` 与 `:opacity` / `:shadow` / `:blur` 同级）。
+
+本项目的实现：
+
+- **数据模型**：`AppearanceSpec.blendMode?: BlendMode`，可选字段，旧文档无需迁移。
+- **取值**：与 CSS `mix-blend-mode` 对齐——
+  `normal` / `multiply` / `screen` / `overlay` / `darken` / `lighten` /
+  `color-dodge` / `color-burn` / `hard-light` / `soft-light` /
+  `difference` / `exclusion` / `hue` / `saturation` / `color` / `luminosity`。
+- **三处渲染**：
+  - 画布：Canvas 2D 的 `globalCompositeOperation`（覆盖其中 15 种，
+    `normal` 是缺省行为）；
+  - HTML：`mix-blend-mode`；
+  - SVG：`mix-blend-mode`（写在节点样式上）。
+
+**刻意的限制**：Canvas 2D 的 `globalCompositeOperation` 与 CSS `mix-blend-mode`
+不是同一套语义（Canvas 的是 Porter-Duff 合成，CSS 的是可分离混合模式）。
+能对上的直接用；对不上的（`hue` / `saturation` / `color` / `luminosity`
+在 Canvas 里没有对应值）在画布上**退回 normal 并给出警告**，
+而不是画出一个看起来对但其实错的结果。导出侧（HTML/SVG）用 CSS 语义，是准确的。
+
+### 4.2 椭圆渐变
+
+现在有 `radial`（径向/圆形）渐变，缺 Figma 的**椭圆**渐变。
+
+CSS 没有原生椭圆渐变，但 SVG 有 `<radialGradient gradientTransform="matrix(...)">`。
+本项目走 SVG 路径：
+- **数据模型**：`Paint` 新增 `{ type: "elliptical"; cx, cy, rx, ry, stops }`，
+  `rx`/`ry` 是椭圆的两个半轴（相对盒子的比例）。
+- **几何**：在 `paint.ts` 里把椭圆渐变映射成 SVG 的
+  `gradientTransform`（缩放 + 平移），画布侧用 Canvas 的
+  `createRadialGradient` + 变换近似。
+- **HTML 导出**：CSS 的 `radial-gradient(ellipse <size> at <position>, ...)`。
+
+### 4.3 背景模糊
+
+Figma 的「背景模糊」= 节点后面的内容被模糊，节点自身不模糊。
+CSS 的对应物是 `backdrop-filter: blur(Npx)`。
+
+- **数据模型**：`AppearanceSpec.backgroundBlur?: number`（px）。
+- **三处渲染**：
+  - 画布：Canvas 2D **没有** backdrop-filter 的等价物。
+    做法是把背景快照按节点盒子裁剪后画上去再模糊——需要离屏合成，
+    成本高。**本轮画布侧先不给效果并给出警告**，
+    HTML/SVG 侧用 `backdrop-filter` / `<filter>` 准确表达。
+  - HTML：`backdrop-filter: blur(Npx)`；
+  - SVG：`<filter><feGaussianBlur>` + 背景副本。
+
+### 4.4 验收
+
+- 混合模式在画布上生效，`normal` 与缺省行为一致；
+- 混合模式在 HTML 导出里输出 `mix-blend-mode`，SVG 导出里同样；
+- Canvas 不支持的混合模式（`hue` 等）**给出警告而不是画错**；
+- 椭圆渐变在 SVG 导出里输出带 `gradientTransform` 的 `<radialGradient>`；
+- 椭圆渐变在 HTML 导出里输出 `radial-gradient(ellipse ...)`；
+- 背景模糊在 HTML/SVG 导出里生效；
+- **旧文档（无新字段）导出产物逐字不变**——golden 基线不破；
+- 导出支持矩阵新增对应行，能力等级与实际实现一致（不夸大）。
+
+### 4.5 落地结果（2026-11-08）
+
+（待本轮实现完成后填写）
+
+## 5. 后续排期
 
 | 优先级 | 能力 | 依赖 | 预估 |
 | --- | --- | --- | --- |
-| P0 | Grid 布局 | 本轮 | — |
+| P0 | Grid 布局 | 已完成（缺可视化轨道编辑） | — |
 | P0 | 组件变体 | 已完成 | — |
 | P0 | 原型运行时 | 已完成（缺 hover 与滚动保持） | — |
 | ~~P1~~ | ~~富文本~~ | 段内样式已完成，剩段内字号与段落样式 | — |
 | P1 | 字体管理 | 已完成（剩子集化与导出内联） | — |
 | P1 | 布尔组 | 已完成（剩曲线级布尔） | — |
-| P2 | 混合模式 / 椭圆渐变 / 背景模糊 | 渲染管线 | 中 |
+| P2 | 混合模式 / 椭圆渐变 / 背景模糊 | **本轮** | — |
 | P2 | 组件属性 | 组件变体 | 中 |
+| P2 | 智能锚点吸附 | 吸附基础版 | 中 |
+| P3 | 画布侧背景模糊（离屏合成） | 渲染管线 | 大 |
+| P3 | 画布侧完整混合模式（离屏合成） | 渲染管线 | 大 |
 
-## 5. 参照来源
+## 6. 参照来源
 
 - Penpot Grid 实现：`common/src/app/common/geom/shapes/grid_layout/`
   （`params.cljc` 轨道与参数计算、`positions.cljc` 单元格定位、`bounds.cljc` 包围盒、
   `areas.cljc` 命名区域、`layout_data.cljc` 中间表示）
+- Penpot 背景模糊：`common/src/app/common/types/shape/background_blur.cljc`
+- Penpot 混合模式：`common/src/app/common/types/shape/attrs.cljc`（`:blend-mode` 为节点属性）
+- CSS `mix-blend-mode`：<https://developer.mozilla.org/docs/Web/CSS/mix-blend-mode>
+- CSS `backdrop-filter`：<https://developer.mozilla.org/docs/Web/CSS/backdrop-filter>
+- SVG `radialGradient`：<https://developer.mozilla.org/docs/Web/SVG/Reference/Element/radialGradient>
 - Figma Grid 布局产品文档：<https://help.figma.com/hc/en-us/articles/15339657135383-Guide-to-auto-layout>
 - Penpot / Figma 能力对比：见 `penpot-porting.md` §6

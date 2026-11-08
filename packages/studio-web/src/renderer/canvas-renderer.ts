@@ -1,4 +1,4 @@
-import { absolutePath, gradientLine, radialGeometry, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
+import { absolutePath, canvasCompositeFor, ellipticalGeometry, gradientLine, radialGeometry, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
 import { layoutRichText, type RichTextStyle } from "@ufira/design-layout";
 import type { SceneBox, SceneNode } from "./scene";
 
@@ -23,15 +23,48 @@ export interface PaintOptions {
   background?: string;
   /** 场景绘制完成后的回调，用于选择框等覆盖层；坐标系与场景一致。 */
   onAfterPaint?(context: CanvasRenderingContext2D): void;
+  /** 画布表达不了的能力（不支持的混合模式、背景模糊）在这里提示。 */
+  onWarning?(message: string): void;
+  /** 椭圆渐变的离屏画布工厂；缺省用 OffscreenCanvas / document.createElement。 */
+  gradientSurface?: GradientSurfaceFactory;
+  /** 椭圆渐变离屏画布的边长（px）。 */
+  gradientSize?: number;
 }
+
+/**
+ * 椭圆渐变用的离屏画布。
+ *
+ * Canvas 2D 的 `createRadialGradient` 只能画正圆，画不出椭圆。
+ * 变通办法：先在离屏画布上画一个正圆渐变，再把它按椭圆的外接矩形贴回去——
+ * 圆形被非等比缩放后就是椭圆，而被填充的形状本身一点没变形。
+ */
+export interface GradientSurface {
+  /** 贴回主画布的位图。 */
+  image: CanvasImageSource;
+}
+
+/**
+ * 离屏画布工厂：返回一个**已经画好这条渐变**的画布。
+ *
+ * 契约是「给我一张画好渐变的图」，而不是「给我一张空图」——
+ * 这样缓存键（色标）由调用方决定，工厂只管把图画好。
+ */
+export type GradientSurfaceFactory = (paint: Extract<Paint, { type: "elliptical" }>, size: number) => GradientSurface | undefined;
 
 export interface SceneRenderer {
   paint(scene: SceneNode[], options: PaintOptions): void;
 }
 
+/** 椭圆渐变离屏画布的默认边长：512 足够让 256 半径的圆形渐变看不出锯齿。 */
+const DEFAULT_GRADIENT_SIZE = 512;
+
 export function createCanvas2DRenderer(canvas: HTMLCanvasElement): SceneRenderer {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("当前浏览器不支持 Canvas 2D");
+  // 同一条提示只报一次：画布每帧都会重绘，不去重的话控制台会被刷屏。
+  const warned = new Set<string>();
+  // 离屏画布按色标缓存：同一个渐变不需要每帧重画一遍。
+  const surfaces = new Map<string, GradientSurface>();
 
   return {
     paint(scene, options) {
@@ -48,10 +81,59 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): SceneRenderer
       context.fillStyle = options.background ?? "#ffffff";
       context.fillRect(0, 0, options.width, options.height);
 
-      for (const node of scene) drawNode(context, node, options, 1);
+      const effective: PaintOptions = {
+        ...options,
+        onWarning: message => {
+          if (warned.has(message)) return;
+          warned.add(message);
+          if (options.onWarning) options.onWarning(message);
+          else console.warn(message);
+        },
+        gradientSurface: (paint, size) => {
+          const stops = [...paint.stops].sort((a, b) => a.offset - b.offset);
+          const key = `${size}|${stops.map(stop => `${stop.offset}:${stop.color}`).join(",")}`;
+          const cached = surfaces.get(key);
+          if (cached) return cached;
+          const factory = options.gradientSurface ?? defaultGradientSurfaceFactory;
+          const surface = factory(paint, size);
+          if (surface) surfaces.set(key, surface);
+          return surface;
+        },
+      };
+      for (const node of scene) drawNode(context, node, effective, 1);
       options.onAfterPaint?.(context);
     },
   };
+}
+
+/**
+ * 默认的离屏画布工厂：优先用 `OffscreenCanvas`，没有就用 `document.createElement`。
+ *
+ * 两个都没有时返回 undefined——调用方会退化成圆形渐变并给出警告，而不是画错。
+ */
+function defaultGradientSurfaceFactory(paint: Extract<Paint, { type: "elliptical" }>, size: number): GradientSurface | undefined {
+  const scope = globalThis as {
+    OffscreenCanvas?: new (width: number, height: number) => { width: number; height: number; getContext(type: "2d"): CanvasRenderingContext2D | null };
+    document?: { createElement(tag: string): HTMLCanvasElement };
+  };
+  let canvas: { width: number; height: number; getContext(type: "2d"): CanvasRenderingContext2D | null } | undefined;
+  if (typeof scope.OffscreenCanvas === "function") {
+    canvas = new scope.OffscreenCanvas(size, size);
+  } else if (scope.document?.createElement) {
+    const element = scope.document.createElement("canvas");
+    element.width = size;
+    element.height = size;
+    canvas = element;
+  }
+  if (!canvas) return undefined;
+  const context = canvas.getContext("2d");
+  if (!context) return undefined;
+  const half = size / 2;
+  const gradient = context.createRadialGradient(half, half, 0, half, half, half);
+  for (const stop of [...paint.stops].sort((a, b) => a.offset - b.offset)) gradient.addColorStop(stop.offset, stop.color);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, size, size);
+  return { image: canvas as unknown as CanvasImageSource };
 }
 
 function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions, inheritedOpacity: number): void {
@@ -78,6 +160,20 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
   if (node.blur) {
     if ("filter" in context) context.filter = `blur(${node.blur}px)`;
   }
+  // 混合模式：Canvas 的 globalCompositeOperation 与 CSS 的 mix-blend-mode 不是同一套语义
+  // （前者是 Porter-Duff 合成，后者是可分离混合模式）。能对上的直接用；
+  // 对不上的（hue / saturation / color / luminosity）退回 normal 并给出警告——
+  // 画一个「看起来差不多但其实错」的结果，比说清楚「这里不支持」糟糕得多。
+  if (node.blendMode) {
+    const composite = canvasCompositeFor(node.blendMode);
+    if (composite) context.globalCompositeOperation = composite;
+    else options.onWarning?.(`画布不支持混合模式 ${node.blendMode}（节点 ${node.id}），已退回 normal；导出到 HTML/SVG 才是准确的。`);
+  }
+  // 背景模糊：Canvas 2D 没有 backdrop-filter 的等价物，要做需要离屏合成。
+  // 本轮画布侧只提示，不画一个假的模糊。
+  if (node.backgroundBlur) {
+    options.onWarning?.(`画布暂不支持背景模糊（节点 ${node.id}）：需要离屏合成。导出到 HTML/SVG 才是准确的。`);
+  }
 
   // 旋转绕节点中心；子树画在同一个上下文里，因此自动继承父级的旋转。
   if (node.rotation) {
@@ -93,7 +189,7 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
   } else if (node.image) {
     drawImage(context, node, options);
   } else {
-    drawShape(context, node);
+    drawShape(context, node, options);
   }
 
   if (node.children.length) {
@@ -123,14 +219,19 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
   context.restore();
 }
 
-function drawShape(context: CanvasRenderingContext2D, node: SceneNode): void {
+function drawShape(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions): void {
   const paints = node.paints?.length ? node.paints : node.fill ? [{ type: "solid" as const, color: node.fill }] : [];
   if (paints.length) {
     shapePath(context, node);
     // 从下往上逐层覆盖：数组顺序就是 Figma 的填充层顺序（第 0 层在最底下）。
     paints.forEach((paint, index) => {
-      context.fillStyle = canvasPaint(context, node, paint);
-      context.fill();
+      if (paint.type === "elliptical") {
+        // 椭圆渐变不能靠 fillStyle 表达（Canvas 只有圆形径向渐变），走离屏贴图。
+        paintEllipticalGradient(context, node, paint, options);
+      } else {
+        context.fillStyle = canvasPaint(context, node, paint);
+        context.fill();
+      }
       // 阴影只需要投一次：多层填充各投一次会让影子叠得更黑。
       if (index === 0) {
         context.shadowColor = "transparent";
@@ -146,6 +247,49 @@ function drawShape(context: CanvasRenderingContext2D, node: SceneNode): void {
     context.lineWidth = node.strokeWidth;
     context.stroke();
   }
+}
+
+/**
+ * 椭圆渐变：离屏画一张圆形渐变，按椭圆的外接矩形贴回主画布。
+ *
+ * 三步：
+ * 1. 先用末位色铺满形状——椭圆之外的区域在真实的椭圆渐变里也是末位色，
+ *    而且这一次填充顺带把投影投出去；
+ * 2. 把形状裁剪起来，避免渐变糊到形状外面；
+ * 3. 把离屏的圆形渐变按外接矩形贴回去，非等比缩放后正好是椭圆。
+ */
+function paintEllipticalGradient(
+  context: CanvasRenderingContext2D,
+  node: SceneNode,
+  paint: Extract<Paint, { type: "elliptical" }>,
+  options: PaintOptions,
+): void {
+  const geometry = ellipticalGeometry(node.box, paint);
+  const stops = [...paint.stops].sort((a, b) => a.offset - b.offset);
+  const lastColor = stops[stops.length - 1]?.color ?? "#000000";
+  shapePath(context, node);
+  context.fillStyle = lastColor;
+  context.fill();
+  // 投影由上面那次填充投出；接下来的贴图不再重复投影。
+  context.shadowColor = "transparent";
+  context.shadowBlur = 0;
+  context.shadowOffsetX = 0;
+  context.shadowOffsetY = 0;
+
+  const surface = options.gradientSurface?.(paint, options.gradientSize ?? DEFAULT_GRADIENT_SIZE);
+  if (!surface) {
+    // 没有离屏画布就画不出椭圆：退化成圆形渐变，并明确告知，而不是画一个错的椭圆。
+    options.onWarning?.(`画布无法绘制椭圆渐变（节点 ${node.id}）：缺少离屏画布，已退化成圆形渐变。导出到 HTML/SVG 才是准确的。`);
+    context.fillStyle = canvasPaint(context, node, { type: "radial", cx: paint.cx, cy: paint.cy, r: 1, stops: paint.stops });
+    context.fill();
+    return;
+  }
+
+  context.save();
+  shapePath(context, node);
+  context.clip();
+  context.drawImage(surface.image, geometry.cx - geometry.rx, geometry.cy - geometry.ry, geometry.rx * 2, geometry.ry * 2);
+  context.restore();
 }
 
 /** 椭圆节点画椭圆；有几何的矢量画路径；其余形状按圆角矩形处理。 */
@@ -365,16 +509,20 @@ function clamp(value: number, min: number, max: number): number {
  */
 function canvasPaint(context: CanvasRenderingContext2D, node: SceneNode, paint: Paint): string | CanvasGradient {
   if (paint.type === "solid") return paint.color;
-  const gradient = paint.type === "linear"
-    ? (() => {
-      const line = gradientLine(node.box, paint.angle);
-      return context.createLinearGradient(line.x1, line.y1, line.x2, line.y2);
-    })()
-    : (() => {
-      const radial = radialGeometry(node.box, paint);
-      // 内外圆同心、内半径 0：色标从中心一圈圈扩散出去。
-      return context.createRadialGradient(radial.cx, radial.cy, 0, radial.cx, radial.cy, radial.r);
-    })();
-  for (const stop of [...paint.stops].sort((a, b) => a.offset - b.offset)) gradient.addColorStop(stop.offset, stop.color);
-  return gradient;
+  if (paint.type === "linear") {
+    const line = gradientLine(node.box, paint.angle);
+    const gradient = context.createLinearGradient(line.x1, line.y1, line.x2, line.y2);
+    for (const stop of [...paint.stops].sort((a, b) => a.offset - b.offset)) gradient.addColorStop(stop.offset, stop.color);
+    return gradient;
+  }
+  if (paint.type === "radial") {
+    const radial = radialGeometry(node.box, paint);
+    // 内外圆同心、内半径 0：色标从中心一圈圈扩散出去。
+    const gradient = context.createRadialGradient(radial.cx, radial.cy, 0, radial.cx, radial.cy, radial.r);
+    for (const stop of [...paint.stops].sort((a, b) => a.offset - b.offset)) gradient.addColorStop(stop.offset, stop.color);
+    return gradient;
+  }
+  // 椭圆渐变走不到这里：它需要离屏合成，由 paintEllipticalGradient 处理。
+  // 真走到了就退回末位色——画错一个形状比少一个效果更容易被忽略。
+  return [...paint.stops].sort((a, b) => a.offset - b.offset).at(-1)?.color ?? "#000000";
 }

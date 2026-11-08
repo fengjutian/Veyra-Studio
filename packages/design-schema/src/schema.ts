@@ -131,6 +131,15 @@ const paintSchema = z.discriminatedUnion("type", [
     r: z.number().finite().positive(),
     stops: z.array(z.object({ offset: z.number().min(0).max(1), color: z.string().min(1) })).min(2),
   }),
+  z.object({
+    type: z.literal("elliptical"),
+    cx: z.number().finite(),
+    cy: z.number().finite(),
+    // 两个半轴都必须是正数：0 或负数的半轴画不出椭圆。
+    rx: z.number().finite().positive(),
+    ry: z.number().finite().positive(),
+    stops: z.array(z.object({ offset: z.number().min(0).max(1), color: z.string().min(1) })).min(2),
+  }),
 ]);
 
 const appearanceSchema = z.object({
@@ -143,6 +152,12 @@ const appearanceSchema = z.object({
   cornerRadii: z.tuple([nonNegative, nonNegative, nonNegative, nonNegative]).optional(),
   shadow: shadowSchema.optional(),
   blur: nonNegative.optional(),
+  blendMode: z.enum([
+    "normal", "multiply", "screen", "overlay", "darken", "lighten",
+    "color-dodge", "color-burn", "hard-light", "soft-light",
+    "difference", "exclusion", "hue", "saturation", "color", "luminosity",
+  ]).optional(),
+  backgroundBlur: nonNegative.optional(),
 });
 
 /**

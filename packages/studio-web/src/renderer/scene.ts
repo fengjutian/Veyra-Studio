@@ -6,6 +6,7 @@ import {
   computeBooleanGeometry,
   vectorPathCommands,
   type CornerRadii,
+  type BlendMode,
   type DesignDocument,
   type DesignNode,
   type NodeId,
@@ -77,6 +78,10 @@ export interface SceneNode {
   /** 投影与图层模糊（只作用于节点自身的绘制）。 */
   shadow?: ShadowSpec;
   blur?: number;
+  /** 混合模式：节点与它下面的内容怎么混合。画布侧只支持其中一部分。 */
+  blendMode?: BlendMode;
+  /** 背景模糊半径（px）：节点后面的内容被模糊，节点自身不模糊。 */
+  backgroundBlur?: number;
   text?: SceneText;
   image?: SceneImage;
   children: SceneNode[];
@@ -146,6 +151,8 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     ...(node.layout.rotation ? { rotation: node.layout.rotation } : {}),
     ...(node.appearance.shadow ? { shadow: node.appearance.shadow } : {}),
     ...(node.appearance.blur ? { blur: node.appearance.blur } : {}),
+    ...(node.appearance.blendMode && node.appearance.blendMode !== "normal" ? { blendMode: node.appearance.blendMode } : {}),
+    ...(node.appearance.backgroundBlur ? { backgroundBlur: node.appearance.backgroundBlur } : {}),
     children,
   };
 

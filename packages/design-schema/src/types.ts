@@ -122,11 +122,40 @@ export interface ShadowSpec {
   color: string;
 }
 
-/** 渐变色标：`offset` 是 0–1 的位置。 */
+/**
+ * 渐变色标：`offset` 是 0–1 的位置。 */
 export interface PaintStop {
   offset: number;
   color: string;
 }
+
+/**
+ * 混合模式。
+ *
+ * 取值与 CSS `mix-blend-mode` 对齐——这样 HTML/SVG 导出可以直接用同一套名字，
+ * 不必每种格式各翻译一次。
+ *
+ * **注意 Canvas 2D 不支持全部取值**：`hue` / `saturation` / `color` / `luminosity`
+ * 在 `globalCompositeOperation` 里没有对应值，画布上会退回 `normal`
+ * 并给出警告，而不是画出一个看起来对但其实错的结果。
+ */
+export type BlendMode =
+  | "normal"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten"
+  | "color-dodge"
+  | "color-burn"
+  | "hard-light"
+  | "soft-light"
+  | "difference"
+  | "exclusion"
+  | "hue"
+  | "saturation"
+  | "color"
+  | "luminosity";
 
 /**
  * 填充层。
@@ -141,7 +170,14 @@ export type Paint =
    * 径向渐变：`cx`/`cy` 是相对盒子的归一化中心（0–1），`r` 是半径占盒子长边的比例。
    * 三处渲染都用「盒子长边 × r」算圆半径，非等比盒子上也是一个正圆（不是椭圆）。
    */
-  | { type: "radial"; cx: number; cy: number; r: number; stops: PaintStop[] };
+  | { type: "radial"; cx: number; cy: number; r: number; stops: PaintStop[] }
+  /**
+   * 椭圆渐变：`cx`/`cy` 是归一化中心，`rx`/`ry` 是两个半轴（相对盒子的比例）。
+   *
+   * 与 `radial` 的区别就是「圆」与「椭圆」——Figma 的径向渐变默认是正圆，
+   * 拉宽盒子就得到椭圆；这里显式给出两个半轴，避免依赖盒子长宽比。
+   */
+  | { type: "elliptical"; cx: number; cy: number; rx: number; ry: number; stops: PaintStop[] };
 
 export interface AppearanceSpec {
   opacity: number;
@@ -156,6 +192,19 @@ export interface AppearanceSpec {
   shadow?: ShadowSpec;
   /** 图层模糊半径（px）；0 表示不模糊。 */
   blur?: number;
+  /**
+   * 混合模式；缺省 `normal`。
+   *
+   * 节点级属性（与 `opacity` / `shadow` / `blur` 平级），
+   * 决定这个节点与**它下面的内容**如何混合——语义对齐 Penpot 的 `:blend-mode`。
+   */
+  blendMode?: BlendMode;
+  /**
+   * 背景模糊半径（px）：节点**后面**的内容被模糊，节点自身不模糊。
+   *
+   * 与 `blur`（图层模糊，模糊节点自己）是两件事。
+   */
+  backgroundBlur?: number;
 }
 
 export interface PropertyBindings {

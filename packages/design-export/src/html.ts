@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -202,9 +202,13 @@ function renderVectorPath(
       if (paint.type === "linear") {
         const line = gradientLine(local, paint.angle);
         defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
-      } else {
+      } else if (paint.type === "radial") {
         const radial = radialGeometry(local, paint);
         defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${num(radial.cx)}" cy="${num(radial.cy)}" r="${num(radial.r)}">${stops}</radialGradient>`);
+      } else {
+        // 椭圆渐变：单位圆 + gradientTransform 缩放成椭圆（SVG 没有原生椭圆径向渐变）。
+        const ellipse = ellipticalGeometry(local, paint);
+        defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="matrix(${num(ellipse.rx)} 0 0 ${num(ellipse.ry)} ${num(ellipse.cx)} ${num(ellipse.cy)})">${stops}</radialGradient>`);
       }
       fill = `url(#${id})`;
     }
@@ -247,6 +251,11 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   addSize(declarations, "width", node.layout.widthMode, node.layout.width, parent);
   addSize(declarations, "height", node.layout.heightMode, node.layout.height, parent);
   declarations.push(`opacity:${node.appearance.opacity}`);
+  // 混合模式：与 CSS `mix-blend-mode` 同名，不需要翻译。
+  const blend = cssBlendMode(node.appearance.blendMode);
+  if (blend) declarations.push(`mix-blend-mode:${blend}`);
+  // 背景模糊：节点后面的内容被模糊，节点自身不模糊。
+  if (node.appearance.backgroundBlur) declarations.push(`backdrop-filter:blur(${num(node.appearance.backgroundBlur)}px)`);
   if (!node.visible) declarations.push("display:none");
   const fills = resolveFills(document, node);
   if (fills[0] && !pathVector) {
@@ -473,10 +482,17 @@ function cssPaint(node: DesignNode, paint: Paint, tokenVariables: Record<string,
     .map(stop => `${safeCssValue(stop.color)} ${num(stop.offset * 100)}%`)
     .join(", ");
   if (paint.type === "linear") return `linear-gradient(${num(paint.angle)}deg, ${stops})`;
-  // CSS 的 circle 半径不接受百分比，所以用 px：按布局尺寸算，和画布/SVG 的半径一致。
-  // 代价是节点被拉伸时渐变的半径不会跟着缩放（导出产物里通常无所谓）。
-  const radius = paint.r * Math.max(node.layout.width, node.layout.height);
-  return `radial-gradient(circle ${num(radius)}px at ${num(paint.cx * 100)}% ${num(paint.cy * 100)}%, ${stops})`;
+  if (paint.type === "radial") {
+    // CSS 的 circle 半径不接受百分比，所以用 px：按布局尺寸算，和画布/SVG 的半径一致。
+    // 代价是节点被拉伸时渐变的半径不会跟着缩放（导出产物里通常无所谓）。
+    const radius = paint.r * Math.max(node.layout.width, node.layout.height);
+    return `radial-gradient(circle ${num(radius)}px at ${num(paint.cx * 100)}% ${num(paint.cy * 100)}%, ${stops})`;
+  }
+  // 椭圆渐变：CSS 的 ellipse 尺寸是「水平半径 垂直半径」两个值。
+  // 半径同样用 px（CSS 的 ellipse 半径也不接受百分比）。
+  const rx = paint.rx * node.layout.width;
+  const ry = paint.ry * node.layout.height;
+  return `radial-gradient(ellipse ${num(rx)}px ${num(ry)}px at ${num(paint.cx * 100)}% ${num(paint.cy * 100)}%, ${stops})`;
 }
 /**
  * 多层填充时的一层 CSS 背景图。

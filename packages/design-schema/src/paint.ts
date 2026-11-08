@@ -52,3 +52,30 @@ export function radialGeometry(box: { x: number; y: number; width: number; heigh
     r: Math.max(paint.r, 1e-6) * Math.max(box.width, box.height),
   };
 }
+
+/** 椭圆渐变的绝对几何：中心与两个半轴都在场景坐标里。 */
+export interface EllipticalGeometry {
+  cx: number;
+  cy: number;
+  rx: number;
+  ry: number;
+}
+
+/**
+ * 椭圆渐变 → 场景坐标里的椭圆。
+ *
+ * `rx` / `ry` 分别是半轴占盒子**宽 / 高**的比例：`rx = ry = 0.5` 时椭圆正好内接于盒子。
+ * 基准与径向渐变的 `r`（占长边的比例）不同——径向渐变只有一个半径，只能挑一个基准；
+ * 椭圆有两个轴，各自对各自的边才说得清。
+ */
+export function ellipticalGeometry(
+  box: { x: number; y: number; width: number; height: number },
+  paint: { cx: number; cy: number; rx: number; ry: number },
+): EllipticalGeometry {
+  return {
+    cx: box.x + paint.cx * box.width,
+    cy: box.y + paint.cy * box.height,
+    rx: Math.max(paint.rx, 1e-6) * box.width,
+    ry: Math.max(paint.ry, 1e-6) * box.height,
+  };
+}
