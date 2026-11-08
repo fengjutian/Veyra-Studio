@@ -253,6 +253,253 @@ export function assignCellsByOrder(nodeIds: string[], columns: number): GridCell
   return cells;
 }
 
+/* ------------------------------------------------------------------------ *
+ * 轨道编辑（Track editing）
+ *
+ * 上面的求解器回答的是「按声明怎么排」；这里回答的是「编辑期怎么算宽度、
+ * 怎么改声明」。两者共用同一套轨道语义（`GridTrack` 的五种类型、
+ * `fixed` / `fraction` 的分配口径），差别只在**放不下时怎么办**：
+ *
+ * - 求解器**不夹紧**，如实上报 `overflowWidth` / `overflowHeight`——画布上看到
+ *   溢出是**事实**，不能被善意改写。
+ * - 轨道编辑**夹紧**，把宽度收到最小宽度为止——编辑器要始终放得下，
+ *   让用户看见结果。
+ *
+ * 规格见 `docs/grid-layout.md`。
+ * ------------------------------------------------------------------------ */
+
+/**
+ * 轨道最小宽度（px）。
+ *
+ * 再窄的轨道既点不中也画不清——24px 是「还能看见、还能拖」的底线。
+ */
+export const MIN_GRID_TRACK_WIDTH = 24;
+
+/**
+ * 内容轨道：宽度由内容决定（`auto` / `min-content` / `max-content`）。
+ *
+ * 内容轨道**不能直接拖拽改宽度**——它没有可写回的像素尺寸，
+ * 宽度是内容与剩余空间共同决定的。
+ */
+export function isContentGridTrack(track: GridTrack): boolean {
+  return track.type === "auto" || track.type === "min-content" || track.type === "max-content";
+}
+
+/**
+ * 轨道类型能否被直接拖拽调整宽度。
+ *
+ * `fixed` 有像素、`fraction` 有权重，两者都能反解出目标宽度；
+ * 内容轨道不行。
+ */
+export function isResizableGridTrack(track: GridTrack): boolean {
+  return track.type === "fixed" || track.type === "fraction";
+}
+
+/** 轨道基准宽度（固有尺寸）的计算参数。 */
+export interface GridTrackBaseOptions {
+  /** 轨道最小宽度；缺省 {@link MIN_GRID_TRACK_WIDTH}。 */
+  minWidth?: number;
+  /** 内容轨道的实测宽度（与轨道顺序对齐）；缺项按 minWidth 估算。 */
+  contentWidths?: (number | undefined)[];
+}
+
+/**
+ * 每条轨道的基准宽度（固有尺寸）。
+ *
+ * - `fixed` → 声明的像素尺寸；
+ * - `fraction` → 0（弹性轨道，先不占位，稍后按权重瓜分剩余空间）；
+ * - 内容轨道 → 实测宽度；没有实测值时按最小宽度估算。
+ */
+export function gridTrackBaseWidths(tracks: GridTrack[], options: GridTrackBaseOptions = {}): number[] {
+  const minWidth = Math.max(0, options.minWidth ?? MIN_GRID_TRACK_WIDTH);
+  return tracks.map((track, index) => {
+    if (track.type === "fixed") return Math.max(0, track.size);
+    if (track.type === "fraction") return 0;
+    return Math.max(minWidth, options.contentWidths?.[index] ?? minWidth);
+  });
+}
+
+/** 轨道宽度解析的参数。 */
+export interface GridTrackWidthOptions extends GridTrackBaseOptions {
+  /** 轨道之间的间隙（px）。 */
+  gap: number;
+  /**
+   * 容器内容区宽度（**含**间隙占位，与 `solveTracks` 的 `available` 同义）。
+   */
+  availableWidth: number;
+  /**
+   * 被钉住的轨道下标：收缩时不会低于它当前的基准宽度。
+   *
+   * 用于「用户正在拖的那条轨道」——它必须守住用户给的尺寸，
+   * 差额由其它轨道承担。
+   */
+  pinnedIndex?: number;
+}
+
+/** 轨道宽度解析的结果。 */
+export interface GridTrackWidthResult {
+  /** 每条轨道的像素宽度。 */
+  widths: number[];
+  /** 轨道占位之外的剩余空间（正数表示容器还有空余）。 */
+  slack: number;
+  /** 放不下时的溢出量（正数表示超出）。 */
+  overflow: number;
+}
+
+/**
+ * 把轨道声明解析成像素宽度。
+ *
+ * 规则（与 `solveTracks` 同源，多了「放不下就夹紧」）：
+ *
+ * 1. 基准宽度：`fixed` 取尺寸、`fraction` 取 0、内容轨道取实测宽度（缺省按最小宽估算）。
+ * 2. 剩余空间 ≥ 0 → `fraction` 按权重瓜分；没有 `fraction` 时内容轨道平分
+ *    （CSS `auto` 轨道的拉伸行为）；全是 `fixed` 时剩余空间成为空余。
+ * 3. 剩余空间 < 0 → 按「内容轨道 → 固定轨道」的顺序等比收缩，每条最多收到最小宽度。
+ */
+export function resolveGridTrackWidths(tracks: GridTrack[], options: GridTrackWidthOptions): GridTrackWidthResult {
+  const count = tracks.length;
+  const gap = Math.max(0, options.gap);
+  const minWidth = Math.max(0, options.minWidth ?? MIN_GRID_TRACK_WIDTH);
+  if (!count) return { widths: [], slack: Math.max(0, options.availableWidth), overflow: 0 };
+
+  const gaps = (count - 1) * gap;
+  const space = Math.max(0, options.availableWidth - gaps);
+  const widths = gridTrackBaseWidths(tracks, { minWidth, contentWidths: options.contentWidths });
+
+  // 收缩下限：默认是最小宽度；被钉住的轨道以它自己的基准宽度为下限。
+  const floors = widths.map((width, index) => (index === options.pinnedIndex ? width : minWidth));
+
+  const fractionIndexes: number[] = [];
+  const contentIndexes: number[] = [];
+  const fixedIndexes: number[] = [];
+  tracks.forEach((track, index) => {
+    if (track.type === "fraction") fractionIndexes.push(index);
+    else if (isContentGridTrack(track)) contentIndexes.push(index);
+    else fixedIndexes.push(index);
+  });
+
+  const baseTotal = widths.reduce((sum, size) => sum + size, 0);
+  const free = space - baseTotal;
+
+  if (free >= 0) {
+    if (fractionIndexes.length) {
+      const weights = fractionIndexes.map(index => {
+        const track = tracks[index];
+        return track && track.type === "fraction" ? Math.max(0, track.weight) : 0;
+      });
+      const weightTotal = weights.reduce((sum, weight) => sum + weight, 0);
+      let handed = 0;
+      fractionIndexes.forEach((index, order) => {
+        // 最后一条 fraction 轨道吃掉舍入误差，避免几条轨道加起来比可用空间少 1px。
+        const share = order === fractionIndexes.length - 1 || weightTotal <= 0
+          ? Math.max(0, free - handed)
+          : (free * weights[order]) / weightTotal;
+        widths[index] = share;
+        handed += share;
+      });
+    } else if (contentIndexes.length) {
+      // 没有 fraction 时内容轨道平分剩余空间（CSS `auto` 轨道的拉伸行为）。
+      const each = free / contentIndexes.length;
+      contentIndexes.forEach(index => { widths[index] += each; });
+    }
+  } else {
+    // 放不下：内容轨道先让，固定轨道后让，每条最多收到下限。
+    const remaining = shrinkGridTracks(widths, contentIndexes, -free, floors);
+    shrinkGridTracks(widths, fixedIndexes, remaining, floors);
+  }
+
+  const total = widths.reduce((sum, size) => sum + size, 0);
+  return { widths, slack: Math.max(0, space - total), overflow: Math.max(0, total - space) };
+}
+
+/**
+ * 等比收缩一组轨道，返回没能收掉的差额。
+ *
+ * 每条轨道最多收到自己的下限；触底的轨道退出本轮，
+ * 剩下的差额由还站得住的轨道继续承担（water-filling）。
+ */
+function shrinkGridTracks(widths: number[], indexes: number[], deficit: number, floors: number[]): number {
+  let remaining = deficit;
+  for (let pass = 0; pass < indexes.length && remaining > 1e-9; pass++) {
+    const active = indexes.filter(index => widths[index] - floors[index] > 1e-9);
+    if (!active.length) break;
+    const weightTotal = active.reduce((sum, index) => sum + widths[index], 0);
+    if (weightTotal <= 1e-9) break;
+    let handed = 0;
+    for (const index of active) {
+      // 份额按本轮开始时的剩余缺口算：谁触底谁退出，缺口由下一轮补上。
+      const share = (remaining * widths[index]) / weightTotal;
+      const take = Math.min(share, widths[index] - floors[index]);
+      widths[index] -= take;
+      handed += take;
+    }
+    remaining -= handed;
+    if (handed <= 1e-9) break;
+  }
+  return remaining;
+}
+
+/** 把像素宽度写回轨道声明时的参数。 */
+export interface GridTrackApplyOptions extends GridTrackBaseOptions {
+  /** 轨道之间的间隙（px）。 */
+  gap: number;
+  /** 容器内容区宽度（含间隙占位）。 */
+  availableWidth: number;
+}
+
+/**
+ * 把解析出来的像素宽度写回轨道声明。
+ *
+ * - `fixed` → `size` = 宽度；
+ * - `fraction` → 权重与目标宽度成正比（`fraction` 轨道只有比例关系有意义）；
+ * - 内容轨道 → **原样保留**：它的宽度由内容决定，没有可写回的尺寸。
+ *
+ * 只有当 `fraction` 轨道正好吃掉了全部剩余空间时宽度才能反解成权重；
+ * 否则（空间不够、轨道被压到 0）保留原权重。
+ */
+export function applyGridTrackWidths(tracks: GridTrack[], widths: number[], options: GridTrackApplyOptions): GridTrack[] {
+  const count = tracks.length;
+  if (!count) return [];
+  const gap = Math.max(0, options.gap);
+  const gaps = (count - 1) * gap;
+  const space = Math.max(0, options.availableWidth - gaps);
+  const bases = gridTrackBaseWidths(tracks, { minWidth: options.minWidth, contentWidths: options.contentWidths });
+  const baseTotal = bases.reduce((sum, size) => sum + size, 0);
+  const freeSpace = space - baseTotal;
+
+  const fractionIndexes: number[] = [];
+  tracks.forEach((track, index) => { if (track.type === "fraction") fractionIndexes.push(index); });
+  const fractionWidth = fractionIndexes.reduce((sum, index) => sum + Math.max(0, widths[index] ?? 0), 0);
+  const weightTotal = fractionIndexes.reduce((sum, index) => {
+    const track = tracks[index];
+    return sum + (track && track.type === "fraction" ? Math.max(0, track.weight) : 0);
+  }, 0);
+  const solvable = fractionIndexes.length > 0
+    && fractionWidth > 1e-9
+    && freeSpace > 1e-9
+    && Math.abs(fractionWidth - freeSpace) <= 1e-6;
+
+  return tracks.map((track, index) => {
+    if (track.type === "fixed") return { type: "fixed", size: Math.max(0, round2(widths[index] ?? 0)) };
+    if (track.type === "fraction") {
+      if (!solvable) return track;
+      const weight = ((widths[index] ?? 0) * weightTotal) / freeSpace;
+      return { type: "fraction", weight: Math.max(0.001, round3(weight)) };
+    }
+    return track;
+  });
+}
+
+/** 保留两位小数。 */
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/** 保留三位小数。 */
+function round3(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
 /**
  * 补出隐式轨道：子节点占用的行列超出已声明的轨道数时，在末尾追加 `auto` 轨道。
  *

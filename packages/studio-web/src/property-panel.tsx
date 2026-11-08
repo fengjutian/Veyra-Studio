@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import { MAX_LIST_INDENT, TEXT_DEFAULTS, applyTextRunStyle, paragraphIndexAt, paragraphRanges, paragraphStyleAt, runStyleAt, type BlendMode, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type ListType, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextNode, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
+import { GridTrackEditor as GridTrackVisualEditor } from "./grid-track-editor";
 import type { BooleanOperation } from "./boolean";
 
 export interface PropertyPanelProps {
@@ -172,6 +173,14 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
               onChange={align => patchGrid({ align: align as NonNullable<LayoutSpec["grid"]>["align"] })}
             />
             <GridTrackEditor label="列" tracks={grid.columns} disabled={disabled} onChange={columns => patchGrid({ columns })} />
+            <GridTrackVisualEditor
+              tracks={grid.columns}
+              gutter={grid.columnGap}
+              margin={0}
+              containerWidth={Math.max(0, layout.width - padding.left - padding.right)}
+              disabled={disabled}
+              onChange={next => patchGrid({ columns: next.tracks, columnGap: next.gutter })}
+            />
             <GridTrackEditor label="行" tracks={grid.rows} disabled={disabled} onChange={rows => patchGrid({ rows })} />
             <NumberField label="列间距" value={grid.columnGap} min={0} disabled={disabled} onCommit={columnGap => patchGrid({ columnGap })} />
             <NumberField label="行间距" value={grid.rowGap} min={0} disabled={disabled} onCommit={rowGap => patchGrid({ rowGap })} />
