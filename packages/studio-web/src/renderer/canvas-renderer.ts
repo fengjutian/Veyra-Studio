@@ -60,6 +60,32 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
 
   context.save();
   context.globalAlpha = opacity;
+  // 每层都从「无阴影、无滤镜」开始：父节点的效果不继承给子节点（与 Figma 一致）。
+  context.shadowColor = "transparent";
+  context.shadowBlur = 0;
+  context.shadowOffsetX = 0;
+  context.shadowOffsetY = 0;
+  // `filter` 在新浏览器里才有；缺了就当没有模糊，不要让整页崩掉。
+  if ("filter" in context) context.filter = "none";
+
+  if (node.shadow) {
+    context.shadowColor = node.shadow.color;
+    context.shadowBlur = node.shadow.blur;
+    context.shadowOffsetX = node.shadow.x;
+    context.shadowOffsetY = node.shadow.y;
+  }
+  if (node.blur) {
+    if ("filter" in context) context.filter = `blur(${node.blur}px)`;
+  }
+
+  // 旋转绕节点中心；子树画在同一个上下文里，因此自动继承父级的旋转。
+  if (node.rotation) {
+    const centerX = node.box.x + node.box.width / 2;
+    const centerY = node.box.y + node.box.height / 2;
+    context.translate(centerX, centerY);
+    context.rotate((node.rotation * Math.PI) / 180);
+    context.translate(-centerX, -centerY);
+  }
 
   if (node.text) {
     drawText(context, node, opacity);

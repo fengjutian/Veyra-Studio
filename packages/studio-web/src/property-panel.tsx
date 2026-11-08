@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, type CornerRadii, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
 import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
 export interface PropertyPanelProps {
   node: DesignNode;
+  /** 父节点：约束只在绝对布局的容器里才有意义，所以面板需要知道父级。 */
+  parent?: DesignNode;
   disabled?: boolean;
-  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask">>): void;
+  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints">>): void;
   onPatchText(patch: TextPatch): void;
   onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
   /** 换一张图：只改节点引用的资源，节点本身不重建。 */
@@ -20,7 +22,7 @@ export interface PropertyPanelProps {
  * absolute and stack modes, fixed/fill/hug sizing, gap, padding and alignment —
  * so the editor can drive the same semantics the exporters use.
  */
-export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage }: PropertyPanelProps) {
+export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";
   const padding = resolvePadding(layout);
@@ -32,6 +34,11 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
     const radii = [...(node.appearance.cornerRadii ?? uniformRadii(node.appearance.cornerRadius ?? 0))] as CornerRadii;
     radii[index] = value;
     onPatch({ appearance: { ...node.appearance, cornerRadii: radii } });
+  };
+  /** 阴影是整体替换的对象：合并时保留没改的字段，空对象就是「新建默认阴影」。 */
+  const patchShadow = (changes: Partial<ShadowSpec>) => {
+    const shadow: ShadowSpec = { x: 0, y: 4, blur: 12, color: "#00000040", ...node.appearance.shadow, ...changes };
+    onPatch({ appearance: { ...node.appearance, shadow } });
   };
 
   return (
@@ -81,6 +88,7 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
         <NumberField label="Y" value={layout.y} disabled={disabled} onCommit={y => patchLayout({ y })} />
         <NumberField label="宽" value={layout.width} min={0} disabled={disabled} onCommit={width => patchLayout({ width })} />
         <NumberField label="高" value={layout.height} min={0} disabled={disabled} onCommit={height => patchLayout({ height })} />
+        <NumberField label="旋转" value={layout.rotation ?? 0} disabled={disabled} onCommit={rotation => patchLayout({ rotation: rotation === 0 ? undefined : rotation })} />
         <Segmented
           label="宽度"
           value={layout.widthMode}
@@ -105,6 +113,27 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
           <NumberField label="左" value={padding.left} min={0} disabled={disabled} onCommit={left => patchPadding({ left })} />
         </div>
       </Section>
+
+      {/* 约束只对绝对布局容器里的子节点有意义；在页面根或 stack 容器里显示只会误导。 */}
+      {parent && parent.layout.mode === "absolute" && (
+        <Section title="约束">
+          <Segmented
+            label="水平"
+            value={node.constraints?.horizontal ?? "start"}
+            disabled={disabled}
+            options={horizontalConstraintOptions}
+            onChange={horizontal => onPatch({ constraints: { horizontal: horizontal as ConstraintAxis, vertical: node.constraints?.vertical ?? "start" } })}
+          />
+          <Segmented
+            label="垂直"
+            value={node.constraints?.vertical ?? "start"}
+            disabled={disabled}
+            options={verticalConstraintOptions}
+            onChange={vertical => onPatch({ constraints: { horizontal: node.constraints?.horizontal ?? "start", vertical: vertical as ConstraintAxis } })}
+          />
+          <p className="field-hint">父级尺寸变化时生效：贴边保持间距、拉伸、居中或按比例缩放。</p>
+        </Section>
+      )}
 
       <Section title="外观">
         <TextField label="填充" value={node.appearance.fill ?? ""} disabled={disabled} onCommit={fill => onPatch({ appearance: { ...node.appearance, fill: fill || undefined } })} />
@@ -141,6 +170,24 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
             {node.mask ? "取消蒙版" : "用作蒙版（裁剪上方兄弟层）"}
           </button>
         )}
+        {node.appearance.shadow ? (
+          <>
+            <div className="field-grid field-grid-4">
+              <NumberField label="X" value={node.appearance.shadow.x} disabled={disabled} onCommit={x => patchShadow({ x })} />
+              <NumberField label="Y" value={node.appearance.shadow.y} disabled={disabled} onCommit={y => patchShadow({ y })} />
+              <NumberField label="模糊" value={node.appearance.shadow.blur} min={0} disabled={disabled} onCommit={blur => patchShadow({ blur })} />
+            </div>
+            <TextField label="阴影色" value={node.appearance.shadow.color} disabled={disabled} onCommit={color => patchShadow({ color })} />
+            <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ appearance: { ...node.appearance, shadow: undefined } })}>
+              移除阴影
+            </button>
+          </>
+        ) : (
+          <button type="button" className="link-button" disabled={disabled} onClick={() => patchShadow({})}>
+            添加投影
+          </button>
+        )}
+        <NumberField label="图层模糊" value={node.appearance.blur ?? 0} min={0} disabled={disabled} onCommit={blur => onPatch({ appearance: { ...node.appearance, blur: blur > 0 ? blur : undefined } })} />
       </Section>
 
       {node.type === "image" && (
@@ -208,6 +255,23 @@ const imageFitOptions = [
   { value: "cover", label: "覆盖" },
   { value: "contain", label: "适应" },
   { value: "fill", label: "拉伸" },
+];
+
+/** 约束选项：水平方向贴左/贴右，垂直方向贴上/贴下，其余三个轴通用。 */
+const horizontalConstraintOptions = [
+  { value: "start", label: "左" },
+  { value: "end", label: "右" },
+  { value: "center", label: "居中" },
+  { value: "stretch", label: "拉伸" },
+  { value: "scale", label: "缩放" },
+];
+
+const verticalConstraintOptions = [
+  { value: "start", label: "上" },
+  { value: "end", label: "下" },
+  { value: "center", label: "居中" },
+  { value: "stretch", label: "拉伸" },
+  { value: "scale", label: "缩放" },
 ];
 
 const fontWeightOptions = [

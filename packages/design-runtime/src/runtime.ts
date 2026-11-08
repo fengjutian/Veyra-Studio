@@ -1,4 +1,5 @@
 import { findOwningComponentId, isValidVectorPath, overridableFields, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
+import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
 export class RevisionConflictError extends Error {
@@ -140,7 +141,15 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
           throw new CommandError(`Node ${node.id} of type ${node.type} cannot be used as a mask`);
         }
       }
+      const previousLayout = structuredClone(node.layout);
       Object.assign(node, structuredClone(command.payload.patch));
+      // 父级尺寸变化时，子节点按约束重排——和父级 patch 落在同一条命令里，所以是一次撤销。
+      if (command.payload.patch.layout) {
+        for (const change of applyConstraints(document, node, previousLayout, node.layout)) {
+          const child = document.nodes[change.id];
+          if (child) child.layout = structuredClone(change.layout);
+        }
+      }
       return;
     }
     case "text.patch": {

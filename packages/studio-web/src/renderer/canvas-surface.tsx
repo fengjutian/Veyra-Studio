@@ -8,6 +8,7 @@ import { paintDrawPreview, paintMarquee, paintPathAnchors, paintPathEdit, paintP
 import type { SnapGuide } from "./snapping";
 import { selectedBoxes, selectionBounds, type Rect } from "./selection";
 import { applyBoxOverrides } from "./selection-drag";
+import { rotatedBounds, toRadians } from "./rotation";
 import { createCanvas2DRenderer, type SceneRenderer } from "./canvas-renderer";
 
 /**
@@ -108,8 +109,12 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
         if (penPath?.length) paintPathPreview(context, penPath, { zoom });
         if (penAnchors?.length) paintPathAnchors(context, penAnchors, { zoom, closing: penClosing });
         if (selection?.length) {
-          const bounds = selectionBounds(selectedBoxes(paintedScene, selection));
-          if (bounds) paintSelectionOverlay(context, bounds, { zoom });
+          // 单选且旋转时，轮廓要按旋转后的形状画；多选时用各节点的旋转 AABB 合并。
+          const radians = selectionRotation(paintedScene, selection);
+          const bounds = radians
+            ? selectionBounds(selectedBoxes(paintedScene, selection))
+            : selectionBounds(rotatedAabbBoxes(paintedScene, selection));
+          if (bounds) paintSelectionOverlay(context, bounds, { zoom, rotation: radians });
         }
         if (editAnchors?.length) paintPathEdit(context, { anchors: editAnchors, handles: editHandles ?? [], selected: editSelected ?? null }, { zoom });
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
@@ -142,4 +147,33 @@ function applyPathOverride(nodes: SceneNode[], override?: { id: string; commands
     return { ...node, path: override.commands, children };
   });
   return walk(nodes);
+}
+/** 单选节点的旋转角（弧度）；多选或未旋转返回 0。 */
+function selectionRotation(scene: SceneNode[], ids: string[]): number {
+  if (ids.length !== 1) return 0;
+  const node = findSceneNode(scene, ids[0]!);
+  return node?.rotation ? toRadians(node.rotation) : 0;
+}
+
+/** 选中节点的旋转 AABB：多选包围盒必须包住转出去的部分。 */
+function rotatedAabbBoxes(scene: SceneNode[], ids: string[]): SceneBox[] {
+  const wanted = new Set(ids);
+  const boxes: SceneBox[] = [];
+  const walk = (nodes: SceneNode[]) => {
+    for (const node of nodes) {
+      if (wanted.has(node.id)) boxes.push(node.rotation ? rotatedBounds(node.box, toRadians(node.rotation)) : node.box);
+      if (node.children.length) walk(node.children);
+    }
+  };
+  walk(scene);
+  return boxes;
+}
+
+function findSceneNode(nodes: SceneNode[], id: string): SceneNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const found = findSceneNode(node.children, id);
+    if (found) return found;
+  }
+  return undefined;
 }

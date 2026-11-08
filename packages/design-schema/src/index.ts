@@ -4,4 +4,5 @@ export * from "./schema";
 export * from "./validate";
 export * from "./migrate";
 export * from "./tokens";
+export * from "./paint";
 export * from "./components";

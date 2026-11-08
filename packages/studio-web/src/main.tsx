@@ -361,6 +361,7 @@ function App() {
     tool,
     pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
     layoutOf: id => document?.nodes[id]?.layout,
+    rotationOf: id => document?.nodes[id]?.layout.rotation,
     onCommit: changes => patchLayouts(changes),
     onMarquee: ids => setSelectedIds(ids),
     onDraw: (rect, info) => createNodeFromDraw(info.tool, rect, info),
@@ -809,7 +810,7 @@ function App() {
     }
   };
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
-  const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance">>) => selected && patchNode(selected.id, patchValue);
+  const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints">>) => selected && patchNode(selected.id, patchValue);
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
   const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
   // 图片的 fit 单独走 image.patch，和文字一样不扩张通用节点 patch。
@@ -1514,7 +1515,7 @@ function App() {
             ? (
               <section className="inspector-section">
                 <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
-                <PropertyPanel node={selected} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} />
+                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} />
                 <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}

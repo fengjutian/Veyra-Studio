@@ -200,6 +200,14 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   declarations.push(`opacity:${node.appearance.opacity}`);
   if (!node.visible) declarations.push("display:none");
   if (node.appearance.fill && !pathVector) declarations.push(`background:${boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables)}`);
+  // 旋转绕元素中心（transform-origin 的初始值就是 50% 50%），与画布、SVG 一致。
+  if (node.layout.rotation) declarations.push(`transform:rotate(${num(node.layout.rotation)}deg)`);
+  if (node.appearance.shadow) {
+    const shadow = node.appearance.shadow;
+    // 颜色来自文档，仍然走一次 safeCssValue，避免有人把 `;}` 塞进颜色里。
+    declarations.push(`box-shadow:${num(shadow.x)}px ${num(shadow.y)}px ${num(shadow.blur)}px ${safeCssValue(shadow.color)}`);
+  }
+  if (node.appearance.blur) declarations.push(`filter:blur(${num(node.appearance.blur)}px)`);
   // 描边和圆角都可以由 token 驱动；绑定存在但节点没写 fallback 时同样要输出。
   if ((resolveStroke(document, node) || node.bindings?.stroke) && !pathVector) declarations.push(`border:${num(node.appearance.strokeWidth ?? 1)}px solid ${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
   const radii = resolveCornerRadii(document, node);

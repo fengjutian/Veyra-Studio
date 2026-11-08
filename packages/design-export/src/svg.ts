@@ -97,7 +97,14 @@ function renderNode(
   const raw = boxes[nodeId] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
   const box = shiftBox(raw, options.origin);
   const style = nodeStyle(document, node, tokenVariables);
-  const common = `data-node-id="${escapeXml(node.id)}" style="${escapeXml(style)}"`;
+  // 旋转绕盒子中心，与画布/HTML 一致；导出坐标已经平移到视口，中心也一起平移。
+  const rotation = node.layout.rotation ?? 0;
+  const transform = rotation
+    ? ` transform="rotate(${num(rotation)} ${num(box.x + box.width / 2)} ${num(box.y + box.height / 2)})"`
+    : "";
+  // 阴影/模糊走 <filter>；同一个 filter 挂在 <g> 上时会连子节点一起处理，与 Figma 的图层效果一致。
+  const effect = node.appearance.shadow || node.appearance.blur ? registerEffect(node, state) : undefined;
+  const common = `data-node-id="${escapeXml(node.id)}" style="${escapeXml(style)}"${transform}${effect ? ` filter="url(#${effect})"` : ""}`;
 
   if (node.type === "text") {
     // SVG 没有 text-align，用 text-anchor + x 表达盒内对齐。
@@ -362,4 +369,25 @@ function dedupeDiagnostics(diagnostics: ExportDiagnostic[]): ExportDiagnostic[] 
     seen.add(key);
     return true;
   });
+}
+
+/**
+ * 阴影 / 模糊的 `<filter>`。
+ *
+ * `feDropShadow` 的 `stdDeviation` 与 CSS/Canvas 的模糊半径不是同一量纲：CSS 的模糊半径
+ * 约等于 `2 × stdDeviation`，所以这里除以 2。别把它「修正」成直接用 blur。
+ */
+function registerEffect(node: DesignNode, state: MaskState): string {
+  const id = `effect-${state.nextId++}`;
+  const primitives: string[] = [];
+  if (node.appearance.blur) {
+    primitives.push(`<feGaussianBlur stdDeviation="${num(node.appearance.blur / 2)}" />`);
+  }
+  if (node.appearance.shadow) {
+    const shadow = node.appearance.shadow;
+    primitives.push(`<feDropShadow dx="${num(shadow.x)}" dy="${num(shadow.y)}" stdDeviation="${num(shadow.blur / 2)}" flood-color="${escapeXml(shadow.color)}" />`);
+  }
+  // 滤镜区域放大到 200%，否则偏移/模糊到元素外的部分会被裁掉。
+  state.defs.push(`<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">${primitives.join("")}</filter>`);
+  return id;
 }

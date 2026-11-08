@@ -152,3 +152,22 @@ test("exports a mask as a css clip-path wrapper", () => {
   // 蒙版自身不渲染。
   assert.doesNotMatch(result.html, /data-node-id="mask"/);
 });
+test("exports rotation as a css transform", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    layout: { ...defaultLayout(), x: 100, y: 50, width: 200, height: 100, rotation: -45 },
+  };
+  const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /transform:rotate\(-45deg\)/);
+});
+test("exports shadow and blur as css", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), shadow: { x: 4, y: 8, blur: 12, color: "#00000080" }, blur: 6 },
+  };
+  const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /box-shadow:4px 8px 12px #00000080/);
+  assert.match(result.html, /filter:blur\(6px\)/);
+});

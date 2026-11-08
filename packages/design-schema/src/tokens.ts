@@ -1,4 +1,4 @@
-import type { CornerRadii, DesignDocument, DesignNode, TokenValue } from "./types";
+import type { CornerRadii, DesignDocument, DesignNode, Paint, TokenValue } from "./types";
 
 /**
  * Token 解析。
@@ -29,6 +29,30 @@ export function tokenColor(document: DesignDocument, name: string | undefined): 
 /** 描边颜色：绑定优先，否则用节点自身的描边。 */
 export function resolveStroke(document: DesignDocument, node: DesignNode): string | undefined {
   return tokenColor(document, node.bindings?.stroke) ?? node.appearance.stroke;
+}
+
+/**
+ * 填充层。
+ *
+ * 颜色 token 只有一个颜色，所以**绑定生效时整组填充被压成单一实色**——渐变没法
+ * 绑定到一个颜色 token 上。画布、HTML、SVG、对比度检查都走这个入口，保证「绑定胜出」
+ * 这个规则只有一份实现。
+ */
+export function resolveFills(document: DesignDocument, node: DesignNode): Paint[] {
+  const bound = tokenColor(document, node.bindings?.fill);
+  if (bound) return [{ type: "solid", color: bound }];
+  return node.appearance.fills ?? [];
+}
+
+/**
+ * 填充的「主色」：实色取自身，渐变取第一个色标。
+ *
+ * 文本颜色、对比度检查这类只接受单一颜色的地方用它；渐变文本目前退化成首色标。
+ */
+export function primaryFillColor(document: DesignDocument, node: DesignNode): string | undefined {
+  const first = resolveFills(document, node)[0];
+  if (!first) return undefined;
+  return first.type === "solid" ? first.color : first.stops[0]?.color;
 }
 
 /** 圆角：`radius` 绑定优先，否则用节点自身的值。 */

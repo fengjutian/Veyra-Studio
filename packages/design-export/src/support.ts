@@ -26,6 +26,7 @@ export const EXPORT_SUPPORT_MATRIX: ExportSupportEntry[] = [
   { feature: "text-wrapping", html: "exact", svg: "exact", png: "exact", note: "Line breaks come from the injected text measurer." },
   { feature: "tokens", html: "exact", svg: "exact", png: "exact", note: "Color, number and string tokens become CSS variables / SVG variables." },
   { feature: "shapes", html: "exact", svg: "exact", png: "exact", note: "Frame, rectangle and ellipse with fill, stroke, corner radius and opacity." },
+  { feature: "effects", html: "exact", svg: "exact", png: "rasterized", note: "Drop shadow and layer blur. SVG uses <feDropShadow>/<feGaussianBlur> with stdDeviation = blur / 2; HTML uses box-shadow / filter." },
   { feature: "image-asset", html: "exact", svg: "exact", png: "rasterized", note: "Requires a resolvable asset; the workbench inlines data URLs. Remote URLs are rejected as unsafe." },
   { feature: "component-instance", html: "approximated", svg: "approximated", png: "approximated", note: "Only the materialized instance children are exported; slots are not re-evaluated." },
   { feature: "component-override", html: "exact", svg: "exact", png: "exact", note: "Overrides are applied to the materialized children before export, so text and appearance already include them." },

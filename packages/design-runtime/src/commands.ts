@@ -33,7 +33,7 @@ export interface PatchNodeCommand {
   type: "node.patch";
   payload: {
     id: NodeId;
-    patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask">>;
+    patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask" | "constraints">>;
   };
 }
 

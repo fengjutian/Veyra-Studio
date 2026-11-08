@@ -1,5 +1,6 @@
 import {
   resolveCornerRadii,
+  resolveFills,
   resolveRadius,
   resolveStroke,
   tokenColor,
@@ -9,6 +10,7 @@ import {
   type DesignNode,
   type NodeId,
   type PathCommand,
+  type ShadowSpec,
 } from "@ufira/design-schema";
 
 /**
@@ -62,8 +64,13 @@ export interface SceneNode {
   path?: PathCommand[];
   /** 这个节点是蒙版：不绘制自身，只裁剪同父级里排在它上面的兄弟。 */
   mask?: boolean;
-  /** 裁剪这个节点的蒙版（按兄弟顺序累积）。 */
+  /** 蒙版裁剪这个节点的蒙版（按兄弟顺序累积）。 */
   maskedBy?: SceneNode[];
+  /** 旋转角（角度制，顺时针为正，绕节点中心）；省略表示不旋转。 */
+  rotation?: number;
+  /** 投影与图层模糊（只作用于节点自身的绘制）。 */
+  shadow?: ShadowSpec;
+  blur?: number;
   text?: SceneText;
   image?: SceneImage;
   children: SceneNode[];
@@ -101,7 +108,9 @@ function applySiblingMasks(children: SceneNode[]): SceneNode[] {
 export function buildNode(document: DesignDocument, node: DesignNode | undefined, boxes: Record<string, SceneBox | undefined>): SceneNode | undefined {
   if (!node || node.visible === false) return undefined;
   const box = boxes[node.id] ?? { x: node.layout.x ?? 0, y: node.layout.y ?? 0, width: node.layout.width ?? 0, height: node.layout.height ?? 0 };
-  const fill = tokenColor(document, node.bindings?.fill) ?? node.appearance.fill;
+  const fills = resolveFills(document, node);
+  // 主色：实色取自身、渐变取首个色标。文本颜色与对比度检查只认单一颜色。
+  const fill = fills[0]?.type === "solid" ? fills[0].color : fills[0]?.stops[0]?.color;
   const stroke = resolveStroke(document, node);
   const radii = resolveCornerRadii(document, node);
   // 只有真正四角不同才带 `radii`：四角相同的文档继续走单值分支，导出产物不变。
@@ -116,6 +125,7 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     clip: node.type === "frame" || node.type === "component" || node.type === "instance",
     opacity: node.appearance.opacity ?? 1,
     ...(fill ? { fill } : {}),
+    ...(fills.length ? { paints: fills } : {}),
     ...(stroke ? { stroke } : {}),
     // 描边宽度来自外观；缺省 1px，与旧文档和 DOM 默认边框一致。
     strokeWidth: stroke ? (node.appearance.strokeWidth ?? 1) : 0,
@@ -123,6 +133,9 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     ...(perCorner ? { radii: perCorner } : {}),
     ...(node.type === "vector" && node.geometry ? { path: vectorPathCommands(node.geometry.d) } : {}),
     ...(node.mask ? { mask: true } : {}),
+    ...(node.layout.rotation ? { rotation: node.layout.rotation } : {}),
+    ...(node.appearance.shadow ? { shadow: node.appearance.shadow } : {}),
+    ...(node.appearance.blur ? { blur: node.appearance.blur } : {}),
     children,
   };
 

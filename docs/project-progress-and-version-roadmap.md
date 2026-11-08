@@ -237,6 +237,14 @@ AI 原型：
 - 蒙版（P4.2）：`mask?: boolean` 属性裁剪同父级里排在它上面的兄弟；画布 `clip()`、
   命中 `maskedBy`、SVG `<clipPath>`、HTML CSS `clip-path:path()` 四条链路都接上。
   页面与容器的兄弟遍历共用同一套逻辑，避免页面级蒙版失效；
+- 旋转（P5.1）：`layout.rotation`（角度制、顺时针为正、绕节点中心）。命中逐层逆变换、
+  选择框与手柄跟随旋转、缩放按本地增量并「对角钉住」、SVG/HTML 各自输出 transform。
+  几何集中在 `renderer/rotation.ts`，手柄命中复用原实现；
+- 约束（P5.2）：`constraints` 由运行时在 `node.patch` 里应用（父级尺寸变化 → 子节点按
+  贴边/居中/拉伸/缩放重排），父子变更同一条命令、可一次撤销；stack 与 hug 父级跳过；
+- 阴影与模糊（P6.1）：`appearance.shadow` 与 `appearance.blur`，无迁移；画布用
+  `shadowBlur`/`ctx.filter`，SVG 用 `<filter>` + `feDropShadow`/`feGaussianBlur`，
+  HTML 用 `box-shadow`/`filter`，支持矩阵新增 `effects` 行；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 
 ### `0.4.0`：布局、文本与视觉一致性

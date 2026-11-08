@@ -174,3 +174,31 @@ test("exports a mask as a clipPath and hides the mask shape itself", () => {
   // 蒙版自身不渲染成图形。
   assert.doesNotMatch(result.svg, /data-node-id="mask"/);
 });
+test("exports rotation as a transform around the node center", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    layout: { ...defaultLayout(), x: 100, y: 50, width: 200, height: 100, rotation: 30 },
+  };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /transform="rotate\(30 200 100\)"/);
+});
+
+test("keeps the element untouched when rotation is absent", () => {
+  const box: DesignNode = { ...frame("card"), type: "rectangle" };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.doesNotMatch(result.svg, /transform=/);
+});
+test("exports shadow and blur as a filter", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), shadow: { x: 4, y: 8, blur: 12, color: "#00000080" }, blur: 6 },
+  };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /<filter id="effect-1"/);
+  // stdDeviation 是 CSS 模糊半径的一半。
+  assert.match(result.svg, /<feGaussianBlur stdDeviation="3" \/>/);
+  assert.match(result.svg, /<feDropShadow dx="4" dy="8" stdDeviation="6" flood-color="#00000080" \/>/);
+  assert.match(result.svg, /filter="url\(#effect-1\)"/);
+});

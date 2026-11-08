@@ -32,6 +32,14 @@ export interface LayoutSpec {
   gap?: number;
   padding?: { top: number; right: number; bottom: number; left: number };
   align?: "start" | "center" | "end" | "stretch";
+  /**
+   * 旋转角（角度制，顺时针为正，绕节点自身中心）。
+   *
+   * 只存角度不存矩阵：矩阵每次都要分解回角度，精度会漂移；而角度 + 布局盒已经能
+   * 完整表达这个变换。旋转**不参与布局**——布局引擎仍按轴对齐盒子排版，旋转只影响
+   * 绘制与命中，和 Figma 的行为一致。
+   */
+  rotation?: number;
 }
 
 /**
@@ -42,14 +50,47 @@ export interface LayoutSpec {
  */
 export type CornerRadii = [number, number, number, number];
 
+/** 投影。没有 `spread`：Canvas 的 shadow 没有扩散半径，三套实现不一致的字段先不给。 */
+export interface ShadowSpec {
+  /** 水平偏移，px。 */
+  x: number;
+  /** 垂直偏移，px。 */
+  y: number;
+  /** 模糊半径，px，>= 0。 */
+  blur: number;
+  /** CSS 颜色。 */
+  color: string;
+}
+
+/** 渐变色标：`offset` 是 0–1 的位置。 */
+export interface PaintStop {
+  offset: number;
+  color: string;
+}
+
+/**
+ * 填充层。
+ *
+ * 数组形态是为了以后加多层填充；当前至少支持一层纯色或一层线性渐变。
+ * 角度沿用 CSS 约定：0deg 指向上，顺时针为正——画布、HTML、SVG 三处不需要各自换算。
+ */
+export type Paint =
+  | { type: "solid"; color: string }
+  | { type: "linear"; angle: number; stops: PaintStop[] };
+
 export interface AppearanceSpec {
   opacity: number;
-  fill?: string;
+  /** 填充层；省略表示无填充。颜色 token 绑定生效时会被压成单一实色。 */
+  fills?: Paint[];
   stroke?: string;
   /** 描边宽度（px）。缺省按 1px，与旧文档和 DOM 默认边框一致。 */
   strokeWidth?: number;
   cornerRadius?: number;
   cornerRadii?: CornerRadii;
+  /** 投影；只作用于节点自身，子节点不继承（与 Figma 一致）。 */
+  shadow?: ShadowSpec;
+  /** 图层模糊半径（px）；0 表示不模糊。 */
+  blur?: number;
 }
 
 export interface PropertyBindings {
@@ -75,6 +116,14 @@ export type NodeType =
   | "component"
   | "instance";
 
+/** 约束：父级尺寸变化时子节点的行为。缺省 `start`（贴左/贴上，不随父级变化）。 */
+export type ConstraintAxis = "start" | "end" | "center" | "stretch" | "scale";
+
+export interface Constraints {
+  horizontal: ConstraintAxis;
+  vertical: ConstraintAxis;
+}
+
 export interface BaseNode {
   id: NodeId;
   type: NodeType;
@@ -87,6 +136,8 @@ export interface BaseNode {
   appearance: AppearanceSpec;
   bindings?: PropertyBindings;
   externalRefs?: ExternalReference[];
+  /** 父级尺寸变化时的行为；只在父级是绝对布局容器时生效。 */
+  constraints?: Constraints;
   /** 作为组件插槽的 frame：实例可以往这里填充自己的内容。 */
   slot?: boolean;
   /**
@@ -192,7 +243,7 @@ export interface MigrationRecord {
 }
 
 export interface DesignDocument {
-  schemaVersion: 2;
+  schemaVersion: 3;
   id: DocumentId;
   revision: number;
   meta: DocumentMeta;

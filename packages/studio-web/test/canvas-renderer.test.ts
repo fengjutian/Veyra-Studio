@@ -49,6 +49,8 @@ function fakeContext() {
     set textBaseline(value: string) { state.textBaseline = value; },
     get letterSpacing() { return state.letterSpacing; },
     set letterSpacing(value: string) { state.letterSpacing = value; },
+    // 渲染器用 `"filter" in context` 判断浏览器是否支持 canvas filter。
+    filter: "none",
   };
   return context;
 }
@@ -150,4 +152,34 @@ test("clamps per-corner radii to half of the short side", () => {
   const arcs = context.calls.filter(call => call.name === "arcTo");
   // 顺序：右上、右下、左下、左上；只有后两个角超过上限，被钳到 25。
   assert.deepEqual(arcs.map(call => call.args[4]), [25, 25, 10, 10]);
+});
+test("paints the drop shadow with the node's offset and blur", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([
+    sceneNode({ fill: "#ffffff", shadow: { x: 4, y: 8, blur: 12, color: "#00000080" } }),
+  ], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  assert.equal(context.shadowColor, "#00000080");
+  assert.equal(context.shadowBlur, 12);
+  assert.equal(context.shadowOffsetX, 4);
+  assert.equal(context.shadowOffsetY, 8);
+});
+
+test("resets the shadow before drawing a child so effects are not inherited", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  const child = sceneNode({ id: "child", box: { x: 0, y: 0, width: 10, height: 10 }, fill: "#f00", clip: false });
+  renderer.paint([
+    sceneNode({ fill: "#ffffff", shadow: { x: 4, y: 8, blur: 12, color: "#00000080" }, children: [child] }),
+  ], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  // 最后一个绘制的是子节点，它不该继承父节点的阴影。
+  assert.equal(context.shadowColor, "transparent");
+  assert.equal(context.shadowBlur, 0);
+});
+
+test("applies layer blur as a canvas filter", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([sceneNode({ fill: "#000000", blur: 6 })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  assert.equal(context.filter, "blur(6px)");
 });

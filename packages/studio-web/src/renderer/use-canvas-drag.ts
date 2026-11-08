@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import type { DesignNode } from "@ufira/design-schema";
 import { isClickDraw, isDrawTool, rectFromDrag, type DrawToolId, type ToolId } from "../tools";
 import { hitTest, type HitPoint } from "./hit-test";
-import { hitTestHandle, selectedBoxes, selectionBounds, type HandleId } from "./selection";
+import { hitTestHandleRotated, resizeRotatedBox, toLocalPoint, toRadians } from "./rotation";
+import { selectedBoxes, selectionBounds, type HandleId } from "./selection";
 import { offsetSubtreeBoxes, resizeBox } from "./selection-drag";
 import { nodesInRect, rectFromPoints } from "./marquee";
 import { snapBox, snapTargetsFromScene, type SnapGuide } from "./snapping";
@@ -25,6 +26,8 @@ export interface CanvasDragOptions {
   /** 指针事件 → 场景坐标（由调用方提供 canvas 的 rect）。 */
   pointOf(event: { clientX: number; clientY: number }): HitPoint;
   layoutOf(id: string): DesignNode["layout"] | undefined;
+  /** 节点的旋转角（角度制）；省略按 0 处理。 */
+  rotationOf?(id: string): number | undefined;
   onCommit(changes: Array<{ id: string; layout: DesignNode["layout"] }>): void;
   /** 框选结束；空数组表示清空选择。 */
   onMarquee?(ids: string[]): void;
@@ -38,7 +41,7 @@ export interface CanvasDragOptions {
 
 type Gesture =
   | { kind: "move"; ids: string[]; start: HitPoint }
-  | { kind: "resize"; id: string; handle: HandleId; start: HitPoint; box: SceneBox }
+  | { kind: "resize"; id: string; handle: HandleId; start: HitPoint; box: SceneBox; radians: number }
   | { kind: "marquee"; start: HitPoint }
   | { kind: "draw"; tool: DrawToolId; start: HitPoint };
 
@@ -100,12 +103,14 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     }
 
     const bounds = selectionBounds(selectedBoxes(options.scene, options.selectedIds));
+    // 旋转节点的缩放手柄要先把点逆变换到本地坐标再命中，否则手柄位置和视觉对不上。
+    const radians = options.selectedIds.length === 1 ? toRadians(options.rotationOf?.(options.selectedIds[0]!) ?? 0) : 0;
     const handle = bounds && options.selectedIds.length === 1
-      ? hitTestHandle(bounds, point, 8 / Math.max(options.zoom, 0.01))
+      ? hitTestHandleRotated(bounds, radians, point, 8 / Math.max(options.zoom, 0.01))
       : undefined;
 
     if (handle && bounds) {
-      gestureRef.current = { kind: "resize", id: options.selectedIds[0]!, handle, start: point, box: bounds };
+      gestureRef.current = { kind: "resize", id: options.selectedIds[0]!, handle, start: point, box: bounds, radians };
     } else {
       const hit = hitTest(options.scene, point);
       if (hit && options.selectedIds.includes(hit)) {
@@ -148,7 +153,15 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       setGuides(snap.guides);
       updatePreview(offsetSubtreeBoxes(options.scene, gesture.ids, deltaX + snap.deltaX, deltaY + snap.deltaY));
     }
-    else if (gesture.kind === "resize") updatePreview({ [gesture.id]: resizeBox(gesture.box, gesture.handle, deltaX, deltaY) });
+    else if (gesture.kind === "resize") {
+      // 缩放发生在节点本地坐标系：先把起点和当前点都逆变换，再按本地增量算新盒子。
+      const startLocal = toLocalPoint(gesture.start, gesture.box, gesture.radians);
+      const currentLocal = toLocalPoint(point, gesture.box, gesture.radians);
+      const next = resizeBox(gesture.box, gesture.handle, currentLocal.x - startLocal.x, currentLocal.y - startLocal.y);
+      // 旋转时盒子中心会变，不做「对角钉住」的修正，拉手柄时图形会漂。
+      const corrected = gesture.radians ? resizeRotatedBox(gesture.box, next, gesture.handle, gesture.radians) : next;
+      updatePreview({ [gesture.id]: corrected });
+    }
     else {
       const rect = rectFromPoints(gesture.start, point);
       marqueeRef.current = rect;

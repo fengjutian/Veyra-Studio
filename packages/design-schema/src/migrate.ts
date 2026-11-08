@@ -8,7 +8,7 @@ import type { DesignDocument, MigrationRecord } from "./types";
  * {@link MIGRATIONS} 里补上 `旧版本 → 新版本` 的那一步。读取旧文档的入口
  * （仓库恢复、JSON 导入）必须先跑 {@link migrateDocument}，再交给校验器。
  */
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 export interface MigrationContext {
   /** 迁移发生的时间；测试可以注入固定值以保证可重复。 */
@@ -27,6 +27,7 @@ export type MigrationStep = (document: Record<string, unknown>, context: Migrati
  * 迁移步骤表：键是源版本，值是把该版本升到下一版的步骤。
  *
  * v1 → v2：文档格式版本升到 2，并把这次迁移写进文档自带的 `migrations` 历史。
+ * v2 → v3：填充从单值 `appearance.fill: string` 改成填充层 `appearance.fills: Paint[]`。
  */
 export const MIGRATIONS: Record<number, MigrationStep> = {
   1: (document, { now }) => {
@@ -35,7 +36,40 @@ export const MIGRATIONS: Record<number, MigrationStep> = {
       : [];
     return { ...document, schemaVersion: 2, migrations: [...history, { from: 1, to: 2, at: now }] };
   },
+  2: (document, { now }) => {
+    const nodes = isRecord(document.nodes) ? document.nodes : {};
+    const migrated: Record<string, unknown> = {};
+    for (const [id, value] of Object.entries(nodes)) {
+      migrated[id] = migrateNodeFills(value);
+    }
+    const history = Array.isArray(document.migrations)
+      ? document.migrations.filter(entry => isMigrationRecord(entry))
+      : [];
+    return { ...document, schemaVersion: 3, nodes: migrated, migrations: [...history, { from: 2, to: 3, at: now }] };
+  },
 };
+
+/**
+ * 单个节点的填充迁移：`fill: "#fff"` → `fills: [{ type: "solid", color: "#fff" }]`。
+ *
+ * 只做这一件事：没有 fill 的节点原样返回（不能凭空造一个 `fills: []`，那会把
+ * 「无填充」和「空填充层」两种语义混掉）。
+ */
+function migrateNodeFills(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.appearance)) return value;
+  const appearance = value.appearance as Record<string, unknown>;
+  const fill = appearance.fill;
+  if (typeof fill !== "string" || !fill) {
+    const { fill: _ignored, ...rest } = appearance;
+    return { ...value, appearance: rest };
+  }
+  const { fill: _ignored, ...rest } = appearance;
+  return { ...value, appearance: { ...rest, fills: [{ type: "solid", color: fill }] } };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
 export interface MigrationOptions {
   /** 迁移时间戳；默认取当前时间。 */

@@ -1,4 +1,5 @@
 import { hitTestVectorPath, type NodeId } from "@ufira/design-schema";
+import { toLocalPoint, toRadians } from "./rotation";
 import type { SceneNode } from "./scene";
 
 /**
@@ -32,11 +33,17 @@ export function hitTestStack(nodes: SceneNode[], point: HitPoint): NodeId[] {
 
 function pathInNode(node: SceneNode, point: HitPoint): NodeId[] {
   if (node.opacity <= 0) return [];
-  if (!containsPoint(node, point)) return [];
+  // 蒙版判定在父级坐标系里做（蒙版是兄弟节点），必须在逆旋转之前。
+  if (node.maskedBy?.length) {
+    for (const mask of node.maskedBy) if (!containsPoint(mask, point)) return [];
+  }
+  // 旋转节点：把点逆变换回本地坐标，命中判定与子节点递归都在本地坐标系里继续。
+  const local = node.rotation ? toLocalPoint(point, node.box, toRadians(node.rotation)) : point;
+  if (!containsPoint(node, local)) return [];
   for (let index = node.children.length - 1; index >= 0; index -= 1) {
     // 蒙版节点自身不可点选（能在图层树里选中），只通过 maskedBy 影响兄弟。
     if (node.children[index]!.mask) continue;
-    const childPath = pathInNode(node.children[index]!, point);
+    const childPath = pathInNode(node.children[index]!, local);
     // 返回「最深 → 最外层」，方便调用方按选择优先级取用。
     if (childPath.length) return [...childPath, node.id];
   }
@@ -44,10 +51,6 @@ function pathInNode(node: SceneNode, point: HitPoint): NodeId[] {
 }
 
 export function containsPoint(node: SceneNode, point: HitPoint): boolean {
-  // 被蒙版裁掉的部分不可点：否则图片在视觉上被剪掉，落点却还能选中它。
-  if (node.maskedBy?.length) {
-    for (const mask of node.maskedBy) if (!containsPoint(mask, point)) return false;
-  }
   const { x, y, width, height } = node.box;
   if (width <= 0 || height <= 0) return false;
   // 矢量按真实路径判定：开放路径（直线）用容差，闭合路径用奇偶规则。

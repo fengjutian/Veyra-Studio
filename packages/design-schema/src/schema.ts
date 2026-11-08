@@ -16,20 +16,40 @@ export const layoutSchema = z.object({
   gap: nonNegative.optional(),
   padding: z.object({ top: nonNegative, right: nonNegative, bottom: nonNegative, left: nonNegative }).optional(),
   align: z.enum(["start", "center", "end", "stretch"]).optional(),
+  rotation: z.number().finite().optional(),
 }).superRefine((layout, ctx) => {
   if (layout.mode === "stack" && !layout.direction) {
     ctx.addIssue({ code: "custom", message: "Stack layout requires a direction", path: ["direction"] });
   }
 });
 
+const shadowSchema = z.object({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  blur: nonNegative,
+  color: z.string().min(1),
+});
+
+const paintSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("solid"), color: z.string().min(1) }),
+  z.object({
+    type: z.literal("linear"),
+    angle: z.number().finite(),
+    // 少于两个色标画不出渐变。
+    stops: z.array(z.object({ offset: z.number().min(0).max(1), color: z.string().min(1) })).min(2),
+  }),
+]);
+
 const appearanceSchema = z.object({
   opacity: z.number().min(0).max(1),
-  fill: z.string().optional(),
+  fills: z.array(paintSchema).optional(),
   stroke: z.string().optional(),
   // 缺省按 1px；0 没有意义（画不出线），所以要求为正数。
   strokeWidth: z.number().finite().positive().optional(),
   cornerRadius: nonNegative.optional(),
   cornerRadii: z.tuple([nonNegative, nonNegative, nonNegative, nonNegative]).optional(),
+  shadow: shadowSchema.optional(),
+  blur: nonNegative.optional(),
 });
 
 /**
@@ -44,6 +64,8 @@ const vectorGeometrySchema = z.object({
   d: z.string().min(1).refine(isValidVectorPath, { message: "Vector path must contain only M/L/C/Q/Z, with on-curve points in [0,1]" }),
 });
 
+const constraintAxisSchema = z.enum(["start", "end", "center", "stretch", "scale"]);
+
 const baseNodeShape = {
   id,
   name: z.string(),
@@ -53,6 +75,7 @@ const baseNodeShape = {
   locked: z.boolean(),
   layout: layoutSchema,
   appearance: appearanceSchema,
+  constraints: z.object({ horizontal: constraintAxisSchema, vertical: constraintAxisSchema }).optional(),
   bindings: z.object({
     fill: z.string().optional(),
     stroke: z.string().optional(),
@@ -114,7 +137,7 @@ export const designNodeSchema = z.discriminatedUnion("type", [
 ]);
 
 export const designDocumentSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   id,
   revision: z.number().int().nonnegative(),
   meta: z.object({ name: z.string().min(1), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime() }),

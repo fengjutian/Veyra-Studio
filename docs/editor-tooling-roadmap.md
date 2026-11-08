@@ -2,7 +2,7 @@
 
 > 文档状态：生效中的工具能力基线
 > 最后更新：2026-11-07
-> 当前阶段：P1–P4 完成；P5（旋转与约束）待启动
+> 当前阶段：P1–P5 完成；P6 进行中（阴影与模糊已完成，渐变与 schema v3 迁移待启动）
 > 关联文档：`current-project-status.md`、`project-progress-and-version-roadmap.md`、`canvas-renderer-roadmap.md`
 
 ## 1. 问题：不是「按钮太少」
@@ -48,11 +48,11 @@
 | 矢量 | **归一化 M/L/C/Q 路径 + 钢笔 + 节点编辑** | 线段插点、锚点类型切换 | P3 ✅ | 是（`vector.geometry`，已完成） |
 | 矢量 | **布尔运算 + 蒙版** | 保留布尔组、曲线级布尔、alpha 蒙版 | P4 ✅ | 否（布尔烘焙成路径；蒙版复用 `mask` 属性而不是新节点类型） |
 | 模式 | **选择、绘制、抓手** | 缩放工具 | P1 ✅ | 否 |
-| 几何 | x/y/w/h | 旋转 | P5 | 是（`layout.rotation`） |
-| 几何 | 无 | 约束（左/右/上/下/居中） | P5 | 否（新增可选字段） |
+| 几何 | **旋转（绕自身中心）** | 框外旋转手柄、多选整体旋转 | P5.1 ✅ | 否（`layout.rotation` 可选字段） |
+| 几何 | **约束（贴边/居中/拉伸/缩放）** | 约束可视化预览、实例级覆盖 | P5.2 ✅ | 否（`constraints` 可选字段） |
 | 几何 | **蒙版（兄弟层裁剪）** | alpha 蒙版 / 羽化 | P4 ✅ | 否（`mask?: boolean`） |
-| 外观 | 纯色填充 | 渐变、多填充层 | P6 | 是（`fills[]` 替换 `fill`） |
-| 外观 | 无 | 阴影、模糊 | P6 | 否（新增可选字段） |
+| 外观 | 纯色填充 | 渐变、多填充层 | P6.2 | 是（`fills[]` 替换 `fill`，需 schema v3 迁移） |
+| 外观 | **投影 + 图层模糊** | spread、内阴影、子树整体模糊 | P6.1 ✅ | 否（新增可选字段） |
 | 排版 | 对齐（右键菜单） | **等距分布 + 多选浮出工具条** | P2 ✅ | 否 |
 
 ## 4. 设计原则
@@ -224,22 +224,33 @@ vector）导出产物逐字不变，golden 不破。
   共用同一套兄弟遍历，避免页面级蒙版静默失效。
   已知限制：蒙版圆角被忽略、自动布局里的 HTML 蒙版位置可能不准、不支持 alpha 蒙版。
 
-### P5：旋转与约束
+### P5：旋转与约束（✅ 已完成）
 
-- `layout.rotation?: number`（角度制，可选）。改动面比想象的大：命中测试要逆变换、
-  选择框要按旋转后的包围盒、八向手柄的缩放方向要跟随旋转、HTML 导出用
-  `transform: rotate()`、SVG 用 `transform`、PNG 走同一个 SVG 链路。
-- 约束（`constraints?: { horizontal: "start" | "end" | "center" | "stretch" | "scale";
-  vertical: ... }`）只在父容器尺寸变化时生效，是 P5 里性价比最高的一项，可以先做。
+完整规格见 [`rotation-and-constraints.md`](rotation-and-constraints.md)。
 
-### P6：外观表达能力
+- **旋转（P5.1 ✅ 已完成）**：`layout.rotation`（角度制、顺时针为正、绕节点中心）。
+  命中「每层逆变换回本地」、选择框画旋转四边形与旋转手柄、缩放先按本地增量再
+  「对角钉住」修正漂移、SVG `transform="rotate(θ cx cy)"`、HTML `transform:rotate(θdeg)`。
+  几何全部集中在 `renderer/rotation.ts`，手柄命中复用原有实现，没有第二份判定逻辑。
+- **约束（P5.2 ✅ 已完成）**：`constraints`（`start/end/center/stretch/scale` × 两轴），
+  在 `node.patch` 里由运行时应用——属性面板、手柄缩放、AI 计划、外部集成自动共享同一套
+  行为；父级 patch 与子节点重排落在同一条命令里，撤销一次整体还原。stack 父级与 hug
+  父级跳过（前者由布局引擎排，后者尺寸是结果不是输入）。
+- **顺延**：框外旋转手柄、多选整体旋转、旋转后的自动布局重排、约束的可视化预览。
 
-- 填充从单值升级为 `Paint[]`（纯色/线性渐变/径向渐变/图片），旧字段 `fill` 需要迁移到
-  `fills: [{ type: "solid", color }]`，属于**破坏性变更**，必须升 schema 版本并在
-  `MIGRATIONS` 里登记；HTML 输出 `linear-gradient()`，SVG 输出 `<defs><linearGradient>`。
-- 阴影与模糊是纯新增可选字段（`shadow?: { x, y, blur, spread, color }`），无迁移；
-  Canvas 用 `shadowBlur`/`filter`，SVG 用 `feDropShadow`/`feGaussianBlur`，
-  两者都要进 `EXPORT_SUPPORT_MATRIX` 并输出降级诊断。
+### P6：外观表达能力（进行中）
+
+完整规格见 [`appearance-effects.md`](appearance-effects.md)。
+
+- **阴影与模糊（P6.1 ✅ 已完成）**：`appearance.shadow?` 与 `appearance.blur?`，纯新增可选
+  字段、无迁移。Canvas 用 `shadowBlur`/`ctx.filter`，SVG 用 `<filter>` +
+  `feDropShadow`/`feGaussianBlur`（`stdDeviation = 模糊半径 / 2`），HTML 用
+  `box-shadow`/`filter`；支持矩阵新增 `effects` 行。
+  不做 `spread`（三套实现的量纲对不齐）、内阴影、子树整体模糊。
+- **渐变（P6.2 待启动）**：`fill: string` → `fills: Paint[]`，**破坏性变更**，要升
+  `CURRENT_SCHEMA_VERSION` 到 3、登记 `MIGRATIONS` 并改所有读取点。顺序是先抽
+  `resolveFill()` 让读取点收敛，再升版本，最后接导出与 UI——这样迁移出错时不会和
+  「渐变渲染不对」混在一起排查。
 
 ## 6. 快捷键与光标约定
 

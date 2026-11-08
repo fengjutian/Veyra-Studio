@@ -1,4 +1,5 @@
 import type { PathCommand } from "@ufira/design-schema";
+import { rotatedCorners, rotatedHandleCenters } from "./rotation";
 import { HANDLE_IDS, handleCenters, type Rect } from "./selection";
 
 /**
@@ -15,6 +16,8 @@ export interface SelectionOverlayOptions {
   zoom?: number;
   /** 只画轮廓（拖拽中隐藏手柄）。 */
   outlineOnly?: boolean;
+  /** 节点的旋转角（弧度）；非零时轮廓与手柄都跟着转。 */
+  rotation?: number;
 }
 
 export function paintSelectionOverlay(context: CanvasRenderingContext2D, bounds: Rect, options: SelectionOverlayOptions = {}): void {
@@ -24,13 +27,23 @@ export function paintSelectionOverlay(context: CanvasRenderingContext2D, bounds:
   const size = screenSize / zoom;
   const lineWidth = 1.5 / zoom;
 
+  const corners = options.rotation ? rotatedCorners(bounds, options.rotation) : undefined;
+  const centers = options.rotation ? rotatedHandleCenters(bounds, options.rotation) : handleCenters(bounds);
+
   context.save();
   context.strokeStyle = color;
   context.lineWidth = lineWidth;
-  context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  if (corners) {
+    context.beginPath();
+    context.moveTo(corners[0].x, corners[0].y);
+    for (const corner of corners.slice(1)) context.lineTo(corner.x, corner.y);
+    context.closePath();
+    context.stroke();
+  } else {
+    context.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+  }
 
   if (!options.outlineOnly) {
-    const centers = handleCenters(bounds);
     context.fillStyle = "#ffffff";
     context.lineWidth = 1.5 / zoom;
     for (const id of HANDLE_IDS) {
