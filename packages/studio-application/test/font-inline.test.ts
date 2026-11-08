@@ -9,6 +9,7 @@ import { SnapshotNotFoundError } from "@ufira/design-persistence";
 import type { TransactionEntry } from "@ufira/design-runtime";
 import { defaultAppearance, defaultLayout, type AssetMetadata, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "../src/index";
+import { setFontSubsetProvider } from "../src/font-faces";
 
 /**
  * 导出时把字体内联进 HTML 交付物。
@@ -116,6 +117,61 @@ test("reports a weight that does not match any declaration", async () => {
   const note = result.diagnostics.find(diagnostic => diagnostic.feature === "font-inline");
   assert.equal(note?.support, "approximated");
   assert.match(note?.message ?? "", /字重可能对不上/);
+});
+
+/** 一个超过 1 MB 内联上限的字体文件（真字体 + 尾部填充）。 */
+function oversizedFont(): Uint8Array {
+  const padded = new Uint8Array(FONT_BYTES.byteLength + 1024 * 1024);
+  padded.set(FONT_BYTES, 0);
+  return padded;
+}
+
+test("subsets a font that is over the inline limit", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const bytes = oversizedFont();
+  const asset = fontAsset(bytes, "BigFont");
+  await repository.putAsset("project:1", { hash: asset.hash, bytes });
+  await project.execute(envelope(0, [
+    { type: "asset.upsert", payload: { asset } },
+    { type: "node.create", payload: { node: textNode("text:1", "Press Start 2P") } },
+    { type: "font.register", payload: { font: { family: "Press Start 2P", assetId: asset.id, weight: 400 } } },
+  ]));
+
+  let called = 0;
+  setFontSubsetProvider(async () => ({
+    subset(font: Uint8Array, text: string) {
+      called += 1;
+      assert.match(text, /hello/);
+      assert.equal(font.byteLength, bytes.byteLength);
+      return new Uint8Array([1, 2, 3, 4]);
+    },
+  }));
+  try {
+    const result = await project.exportHtmlWithAssets({ pageId: "page:1", viewport: { width: 400, height: 200 } });
+    assert.equal(called, 1);
+    // 内联的是子集（4 字节 → base64 AQIDBA==），不是原文件。
+    assert.match(result.document, /src: url\(data:font\/ttf;base64,AQIDBA==\)/);
+    assert.equal(result.diagnostics.some(diagnostic => /超过 1 MB/.test(diagnostic.message)), false);
+  } finally {
+    setFontSubsetProvider(undefined);
+  }
+});
+
+test("reports an oversized font when no subsetter is available", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const bytes = oversizedFont();
+  const asset = fontAsset(bytes, "BigFont");
+  await repository.putAsset("project:1", { hash: asset.hash, bytes });
+  await project.execute(envelope(0, [
+    { type: "asset.upsert", payload: { asset } },
+    { type: "node.create", payload: { node: textNode("text:1", "Press Start 2P") } },
+    { type: "font.register", payload: { font: { family: "Press Start 2P", assetId: asset.id, weight: 400 } } },
+  ]));
+  const result = await project.exportHtmlWithAssets({ pageId: "page:1", viewport: { width: 400, height: 200 } });
+  assert.doesNotMatch(result.document, /@font-face/);
+  assert.equal(result.diagnostics.some(diagnostic => /超过 1 MB/.test(diagnostic.message)), true);
 });
 
 class MemoryRepository implements ProjectRepository {

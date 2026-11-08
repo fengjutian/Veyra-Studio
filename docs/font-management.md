@@ -86,11 +86,80 @@ collectMissingFonts(document, available) = 文本用到的族名 − available
   见 `font-inline.md` §4）；
 - **不做字体子集化与打包**：导出的 HTML 仍引用字体族名，**不会内联字体文件**；
   （**后续轮次已补**：HTML 导出会把文档声明过的字体内联成 `@font-face`——
-  见 `font-inline.md`）；
+  见 `font-inline.md`；超过 1 MB 的字体还会先做**子集化**再内联——
+  见本文件 §7）；
 - 字体 token（typography token 的渲染语义）仍未实现，与本轮的"字体文件管理"是两件事；
 - 缺失字体只做提示，不阻止导出——导出的交付物里同样会走回退字形。
 
-## 7. 测试
+## 7. 字体子集化（浏览器端 harfbuzz wasm）
+
+### 7.1 为什么需要
+
+内联有 **1 MB 的上限**（base64 还会让体积涨约 33%）。中文字体动辄几 MB，
+不裁字形就**根本内联不进去**——导出物打开时走回退字形，等于没内联。
+
+实测（`PressStart2P-Regular.ttf`，OFL，118,204 字节）：
+
+| 保留字符 | 子集后 |
+| --- | --- |
+| `abc` | 5,464 字节 |
+| `Hello World` | 5,844 字节 |
+| 62 个字母数字 | 15,496 字节 |
+
+裁完之后再 base64，中文字体的交付物就从「几 MB」掉到「几十 KB」。
+
+### 7.2 为什么不是 `subset-font`
+
+两条路都实测过：
+
+- **`subset-font`（npm）是 Node-only**：它依赖 `fs` 读字体文件、写结果，
+  浏览器里用不了；
+- **`fonteditor-core` 的 `write({ subset })` 不裁字形**：Arial 1,045,720 字节
+  只留 8 个字符仍是 365,520 字节（实测）。
+
+真正能用的是 **HarfBuzz 的 `hb_subset`**。`harfbuzzjs` 这个包里带了一份**独立的
+`harfbuzz-subset.wasm`**（683 KB），它直接导出 `hb_subset` 的 C API：
+`hb_subset_input_create_or_fail` / `hb_subset_input_unicode_set` /
+`hb_subset_or_fail` / `hb_face_reference_blob` ……
+
+于是核心逻辑自己写：wasm 字节由调用方注入——
+
+- 浏览器：Vite 的 `?url` 拿到资源 URL，导出时 `fetch` 一次（**懒加载**，
+  平时导出不多付这几百 KB）；
+- Node：测试里用 `fs` 读文件。
+
+两边跑的是**同一份** `subsetFontBytes`，没有 fs 也没有 Buffer 依赖。
+
+### 7.3 接线
+
+```
+prepareFontFaces（studio-application）
+  → 字体超过 1 MB？
+      → 有注册好的子集化能力？
+          → 按导出范围内真正用到的字符裁一刀 → 重新走内联判定
+          → 失败 / 没能力 → 记诊断「超过 1 MB 上限，不会内联」
+```
+
+能力是**注册**进来的（`setFontSubsetProvider`），注册的是「能给出一个子集化器」的
+承诺而不是现成的实例——wasm 只在真的遇到超限字体时才加载。
+
+### 7.4 限制
+
+- **只支持 sfnt**（TrueType / OpenType）：woff / woff2 是压缩格式，要先解压
+  （`fontverter` 那一层）才能裁；遇到压缩格式会明确报错，不会悄悄返回原字体；
+- **裁掉的字形就没了**：交付物里的字体只有导出时用到的那些字形，
+  对方再编辑文字会出现缺字（与 Figma 的行为一致）；
+- **hinting / vertical metrics** 会有细微差异（HarfBuzz 的常规取舍）；
+- CJK 的字形集合取决于文档里实际出现的字符，所以「导出范围」是按选区算的。
+
+### 7.5 测试
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `design-export/test/font-subset.test.ts` | 真的裁掉了字形（cmap 只剩 a/b/c）、体积显著变小、压缩格式与空字符集的拒绝 |
+| `studio-application/test/font-inline.test.ts` | 超限字体走子集化路径并内联子集；没有子集化能力时记诊断 |
+
+## 8. 测试
 
 | 文件 | 覆盖 |
 | --- | --- |

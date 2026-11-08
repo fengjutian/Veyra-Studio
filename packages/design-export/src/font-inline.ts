@@ -106,6 +106,41 @@ export function matchFontDeclaration(
 }
 
 /**
+ * 收集导出范围内每个字体**用到的字符**。
+ *
+ * 子集化需要知道「哪些字形必须留下」——键与 {@link collectExportFonts} 一致
+ * （`family weight style`），值是这些文本节点的全部文字。
+ */
+export function collectExportFontTexts(
+  document: DesignDocument,
+  options: { pageId: string; nodeIds?: readonly string[] },
+): Map<string, string> {
+  const page = document.pages[options.pageId];
+  if (!page) return new Map();
+  const keep = options.nodeIds ? exportNodeSet(document, options.nodeIds) : undefined;
+  const texts = new Map<string, string[]>();
+  const walk = (nodeId: string): void => {
+    const node = document.nodes[nodeId];
+    if (!node) return;
+    if (keep && !keep.has(nodeId)) return;
+    if (node.type === "text") {
+      const key = fontUsageKey(node.fontFamily, node.fontWeight ?? TEXT_DEFAULTS.fontWeight, node.fontStyle ?? TEXT_DEFAULTS.fontStyle);
+      const bucket = texts.get(key);
+      if (bucket) bucket.push(node.text);
+      else texts.set(key, [node.text]);
+    }
+    for (const childId of node.childIds) walk(childId);
+  };
+  for (const rootId of exportRootIds(document, options.pageId, keep)) walk(rootId);
+  return new Map([...texts].map(([key, values]) => [key, values.join("")]));
+}
+
+/** 字体条目的键：族名 + 字重 + 字形。 */
+export function fontUsageKey(family: string, weight: number, style: "normal" | "italic"): string {
+  return `${family} ${weight} ${style}`;
+}
+
+/**
  * 生成 `@font-face` 规则。
  *
  * `font-display: swap`：字体解码期间先用回退字形，不出现白屏。

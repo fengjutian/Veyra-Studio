@@ -4,7 +4,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
-import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
+import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -29,6 +29,7 @@ import { LayerTree } from "./layer-tree";
 import { planReparent, type DropPosition } from "./layer-reorder";
 import { useCanvasLayout } from "./canvas-layout";
 import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
+import { registerFontSubsetter } from "./font-subset-client";
 import { collectFontFamilies, collectMissingFonts, loadDocumentFonts, prepareFonts } from "./font-loading";
 import { CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
 import { clampScroll, panScroll } from "./canvas-pan";
@@ -2119,6 +2120,11 @@ function downloadFile(name: string, content: string, type: string): void { const
 const container = document.getElementById("root")! as HTMLElement & { __studioRoot?: ReturnType<typeof createRoot> };
 const root = container.__studioRoot ?? createRoot(container);
 container.__studioRoot = root;
+// 曲线级布尔：引擎装上后，布尔组的结果保留贝塞尔曲线（而不是折线近似）。
+// 必须在第一次绘制之前装好，否则首帧会用近似结果。
+installPaperBooleanEngine();
+// 字体子集化：注册的是「承诺」，wasm 只在导出遇到超限字体时才加载。
+registerFontSubsetter();
 // Vite 的 HMR 会重新执行本模块。若直接再调一次 createRoot，React 会报
 // "container already passed to createRoot" 并撕裂 DOM，表现为点击随机失效、拖拽坐标错乱。
 // 把 root 挂在容器上复用，HMR 时只是重新 render，永远不会出现两个 React 树。
