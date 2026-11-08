@@ -177,6 +177,7 @@ export const ICONS = {
   // 组件
   componentCreate: ComponentIcon,
   componentInstantiate: Boxes,
+  componentVariant: LayersIcon,
   componentRemove: X,
 
   // AI 安全编辑

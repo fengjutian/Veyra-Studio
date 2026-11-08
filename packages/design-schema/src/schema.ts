@@ -256,7 +256,18 @@ export const designDocumentSchema = z.object({
   pageOrder: z.array(id),
   pages: z.record(id, z.object({ id, name: z.string(), childIds: z.array(id) })),
   nodes: z.record(id, designNodeSchema),
-  components: z.record(id, z.object({ id, name: z.string(), rootNodeId: id })),
+  components: z.record(id, z.object({
+    id,
+    name: z.string(),
+    rootNodeId: id,
+    variantSetId: id.optional(),
+    variant: z.record(z.string().min(1), z.string().min(1)).optional(),
+  })),
+  componentSets: z.record(id, z.object({
+    id,
+    name: z.string(),
+    properties: z.array(z.string().min(1)).min(1),
+  })).optional(),
   tokens: z.record(z.string(), z.object({
     type: z.enum(["color", "number", "string"]),
     value: z.union([z.string(), z.number()]),

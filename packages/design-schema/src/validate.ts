@@ -71,6 +71,37 @@ export function validateDocument(input: unknown): DesignDocument {
     const root = document.nodes[component.rootNodeId];
     if (!root) issues.push(`component ${componentId} references missing root ${component.rootNodeId}`);
     else if (root.type !== "component") issues.push(`component ${componentId} root ${root.id} is not a component node`);
+    if (component.variantSetId && !document.componentSets?.[component.variantSetId]) {
+      issues.push(`component ${componentId} references missing variant set ${component.variantSetId}`);
+    }
+    if (component.variant && !component.variantSetId) {
+      issues.push(`component ${componentId} has variant values but no variant set`);
+    }
+  }
+
+  // 变体集自洽性：属性名唯一、成员值覆盖全部属性且组内不重复。
+  // 这些在命令层也会拦，但导入一份手改过的 JSON 时只能靠这里。
+  for (const [setId, set] of Object.entries(document.componentSets ?? {})) {
+    if (set.id !== setId) issues.push(`component set record key ${setId} does not match id ${set.id}`);
+    if (new Set(set.properties).size !== set.properties.length) issues.push(`component set ${setId} has duplicate properties`);
+    const seen = new Map<string, string>();
+    for (const [componentId, component] of Object.entries(document.components)) {
+      if (component.variantSetId !== setId) continue;
+      if (!component.variant) {
+        issues.push(`component ${componentId} belongs to set ${setId} but has no variant values`);
+        continue;
+      }
+      for (const key of Object.keys(component.variant)) {
+        if (!set.properties.includes(key)) issues.push(`component ${componentId} variant has unknown property ${key}`);
+      }
+      for (const property of set.properties) {
+        if (!component.variant[property]) issues.push(`component ${componentId} variant is missing property ${property}`);
+      }
+      const signature = set.properties.map(property => component.variant?.[property] ?? "").join("\u0000");
+      const duplicate = seen.get(signature);
+      if (duplicate) issues.push(`components ${duplicate} and ${componentId} share the same variant values in set ${setId}`);
+      else seen.set(signature, componentId);
+    }
   }
 
   detectComponentCycles(document, issues);

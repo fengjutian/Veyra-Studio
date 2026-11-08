@@ -445,3 +445,91 @@ test("a batch detach with a non-instance id leaves everything untouched", () => 
   assert.equal(runtime.snapshot().nodes["instance:1"]?.type, "instance");
   assert.equal(runtime.snapshot().revision, revisionBefore);
 });
+
+/** 建好「一个组件 + 单属性变体集 + 一个 hover 变体」的运行时。 */
+function variantRuntime(): DesignRuntime {
+  const runtime = componentRuntime();
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [
+    { type: "component.setCreate", payload: { set: { id: "set:button", name: "Button set", properties: ["state"] } } },
+    { type: "component.setVariant", payload: { id: "component:button", variantSetId: "set:button", variant: { state: "default" } } },
+    { type: "component.createVariant", payload: { sourceComponentId: "component:button", componentId: "component:button-hover", name: "Button / hover", values: { state: "hover" } } },
+  ]));
+  return runtime;
+}
+
+test("copies a variant into the same set and switches an instance between them", () => {
+  const runtime = variantRuntime();
+  const afterCreate = runtime.snapshot();
+  assert.deepEqual(afterCreate.componentSets?.["set:button"], { id: "set:button", name: "Button set", properties: ["state"] });
+  const hover = afterCreate.components["component:button-hover"]!;
+  assert.equal(hover.variant?.state, "hover");
+  assert.equal(afterCreate.nodes[hover.rootNodeId]?.type, "component");
+  // 变体根是复制出来的，不复用源组件根节点的 id。
+  assert.notEqual(hover.rootNodeId, "root");
+
+  runtime.execute(envelope(4, [{ type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } } }]));
+  const oldChildren = [...runtime.snapshot().nodes["instance:1"]!.childIds];
+
+  runtime.execute(envelope(5, [{ type: "component.switchVariant", payload: { id: "instance:1", componentId: "component:button-hover" } }]));
+  const snapshot = runtime.snapshot();
+  const instance = snapshot.nodes["instance:1"]!;
+  assert.equal(instance.type === "instance" ? instance.componentId : "", "component:button-hover");
+  assert.equal(instance.childIds.length, 1);
+  assert.notDeepEqual(instance.childIds, oldChildren);
+  // 旧的物化子树必须删干净，否则文档里会留下孤儿节点。
+  for (const oldId of oldChildren) assert.equal(snapshot.nodes[oldId], undefined);
+});
+
+test("drops overrides that cannot be mapped onto the new variant", () => {
+  const runtime = variantRuntime();
+  runtime.execute(envelope(4, [{ type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } } }]));
+  runtime.execute(envelope(5, [{ type: "component.override", payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { text: "Hi" } } }]));
+  assert.deepEqual(Object.keys((runtime.snapshot().nodes["instance:1"] as any).overrides), ["label"]);
+
+  runtime.execute(envelope(6, [{ type: "component.switchVariant", payload: { id: "instance:1", componentId: "component:button-hover" } }]));
+  // 变体由复制产生，源节点 id 不同，覆盖无法按属性映射（v1 限制）——保留会写到错误的节点上。
+  assert.deepEqual((runtime.snapshot().nodes["instance:1"] as any).overrides, {});
+});
+
+test("rejects inconsistent or duplicate variants", () => {
+  const runtime = variantRuntime();
+  assert.throws(() => runtime.execute(envelope(4, [{
+    type: "component.createVariant",
+    payload: { sourceComponentId: "component:button", componentId: "component:button-dup", name: "Dup", values: { state: "hover" } },
+  }])), /already exists as component:button-hover/);
+  assert.throws(() => runtime.execute(envelope(4, [{
+    type: "component.createVariant",
+    payload: { sourceComponentId: "component:button", componentId: "component:button-x", name: "X", values: { size: "lg" } },
+  }])), /unknown variant property/);
+  assert.throws(() => runtime.execute(envelope(4, [{
+    type: "component.createVariant",
+    payload: { sourceComponentId: "component:button", componentId: "component:button-y", name: "Y", values: {} },
+  }])), /missing variant property/);
+  assert.throws(() => runtime.execute(envelope(4, [{
+    type: "component.setCreate",
+    payload: { set: { id: "set:button", name: "Again", properties: ["state"] } },
+  }])), /already exists/);
+});
+
+test("refuses to switch between components from different sets", () => {
+  const runtime = variantRuntime();
+  runtime.execute(envelope(4, [
+    { type: "node.create", payload: { node: frame("other-root") } },
+    { type: "component.create", payload: { id: "component:other", nodeId: "other-root", name: "Other" } },
+  ]));
+  runtime.execute(envelope(5, [{ type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button", overrides: {} } } }]));
+  assert.throws(
+    () => runtime.execute(envelope(6, [{ type: "component.switchVariant", payload: { id: "instance:1", componentId: "component:other" } }])),
+    /not variants of the same set/,
+  );
+});
+
+test("dissolves the set once a single member is left", () => {
+  const runtime = variantRuntime();
+  runtime.execute(envelope(4, [{ type: "component.remove", payload: { id: "component:button-hover" } }]));
+  const snapshot = runtime.snapshot();
+  assert.equal(snapshot.componentSets?.["set:button"], undefined);
+  assert.equal(snapshot.components["component:button"]?.variantSetId, undefined);
+  assert.equal(snapshot.components["component:button"]?.variant, undefined);
+});

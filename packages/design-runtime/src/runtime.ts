@@ -1,4 +1,4 @@
-import { findOwningComponentId, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { findOwningComponentId, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type ComponentSetDefinition, type DesignDocument, type DesignNode, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -233,6 +233,10 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "page.delete": return deletePage(document, command.payload.id);
     case "component.define": return defineComponent(document, command.payload.component);
     case "component.create": return createComponent(document, command.payload.id, command.payload.nodeId, command.payload.name);
+    case "component.setCreate": return createComponentSet(document, command.payload.set);
+    case "component.setVariant": return assignComponentVariant(document, command.payload);
+    case "component.createVariant": return createComponentVariant(document, command.payload);
+    case "component.switchVariant": return switchComponentVariant(document, command.payload);
     case "component.remove": return removeComponent(document, command.payload.id);
     case "component.instantiate": return instantiateComponent(document, command.payload.node, command.payload.index);
     case "component.detach": return detachComponent(document, command.payload.id);
@@ -313,10 +317,30 @@ function defineComponent(document: DesignDocument, component: DesignDocument["co
 }
 
 function removeComponent(document: DesignDocument, id: string): void {
-  if (!document.components[id]) throw new CommandError(`Component ${id} does not exist`);
+  const definition = document.components[id];
+  if (!definition) throw new CommandError(`Component ${id} does not exist`);
   const instance = Object.values(document.nodes).find(node => node.type === "instance" && node.componentId === id);
   if (instance) throw new CommandError(`Component ${id} is still used by instance ${instance.id}`);
+  const variantSetId = definition.variantSetId;
   delete document.components[id];
+  if (variantSetId) pruneVariantSet(document, variantSetId);
+}
+
+/**
+ * 变体集只剩一个成员时解散它。
+ *
+ * 「只有一个变体」没有切换语义，留着只会让 UI 显示一个永远只有一项的下拉框；
+ * 因此把最后一个成员退回普通组件，并删掉集合。
+ */
+function pruneVariantSet(document: DesignDocument, setId: string): void {
+  if (!document.componentSets?.[setId]) return;
+  const members = Object.values(document.components).filter(component => component.variantSetId === setId);
+  if (members.length >= 2) return;
+  for (const member of members) {
+    delete member.variantSetId;
+    delete member.variant;
+  }
+  delete document.componentSets[setId];
 }
 
 /**
@@ -338,6 +362,150 @@ function createComponent(document: DesignDocument, componentId: string, nodeId: 
   if (wouldCreateComponentCycle(document, componentId, nodeId)) throw new CommandError(`Component ${componentId} would reference itself through ${nodeId}`);
   node.type = "component";
   document.components[componentId] = { id: componentId, name: name.trim(), rootNodeId: nodeId };
+}
+
+function createComponentSet(document: DesignDocument, set: ComponentSetDefinition): void {
+  if (!set.id.trim()) throw new CommandError("Component set id cannot be empty");
+  if (!set.name.trim()) throw new CommandError("Component set name cannot be empty");
+  const properties = set.properties.map(property => property.trim());
+  if (!properties.length) throw new CommandError("Component set needs at least one property");
+  if (properties.some(property => !property)) throw new CommandError("Component set properties cannot be empty");
+  if (new Set(properties).size !== properties.length) throw new CommandError("Component set properties must be unique");
+  if (document.componentSets?.[set.id]) throw new CommandError(`Component set ${set.id} already exists`);
+  document.componentSets = { ...(document.componentSets ?? {}), [set.id]: { id: set.id, name: set.name.trim(), properties } };
+}
+
+/** 变体值必须正好覆盖集合声明的全部属性，多一个少一个都不行。 */
+function assertVariantValues(set: ComponentSetDefinition, variant: Record<string, string>, label: string): void {
+  for (const key of Object.keys(variant)) {
+    if (!set.properties.includes(key)) throw new CommandError(`${label} sets unknown variant property ${key}`);
+  }
+  for (const property of set.properties) {
+    if (!variant[property]?.trim()) throw new CommandError(`${label} is missing variant property ${property}`);
+  }
+}
+
+/** 同一集合里不允许两个成员拥有同一组取值——那样切换时无法区分。 */
+function assertVariantUnique(document: DesignDocument, set: ComponentSetDefinition, variant: Record<string, string>, ignore?: string): void {
+  const signature = set.properties.map(property => variant[property]).join("\u0000");
+  for (const [id, component] of Object.entries(document.components)) {
+    if (id === ignore || component.variantSetId !== set.id || !component.variant) continue;
+    const other = set.properties.map(property => component.variant?.[property]).join("\u0000");
+    if (other === signature) throw new CommandError(`Variant ${signature.replace(/\u0000/g, ", ")} already exists as ${id}`);
+  }
+}
+
+function assignComponentVariant(document: DesignDocument, payload: { id: string; variantSetId: string; variant: Record<string, string> }): void {
+  const component = document.components[payload.id];
+  if (!component) throw new CommandError(`Component ${payload.id} does not exist`);
+  const set = document.componentSets?.[payload.variantSetId];
+  if (!set) throw new CommandError(`Component set ${payload.variantSetId} does not exist`);
+  assertVariantValues(set, payload.variant, `Component ${payload.id}`);
+  assertVariantUnique(document, set, payload.variant, payload.id);
+  component.variantSetId = set.id;
+  component.variant = { ...payload.variant };
+}
+
+/**
+ * 复制出一个新变体。
+ *
+ * 新组件的根子树复制到与源根相同的容器里、紧跟源根之后；节点 id 用
+ * `${新组件 id}--${源节点 id}`，和实例物化的命名规则一致，便于回查来源。
+ */
+function createComponentVariant(document: DesignDocument, payload: { sourceComponentId: string; componentId: string; name: string; values: Record<string, string> }): void {
+  const source = document.components[payload.sourceComponentId];
+  if (!source) throw new CommandError(`Component ${payload.sourceComponentId} does not exist`);
+  if (!payload.componentId.trim()) throw new CommandError("Component id cannot be empty");
+  if (!payload.name.trim()) throw new CommandError("Component name cannot be empty");
+  if (document.components[payload.componentId]) throw new CommandError(`Component ${payload.componentId} already exists`);
+  if (!source.variantSetId) throw new CommandError(`Component ${source.id} is not part of a variant set`);
+  const set = document.componentSets?.[source.variantSetId];
+  if (!set) throw new CommandError(`Component set ${source.variantSetId} does not exist`);
+  assertVariantValues(set, payload.values, `Variant ${payload.componentId}`);
+  assertVariantUnique(document, set, payload.values);
+
+  const sourceRoot = requireNode(document, source.rootNodeId);
+  if (sourceRoot.type !== "component") throw new CommandError(`Component ${source.id} root must be a component node`);
+  const owner = requireContainer(document, sourceRoot.parentId);
+
+  const clone = (sourceNodeId: NodeId, parentId: NodeId): NodeId => {
+    const original = requireNode(document, sourceNodeId);
+    const id = `${payload.componentId}--${sourceNodeId}`;
+    if (document.nodes[id]) throw new CommandError(`Node ${id} already exists`);
+    const copied = structuredClone(original) as DesignNode;
+    copied.id = id;
+    copied.parentId = parentId;
+    copied.childIds = [];
+    document.nodes[id] = copied;
+    for (const childId of original.childIds) copied.childIds.push(clone(childId, id));
+    return id;
+  };
+
+  const rootId = clone(source.rootNodeId, sourceRoot.parentId);
+  const index = owner.childIds.indexOf(source.rootNodeId);
+  insertAt(owner.childIds, rootId, index >= 0 ? index + 1 : undefined);
+  document.components[payload.componentId] = {
+    id: payload.componentId,
+    name: payload.name.trim(),
+    rootNodeId: rootId,
+    variantSetId: set.id,
+    variant: { ...payload.values },
+  };
+}
+
+/**
+ * 把实例切换到同一变体集里的另一个成员。
+ *
+ * 旧物化子树整体删除、按新组件重新物化；覆盖按源节点 id 保留能对上的部分。
+ * 由「复制为变体」创建的变体节点 id 不同，因此这类切换会清空覆盖——
+ * 这是 v1 限制（Figma 按属性映射，那需要一套属性→节点的对应表）。
+ */
+function switchComponentVariant(document: DesignDocument, payload: { id: NodeId; componentId: string }): void {
+  const node = requireNode(document, payload.id);
+  if (node.type !== "instance") throw new CommandError(`Node ${payload.id} is not a component instance`);
+  const next = document.components[payload.componentId];
+  if (!next) throw new CommandError(`Component ${payload.componentId} does not exist`);
+  if (node.componentId === payload.componentId) return;
+  const current = document.components[node.componentId];
+  if (!current?.variantSetId || current.variantSetId !== next.variantSetId) {
+    throw new CommandError(`Components ${node.componentId} and ${payload.componentId} are not variants of the same set`);
+  }
+
+  const removeSubtree = (nodeId: NodeId): void => {
+    const child = document.nodes[nodeId];
+    if (!child) return;
+    for (const childId of [...child.childIds]) removeSubtree(childId);
+    delete document.nodes[nodeId];
+  };
+  for (const childId of [...node.childIds]) removeSubtree(childId);
+
+  const root = requireNode(document, next.rootNodeId);
+  const copies = new Map<NodeId, NodeId>();
+  const materialize = (sourceId: NodeId, parentId: NodeId): NodeId => {
+    const source = requireNode(document, sourceId);
+    const copyId = `${node.id}--${sourceId}`;
+    if (document.nodes[copyId]) throw new CommandError(`Instance ${node.id} already materializes ${sourceId}`);
+    copies.set(sourceId, copyId);
+    const copy = structuredClone(source) as DesignNode;
+    copy.id = copyId;
+    copy.parentId = parentId;
+    copy.childIds = [];
+    document.nodes[copyId] = copy;
+    for (const childId of source.childIds) copy.childIds.push(materialize(childId, copyId));
+    return copyId;
+  };
+
+  const childIds = root.childIds.map(childId => materialize(childId, node.id));
+  const keptOverrides: Record<string, unknown> = {};
+  for (const [sourceId, value] of Object.entries(node.overrides ?? {})) {
+    if (copies.has(sourceId)) keptOverrides[sourceId] = value;
+  }
+  const instance = structuredClone(node) as InstanceNode;
+  instance.componentId = next.id;
+  instance.childIds = childIds;
+  instance.overrides = keptOverrides;
+  document.nodes[node.id] = instance;
+  applyOverrides(instance, keptOverrides, copies, document);
 }
 
 /**

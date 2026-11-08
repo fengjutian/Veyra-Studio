@@ -1,6 +1,8 @@
 import type {
   AssetMetadata,
   ComponentDefinition,
+  ComponentSetDefinition,
+  ComponentSetId,
   DesignDocument,
   DesignNode,
   DesignPage,
@@ -159,6 +161,43 @@ export interface CreateComponentCommand {
   payload: { id: string; nodeId: NodeId; name: string };
 }
 
+/**
+ * 注册一个变体集。
+ *
+ * 只声明属性名；成员靠 `components[*].variantSetId` 反查，所以这里不需要成员列表。
+ */
+export interface CreateComponentSetCommand {
+  type: "component.setCreate";
+  payload: { set: ComponentSetDefinition };
+}
+
+/** 把已有组件登记为变体集成员，并写入它当前的变体取值。 */
+export interface AssignComponentVariantCommand {
+  type: "component.setVariant";
+  payload: { id: string; variantSetId: ComponentSetId; variant: Record<string, string> };
+}
+
+/**
+ * 从现有组件复制出一个新变体。
+ *
+ * 复制发生在命令里而不是 UI：新组件的根子树必须有唯一 id，交给运行时统一生成
+ * `${新组件 id}--${源节点 id}`，与实例物化的命名规则一致，也便于回查来源。
+ */
+export interface CreateComponentVariantCommand {
+  type: "component.createVariant";
+  payload: { sourceComponentId: string; componentId: string; name: string; values: Record<string, string> };
+}
+
+/**
+ * 把实例切换到同一变体集里的另一个组件。
+ *
+ * 实例子树会按新组件重新物化；覆盖按源节点 id 保留能对上的部分（v1 限制）。
+ */
+export interface SwitchComponentVariantCommand {
+  type: "component.switchVariant";
+  payload: { id: NodeId; componentId: string };
+}
+
 export interface RemoveComponentCommand {
   type: "component.remove";
   payload: { id: string };
@@ -220,6 +259,10 @@ export type DesignCommand =
   | DeletePageCommand
   | DefineComponentCommand
   | CreateComponentCommand
+  | CreateComponentSetCommand
+  | AssignComponentVariantCommand
+  | CreateComponentVariantCommand
+  | SwitchComponentVariantCommand
   | RemoveComponentCommand
   | InstantiateComponentCommand
   | DetachComponentCommand

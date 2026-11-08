@@ -2,6 +2,7 @@ export type DocumentId = string;
 export type PageId = string;
 export type NodeId = string;
 export type ComponentId = string;
+export type ComponentSetId = string;
 export type AssetId = string;
 
 import type { VectorGeometry } from "./geometry";
@@ -293,6 +294,23 @@ export interface ComponentDefinition {
   id: ComponentId;
   name: string;
   rootNodeId: NodeId;
+  /** 所属变体集；缺省表示独立组件，不参与变体切换。 */
+  variantSetId?: ComponentSetId;
+  /** 变体属性取值；键必须是所属集合 `properties` 的子集，并覆盖全部属性。 */
+  variant?: Record<string, string>;
+}
+
+/**
+ * 变体集：一组互斥的组件，实例可以在它们之间切换。
+ *
+ * 只存属性名，不存成员列表——成员由 `components[*].variantSetId` 反查。
+ * 两处都存的话，删组件时一定会有一边忘了改。
+ */
+export interface ComponentSetDefinition {
+  id: ComponentSetId;
+  name: string;
+  /** 变体属性名，顺序即 UI 展示顺序。 */
+  properties: string[];
 }
 
 export interface TokenValue {
@@ -329,6 +347,8 @@ export interface DesignDocument {
   pages: Record<PageId, DesignPage>;
   nodes: Record<NodeId, DesignNode>;
   components: Record<ComponentId, ComponentDefinition>;
+  /** 变体集；可选字段，旧文档没有它也不需要迁移。 */
+  componentSets?: Record<ComponentSetId, ComponentSetDefinition>;
   tokens: Record<string, TokenValue>;
   assets: Record<AssetId, AssetMetadata>;
   /** 迁移历史；新建文档没有这个字段，迁移过的文档才有。 */

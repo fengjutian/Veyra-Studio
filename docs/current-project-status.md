@@ -364,6 +364,17 @@
 - 组件系统已接入 UI：可将选中节点提升为组件根（`component.create`），按需实例化
   （`component.instantiate`，实例会物化组件子树并支持 overrides），并在组件面板列出
   组件与实例计数；实例可正常参与布局、画布渲染与导出；
+- 组件变体（component set）：`component.setCreate` 注册只声明属性名的变体集，
+  `components[*].variantSetId` + `variant` 表达成员归属与取值（可选字段，旧文档不迁移）；
+  `component.setVariant` 把已有组件登记为成员，`component.createVariant` 在命令层复制根子树
+  （新节点 id 用 `${新组件 id}--${源节点 id}`，与实例物化同规则）并紧跟源根插入，
+  `component.switchVariant` 让实例在同集成员之间切换——删旧物化子树、重新物化，
+  实例 id/位置/尺寸不变，覆盖按源节点 id 取交集。集合只有一个成员时自动解散，
+  避免留下永远只有一项的下拉框。组件面板显示变体取值（`state=hover`）并提供「创建变体」
+  表单（首次自动建集合）；实例面板在多成员集合时显示变体下拉框。
+  规格见 `component-variants.md`；
+  **尚未实现**：多属性的 UI 录入（数据模型与校验已支持）、切换时的覆盖按属性映射、
+  变体间的结构共享；
 - 组件的生命周期边界：实例可以「脱离组件」（`component.detach`）变成普通 frame，
   子树与物化出来的文字原样保留，组件定义本身不动，之后如果没人引用就可以删除定义；
   依赖环在编辑期就拦住：把引用了组件 A 的节点（或 A 的实例）移进 A 的子树时，

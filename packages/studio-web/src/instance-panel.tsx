@@ -1,5 +1,6 @@
 import type { DesignDocument, DesignNode, InstanceNode, Paint } from "@ufira/design-schema";
 import { NumberField, TextField } from "./property-panel";
+import type { VariantOption } from "./components";
 
 /**
  * 实例覆盖面板。
@@ -17,6 +18,9 @@ export interface InstancePanelProps {
   document: DesignDocument;
   instance: InstanceNode;
   disabled?: boolean;
+  /** 同一变体集的成员；超过一个才会渲染切换器。 */
+  variants?: VariantOption[];
+  onSwitchVariant?(componentId: string): void;
   onOverride(sourceNodeId: string, patch: OverridePatch): void;
   onReset(sourceNodeId: string): void;
   /** 清空这个实例的全部覆盖。 */
@@ -34,11 +38,26 @@ export interface TextCopy {
   opacityPercent: number;
 }
 
-export function InstancePanel({ document, instance, disabled, onOverride, onReset, onResetAll, onDetach }: InstancePanelProps) {
+export function InstancePanel({ document, instance, disabled, variants, onSwitchVariant, onOverride, onReset, onResetAll, onDetach }: InstancePanelProps) {
   const copies = collectTextCopies(document, instance.id);
   const overridden = Object.keys(instance.overrides).length;
   return (
     <div className="instance-panel">
+      {variants && variants.length > 1 && (
+        <label className="field field-inline">
+          <span className="field-label">变体</span>
+          <select
+            className="variant-select"
+            value={instance.componentId}
+            disabled={disabled}
+            onChange={event => onSwitchVariant?.(event.target.value)}
+          >
+            {variants.map(option => (
+              <option key={option.componentId} value={option.componentId}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="section-heading">
         <h2>实例覆盖{overridden ? ` · ${overridden}` : ""}</h2>
         <span className="instance-actions">

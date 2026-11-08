@@ -32,7 +32,7 @@ import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
 import { collectFontFamilies, prepareFonts } from "./font-loading";
 import { CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
 import { clampScroll, panScroll } from "./canvas-pan";
-import { listComponents, makeInstanceNode } from "./components";
+import { listComponents, makeInstanceNode, variantOptions } from "./components";
 import { PropertyPanel } from "./property-panel";
 import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
@@ -1204,6 +1204,57 @@ function App() {
     await execute([{ type: "component.remove", payload: { id: componentId } }]);
     setMessage(`组件「${definition.name}」已删除`);
   });
+  /**
+   * 从现有组件复制出一个变体。
+   *
+   * 首次创建变体时顺带建立单属性变体集（属性名可改，默认 state），并把当前组件
+   * 登记为 `默认值`；三条命令放在同一个事务里，失败不会留下「有集合没成员」的半成品。
+   */
+  const createComponentVariant = (componentId: string) => void run(async () => {
+    const component = document.components[componentId];
+    if (!component) return;
+    const existingSet = component.variantSetId ? document.componentSets?.[component.variantSetId] : undefined;
+    const property = existingSet?.properties[0] ?? "state";
+    const currentValue = component.variant?.[property] ?? "default";
+    const values = await askForm({
+      title: `为「${component.name}」创建变体`,
+      description: existingSet ? `变体集属性：${property}` : "首次创建变体会建立单属性变体集（默认属性 state）",
+      fields: [
+        { key: "property", label: "属性名", defaultValue: property },
+        { key: "current", label: "当前组件的值", defaultValue: currentValue },
+        { key: "next", label: "新变体的值", placeholder: "例如 hover", defaultValue: "" },
+      ],
+      validate: input => {
+        if (!input.next?.trim()) return "新变体的值不能为空";
+        if (!/^[A-Za-z0-9_-]+$/.test(input.next.trim())) return "只能用字母、数字、- 和 _";
+        if (!input.current?.trim()) return "当前组件的值不能为空";
+        return undefined;
+      },
+    });
+    if (!values) return;
+    const propertyName = values.property?.trim() || property;
+    const nextValue = values.next!.trim();
+    const currentTrimmed = values.current!.trim();
+    const setId = existingSet?.id ?? `set:${crypto.randomUUID().slice(0, 8)}`;
+    const commands: DesignCommand[] = [];
+    if (!existingSet) {
+      commands.push({ type: "component.setCreate", payload: { set: { id: setId, name: `${component.name} 变体`, properties: [propertyName] } } });
+    }
+    if (!component.variantSetId) {
+      commands.push({ type: "component.setVariant", payload: { id: componentId, variantSetId: setId, variant: { [propertyName]: currentTrimmed } } });
+    }
+    commands.push({
+      type: "component.createVariant",
+      payload: {
+        sourceComponentId: componentId,
+        componentId: `component:${crypto.randomUUID().slice(0, 8)}`,
+        name: `${component.name} / ${nextValue}`,
+        values: { [propertyName]: nextValue },
+      },
+    });
+    await execute(commands);
+    setMessage(`已创建变体「${propertyName}=${nextValue}」`);
+  });
   /** 编组：把同级的多个对象包进一个不带填充的 frame。 */
   const groupSelection = () => {
     if (selectionLocked) return;
@@ -1536,7 +1587,7 @@ function App() {
                 <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
-                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} onResetAll={resetAllOverrides} onDetach={detachComponent} />}
+                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} variants={variantOptions(document, selected.componentId)} onSwitchVariant={componentId => void run(() => execute([{ type: "component.switchVariant", payload: { id: selected.id, componentId } }]))} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} onResetAll={resetAllOverrides} onDetach={detachComponent} />}
                 <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
                 <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
                 <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除</button>
@@ -1638,7 +1689,7 @@ function App() {
             <h2>组件</h2>
             <div className="component-create"><input type="text" placeholder="组件名称" value={componentName} onChange={event => setComponentName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") createComponentFromSelection(componentName); }} /><Tooltip label={selected?.type === "instance" ? "实例不能转为组件" : "将选中节点转为组件"}><button disabled={busy || !componentName.trim() || !selected || selectedIds.length !== 1 || selected.type === "instance"} onClick={() => createComponentFromSelection(componentName)}><Icon name="componentCreate" />创建</button></Tooltip></div>
             <div className="component-list">{componentSummaries.length
-              ? componentSummaries.map(component => <div className="component-row" key={component.id}><span className="component-glyph"><Icon name="nodeComponent" size={12} /></span><span className="component-name" title={component.name}>{component.name}</span><span className="component-count">{component.instanceCount}</span><Tooltip label="创建实例"><button className="icon-only" aria-label="创建实例" disabled={busy} onClick={() => instantiateComponent(component.id)}><Icon name="componentInstantiate" /></button></Tooltip><Tooltip label="删除组件"><button className="icon-only" aria-label="删除组件" disabled={busy} onClick={() => removeComponent(component.id)}><Icon name="componentRemove" /></button></Tooltip></div>)
+              ? componentSummaries.map(component => <div className="component-row" key={component.id}><span className="component-glyph"><Icon name="nodeComponent" size={12} /></span><span className="component-name" title={component.name}>{component.name}</span>{component.variantLabel && <span className="component-variant" title={component.variantLabel}>{component.variantLabel}</span>}<span className="component-count">{component.instanceCount}</span><Tooltip label="创建实例"><button className="icon-only" aria-label="创建实例" disabled={busy} onClick={() => instantiateComponent(component.id)}><Icon name="componentInstantiate" /></button></Tooltip><Tooltip label="创建变体"><button className="icon-only" aria-label="创建变体" disabled={busy} onClick={() => createComponentVariant(component.id)}><Icon name="componentVariant" /></button></Tooltip><Tooltip label="删除组件"><button className="icon-only" aria-label="删除组件" disabled={busy} onClick={() => removeComponent(component.id)}><Icon name="componentRemove" /></button></Tooltip></div>)
               : <p className="empty-hint">还没有组件。选中一个节点，输入名称后点击「创建」。</p>}</div>
           </section>
         </Tabs.Content>

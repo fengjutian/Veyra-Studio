@@ -21,6 +21,10 @@ export const COMMAND_TYPES = [
   "component.remove",
   "component.instantiate",
   "component.define",
+  "component.setCreate",
+  "component.setVariant",
+  "component.createVariant",
+  "component.switchVariant",
 ] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
@@ -34,7 +38,7 @@ export function describeCommandVocabulary(): string {
   return [
     '- node.create: { node: <完整节点对象>, index?: number } —— 新节点的 childIds 必须为空',
     '- node.patch: { id: "<节点 id>", patch: { name?, visible?, locked?, layout?, appearance? } } —— 整块替换，patch 里要写全被替换的字段',
-    "- text.patch: { id: \"<文本节点 id>\", patch: { text?, fontFamily?, fontSize?, lineHeight?, fontWeight?, fontStyle?, textAlign?, letterSpacing? } }",
+    "- text.patch: { id: \"<文本节点 id>\", patch: { text?, fontFamily?, fontSize?, lineHeight?, fontWeight?, fontStyle?, textAlign?, letterSpacing?, runs? } } —— runs 是段内样式区间 [{ from, to, style: { fontWeight?, fontStyle?, color? } }]，偏移是 UTF-16 下标",
     '- node.delete: { id: "<节点 id>" }',
     '- node.reparent: { id: "<节点 id>", parentId: "<节点或页面 id>", index?: number }',
     '- document.rename: { name: "新名称" }',
@@ -47,6 +51,10 @@ export function describeCommandVocabulary(): string {
     '- component.remove: { id: "<组件 id>" } —— 仍有实例引用时不可删除',
     '- component.instantiate: { node: <完整实例节点对象>, index?: number }',
     '- component.define: { component: { id, name, rootNodeId } } —— rootNodeId 必须已经是 type=component 的节点',
+    '- component.setCreate: { set: { id, name, properties: ["state"] } } —— 注册变体集，只声明属性名',
+    '- component.setVariant: { id: "<组件 id>", variantSetId: "<集合 id>", variant: { state: "default" } } —— 把组件登记为变体成员',
+    '- component.createVariant: { sourceComponentId, componentId, name, values: { state: "hover" } } —— 复制根子树生成新变体，源组件必须已属于某个集合',
+    '- component.switchVariant: { id: "<实例 id>", componentId: "<同集成员 id>" } —— 切换后按新变体重新物化子树',
   ].join("\n");
 }
 
