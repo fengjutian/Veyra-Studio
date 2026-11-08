@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -37,6 +37,8 @@ import { currentValuesFromForm, nextValuesFromForm, parseVariantProperties, vali
 import { PropertyPanel } from "./property-panel";
 import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
+import { newPropertyId } from "./component-props";
+import { ComponentPropsPanel } from "./component-props-panel";
 import { CanvasSurface } from "./renderer/canvas-surface";
 import { PrototypePreview } from "./prototype/preview";
 import { buildScene } from "./renderer/scene";
@@ -1294,6 +1296,8 @@ function App() {
     await execute([{ type: "component.remove", payload: { id: componentId } }]);
     setMessage(`组件「${definition.name}」已删除`);
   });
+  /** 选中节点所属的组件：组件属性面板按它来显示。 */
+  const owningComponentId = selected ? findOwningComponentId(document, selected.id) : undefined;
   /**
    * 从现有组件复制出一个变体。
    *
@@ -1409,6 +1413,55 @@ function App() {
       setMessage(`已脱离 ${ids.length} 个实例`);
     });
   };
+  /**
+   * 把选中的节点暴露成组件属性。
+   *
+   * 先问属性名（默认取节点名），再一次性提交「声明属性 + 绑定字段」两条命令——
+   * 中途失败不会留下「有属性没绑定」的半成品。
+   */
+  const exposeComponentProperty = (field: "text" | "visible") => void run(async () => {
+    if (!selected) return;
+    const componentId = findOwningComponentId(document, selected.id);
+    if (!componentId) { setMessage("请先选中组件内部的节点"); return; }
+    if (field === "text" && selected.type !== "text") { setMessage("只有文本节点能暴露为文本属性"); return; }
+    const name = await askText({
+      title: field === "text" ? "暴露为文本属性" : "暴露为布尔属性",
+      description: field === "text" ? "实例可以用这个属性改这段文字。" : "实例可以用这个属性开关这个节点的可见性。",
+      label: "属性名",
+      defaultValue: selected.name,
+      validate: value => value.trim() ? undefined : "属性名不能为空",
+    });
+    if (name === null) return;
+    const trimmed = name.trim();
+    const propertyId = newPropertyId();
+    // 属性是判别联合：类型与默认值必须成对给出，不能靠条件表达式推断。
+    const property = field === "text"
+      ? { id: propertyId, name: trimmed, type: "text" as const, defaultValue: selected.type === "text" ? selected.text : "" }
+      : { id: propertyId, name: trimmed, type: "boolean" as const, defaultValue: true };
+    await execute([
+      { type: "component.property.set", payload: { componentId, property } },
+      { type: "component.property.bind", payload: { componentId, propertyId, nodeId: selected.id, field } },
+    ]);
+    setMessage(`已暴露组件属性「${trimmed}」`);
+  });
+  /** 删除组件属性。 */
+  const removeComponentProperty = (componentId: string, propertyId: string) => void run(async () => {
+    await execute([{ type: "component.property.remove", payload: { componentId, propertyId } }]);
+    setMessage("已删除组件属性");
+  });
+  /** 解除属性与节点的绑定。 */
+  const unbindComponentProperty = (componentId: string, propertyId: string, nodeId: string, field: "text" | "visible") => void run(async () => {
+    await execute([{ type: "component.property.unbind", payload: { componentId, propertyId, nodeId, field } }]);
+    setMessage("已解除组件属性绑定");
+  });
+  /** 设置实例的属性值。 */
+  const setInstanceProperty = (instanceId: string, propertyId: string, value: string | boolean) => void run(async () => {
+    await execute([{ type: "instance.property.set", payload: { instanceId, propertyId, value } }]);
+  });
+  /** 删掉实例的显式属性值，回到默认值。 */
+  const resetInstanceProperty = (instanceId: string, propertyId: string) => void run(async () => {
+    await execute([{ type: "instance.property.reset", payload: { instanceId, propertyId } }]);
+  });
   /** 取消编组：把 frame 的子节点放回原位置，再删掉空 frame。 */
   const ungroupSelection = () => {
     if (selectionLocked || selectedIds.length !== 1) return;
@@ -1700,7 +1753,19 @@ function App() {
                 <input ref={replaceImageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) replaceSelectedImage(file); }} />
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
-                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} variants={variantOptions(document, selected.componentId)} onSwitchVariant={componentId => void run(() => execute([{ type: "component.switchVariant", payload: { id: selected.id, componentId } }]))} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} onResetAll={resetAllOverrides} onDetach={detachComponent} />}
+                {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} variants={variantOptions(document, selected.componentId)} onSwitchVariant={componentId => void run(() => execute([{ type: "component.switchVariant", payload: { id: selected.id, componentId } }]))} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} onResetAll={resetAllOverrides} onDetach={detachComponent} onSetProperty={(propertyId, value) => void setInstanceProperty(selected.id, propertyId, value)} onResetProperty={propertyId => void resetInstanceProperty(selected.id, propertyId)} />}
+                {owningComponentId && (
+                  <ComponentPropsPanel
+                    document={document}
+                    componentId={owningComponentId}
+                    selectedNodeId={selected.id}
+                    canExpose={isInsideSubtree(document, selected.id, document.components[owningComponentId]?.rootNodeId ?? selected.id)}
+                    disabled={busy}
+                    onExpose={field => void exposeComponentProperty(field)}
+                    onRemove={propertyId => void removeComponentProperty(owningComponentId, propertyId)}
+                    onUnbind={(propertyId, nodeId, field) => void unbindComponentProperty(owningComponentId, propertyId, nodeId, field)}
+                  />
+                )}
                 <Toggle label="显示" checked={selected.visible} onChange={visible => patchNode(selected.id, { visible })} />
                 <Toggle label="锁定" checked={selected.locked} onChange={locked => patchNode(selected.id, { locked })} />
                 <button disabled={busy} className="danger" onClick={deleteSelection}><Icon name="trash" />删除</button>

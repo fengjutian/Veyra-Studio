@@ -1,4 +1,4 @@
-import { BOOLEAN_OPERATIONS, findOwningComponentId, fontKey, isFontMimeType, supportsBooleanOperand, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, type BooleanNode, type BooleanOperation, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, findOwningComponentId, fontKey, isFontMimeType, supportsBooleanOperand, isValidVectorPath, overridableFields, remapTextRuns, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, withPropertyBinding, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -252,6 +252,12 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.override": return overrideInstanceNode(document, command.payload);
     case "component.resetOverride": return resetInstanceOverride(document, command.payload);
     case "component.resetOverrides": return resetInstanceOverrides(document, command.payload);
+    case "component.property.set": return setComponentProperty(document, command.payload);
+    case "component.property.remove": return removeComponentProperty(document, command.payload);
+    case "component.property.bind": return bindComponentProperty(document, command.payload);
+    case "component.property.unbind": return unbindComponentProperty(document, command.payload);
+    case "instance.property.set": return setInstanceProperty(document, command.payload);
+    case "instance.property.reset": return resetInstanceProperty(document, command.payload);
     case "interaction.patch": return patchInteractions(document, command.payload.id, command.payload.interactions);
   }
 }
@@ -498,6 +504,9 @@ function createComponentVariant(document: DesignDocument, payload: { sourceCompo
     rootNodeId: rootId,
     variantSetId: set.id,
     variant: { ...payload.values },
+    // 属性声明复制到新变体（属性 id 保持一致），节点上的绑定随节点一起被复制，
+    // 于是切换变体时实例的属性值能按 id 继续对上。
+    ...(source.properties?.length ? { properties: structuredClone(source.properties) } : {}),
   };
 }
 
@@ -573,6 +582,8 @@ function switchComponentVariant(document: DesignDocument, payload: { id: NodeId;
     copy.id = copyId;
     copy.parentId = parentId;
     copy.childIds = [];
+    // 绑定属于组件定义，不属于副本。
+    delete copy.componentPropertyBindings;
     document.nodes[copyId] = copy;
     for (const childId of source.childIds) copy.childIds.push(materialize(childId, copyId));
     return copyId;
@@ -597,8 +608,18 @@ function switchComponentVariant(document: DesignDocument, payload: { id: NodeId;
   instance.componentId = next.id;
   instance.childIds = childIds;
   instance.overrides = keptOverrides;
+  // 属性值按属性 id 保留；新变体没有的属性 id 会被丢弃（它在那里不存在）。
+  const nextPropertyIds = new Set((next.properties ?? []).map(property => property.id));
+  if (instance.propValues) {
+    const kept: Record<string, string | boolean> = {};
+    for (const [propertyId, value] of Object.entries(instance.propValues)) {
+      if (nextPropertyIds.has(propertyId)) kept[propertyId] = value;
+    }
+    instance.propValues = kept;
+  }
   document.nodes[node.id] = instance;
   applyOverrides(instance, keptOverrides, copies, document);
+  applyInstanceProperties(document, instance);
 }
 
 /**
@@ -634,6 +655,8 @@ function detachOne(document: DesignDocument, node: DesignNode): void {
   const detached = { ...structuredClone(node), type: "frame" as const };
   delete (detached as { componentId?: string }).componentId;
   delete (detached as { overrides?: Record<string, unknown> }).overrides;
+  // 属性值也是「与组件的关系」，脱离后不再有意义。
+  delete (detached as { propValues?: Record<string, string | boolean> }).propValues;
   document.nodes[node.id] = detached;
 }
 
@@ -673,6 +696,231 @@ function fillSlot(
   for (const rootId of payload.template.roots) slot.childIds.push(create(rootId, slot.id));
 }
 
+/**
+ * 把实例的属性值应用到它的物化副本上。
+ *
+ * 属性值**在 override 之后**应用 —— 属性是更高层的契约，优先于字段级覆盖。
+ * 写入的是纯文本：被绑定的文本副本上的段内样式会被清掉（区间必然失效）。
+ *
+ * 副本 id 用 `${instanceId}--${sourceId}`：物化时每一层的源 id 都是原样保留的，
+ * 所以这个拼接对任意深度都成立。
+ */
+function applyInstanceProperties(document: DesignDocument, instance: InstanceNode): void {
+  const definition = document.components[instance.componentId];
+  if (!definition) return;
+  for (const target of propertyTargets(document, instance.componentId)) {
+    const copy = document.nodes[`${instance.id}--${target.sourceNodeId}`];
+    if (!copy) continue;
+    const value = resolvePropertyValue(document, instance, target.property);
+    if (target.field === "text") {
+      if (copy.type !== "text") continue;
+      copy.text = String(value);
+      delete copy.runs;
+    } else {
+      copy.visible = Boolean(value);
+    }
+  }
+}
+
+/** 把组件的属性值重新应用到它的所有实例上。 */
+function applyComponentProperties(document: DesignDocument, componentId: string): void {
+  for (const node of Object.values(document.nodes)) {
+    if (node.type !== "instance" || node.componentId !== componentId) continue;
+    applyInstanceProperties(document, node);
+  }
+}
+
+/** 把实例副本的字段恢复成组件定义里的原始样子。 */
+function restoreCopyFromSource(document: DesignDocument, instanceId: NodeId, sourceNodeId: NodeId): void {
+  const source = document.nodes[sourceNodeId];
+  const copy = document.nodes[`${instanceId}--${sourceNodeId}`];
+  if (!source || !copy) return;
+  copy.visible = source.visible;
+  if (copy.type === "text" && source.type === "text") {
+    copy.text = source.text;
+    if (source.runs) copy.runs = structuredClone(source.runs);
+    else delete copy.runs;
+  }
+}
+
+/**
+ * 声明或更新一个组件属性。
+ *
+ * 同一个 id 再次提交就是更新。改默认值会立刻作用到该组件的所有实例——
+ * 没显式改过值的实例跟着变，改过的实例保持自己的值。
+ */
+function setComponentProperty(document: DesignDocument, payload: { componentId: string; property: ComponentProperty }): void {
+  const component = document.components[payload.componentId];
+  if (!component) throw new CommandError(`Component ${payload.componentId} does not exist`);
+  const property = payload.property;
+  if (!property.id.trim()) throw new CommandError("Property id cannot be empty");
+  if (!property.name.trim()) throw new CommandError("Property name cannot be empty");
+  // 类型与默认值必须配对。类型系统已经保证编译期一致，但命令可以从 JSON 进来，
+  // 所以这里按「未收窄的值」再判一次。
+  const rawDefault: unknown = property.defaultValue;
+  if (property.type === "text" && typeof rawDefault !== "string") {
+    throw new CommandError(`Property ${property.id} is a text property and needs a string default value`);
+  }
+  if (property.type === "boolean" && typeof rawDefault !== "boolean") {
+    throw new CommandError(`Property ${property.id} is a boolean property and needs a boolean default value`);
+  }
+
+  const properties = [...(component.properties ?? [])];
+  const index = properties.findIndex(existing => existing.id === property.id);
+  const previous = index >= 0 ? properties[index] : undefined;
+  // 改类型会让已有绑定和实例值失效：绑定字段与类型不匹配的直接拒绝，
+  // 实例值则清掉（它们是旧类型的值，留着只会让文档非法）。
+  if (previous && previous.type !== property.type) {
+    for (const target of propertyTargets(document, component.id)) {
+      if (target.property.id !== property.id) continue;
+      if (target.field === "text" && property.type !== "text") {
+        throw new CommandError(`Property ${property.id} is bound to text and cannot change to ${property.type}`);
+      }
+      if (target.field === "visible" && property.type !== "boolean") {
+        throw new CommandError(`Property ${property.id} is bound to visibility and cannot change to ${property.type}`);
+      }
+    }
+    for (const node of Object.values(document.nodes)) {
+      if (node.type !== "instance" || node.componentId !== component.id) continue;
+      if (!node.propValues) continue;
+      const next = { ...node.propValues };
+      delete next[property.id];
+      node.propValues = next;
+    }
+  }
+  if (index >= 0) properties[index] = property;
+  else properties.push(property);
+  component.properties = properties;
+
+  applyComponentProperties(document, component.id);
+}
+
+/**
+ * 删除一个组件属性。
+ *
+ * 同时清掉：组件子树里指向它的绑定、各实例上的显式值；
+ * 被绑定的字段恢复成组件定义里的原始样子。
+ */
+function removeComponentProperty(document: DesignDocument, payload: { componentId: string; propertyId: string }): void {
+  const component = document.components[payload.componentId];
+  if (!component) throw new CommandError(`Component ${payload.componentId} does not exist`);
+  const properties = component.properties ?? [];
+  if (!properties.some(property => property.id === payload.propertyId)) {
+    throw new CommandError(`Property ${payload.propertyId} does not exist on component ${component.id}`);
+  }
+  component.properties = properties.filter(property => property.id !== payload.propertyId);
+
+  // 清理绑定，并记下受影响的节点好恢复副本。
+  const affected: NodeId[] = [];
+  for (const node of Object.values(document.nodes)) {
+    const bindings = node.componentPropertyBindings;
+    if (!bindings) continue;
+    if (bindings.text !== payload.propertyId && bindings.visible !== payload.propertyId) continue;
+    const next = { ...bindings };
+    if (next.text === payload.propertyId) delete next.text;
+    if (next.visible === payload.propertyId) delete next.visible;
+    if (next.text || next.visible) node.componentPropertyBindings = next;
+    else delete node.componentPropertyBindings;
+    affected.push(node.id);
+  }
+
+  for (const node of Object.values(document.nodes)) {
+    if (node.type !== "instance" || node.componentId !== component.id) continue;
+    if (node.propValues?.[payload.propertyId] !== undefined) {
+      const next = { ...node.propValues };
+      delete next[payload.propertyId];
+      node.propValues = next;
+    }
+    for (const sourceNodeId of affected) restoreCopyFromSource(document, node.id, sourceNodeId);
+  }
+}
+
+/**
+ * 把组件属性绑定到组件内部某个节点的字段。
+ *
+ * 节点必须在组件根子树**内部**（组件根本身只是容器）；字段与属性类型、
+ * 节点类型必须对得上。同一字段重复绑定是覆盖。
+ */
+function bindComponentProperty(
+  document: DesignDocument,
+  payload: { componentId: string; propertyId: string; nodeId: NodeId; field: ComponentPropertyField },
+): void {
+  const component = document.components[payload.componentId];
+  if (!component) throw new CommandError(`Component ${payload.componentId} does not exist`);
+  const property = (component.properties ?? []).find(candidate => candidate.id === payload.propertyId);
+  if (!property) throw new CommandError(`Property ${payload.propertyId} does not exist on component ${component.id}`);
+  const node = requireNode(document, payload.nodeId);
+  if (!isInsideSubtree(document, node.id, component.rootNodeId)) {
+    throw new CommandError(`Node ${node.id} is not inside component ${component.id}`);
+  }
+  if (payload.field === "text") {
+    if (property.type !== "text") throw new CommandError(`Property ${property.id} is a ${property.type} property and cannot bind text`);
+    if (node.type !== "text") throw new CommandError(`Node ${node.id} is not a text node`);
+  } else if (property.type !== "boolean") {
+    throw new CommandError(`Property ${property.id} is a ${property.type} property and cannot bind visibility`);
+  }
+
+  node.componentPropertyBindings = withPropertyBinding(node.componentPropertyBindings, payload.field, property.id);
+  applyComponentProperties(document, component.id);
+}
+
+/** 解除绑定；被绑定的字段恢复成组件定义里的原始样子。 */
+function unbindComponentProperty(
+  document: DesignDocument,
+  payload: { componentId: string; propertyId: string; nodeId: NodeId; field: ComponentPropertyField },
+): void {
+  const component = document.components[payload.componentId];
+  if (!component) throw new CommandError(`Component ${payload.componentId} does not exist`);
+  const node = requireNode(document, payload.nodeId);
+  const bindings = node.componentPropertyBindings;
+  if (!bindings) throw new CommandError(`Node ${node.id} has no component property bindings`);
+  const current = bindings[payload.field];
+  if (current !== payload.propertyId) {
+    throw new CommandError(`Node ${node.id} is not bound to property ${payload.propertyId} on field ${payload.field}`);
+  }
+  const next = { ...bindings };
+  delete next[payload.field];
+  if (next.text || next.visible) node.componentPropertyBindings = next;
+  else delete node.componentPropertyBindings;
+
+  for (const instance of Object.values(document.nodes)) {
+    if (instance.type !== "instance" || instance.componentId !== component.id) continue;
+    restoreCopyFromSource(document, instance.id, node.id);
+    applyInstanceProperties(document, instance);
+  }
+}
+
+/** 设置实例的属性值；立刻作用到物化副本。 */
+function setInstanceProperty(document: DesignDocument, payload: { instanceId: NodeId; propertyId: string; value: string | boolean }): void {
+  const instance = requireInstance(document, payload.instanceId);
+  const component = document.components[instance.componentId];
+  if (!component) throw new CommandError(`Component ${instance.componentId} does not exist`);
+  const property = (component.properties ?? []).find(candidate => candidate.id === payload.propertyId);
+  if (!property) throw new CommandError(`Property ${payload.propertyId} is not declared by component ${instance.componentId}`);
+  if (property.type === "text" && typeof payload.value !== "string") {
+    throw new CommandError(`Property ${property.id} is a text property and needs a string value`);
+  }
+  if (property.type === "boolean" && typeof payload.value !== "boolean") {
+    throw new CommandError(`Property ${property.id} is a boolean property and needs a boolean value`);
+  }
+  instance.propValues = { ...(instance.propValues ?? {}), [property.id]: payload.value };
+  applyInstanceProperties(document, instance);
+}
+
+/** 删掉实例的显式值，回到组件声明的默认值。 */
+function resetInstanceProperty(document: DesignDocument, payload: { instanceId: NodeId; propertyId: string }): void {
+  const instance = requireInstance(document, payload.instanceId);
+  const component = document.components[instance.componentId];
+  if (!component) throw new CommandError(`Component ${instance.componentId} does not exist`);
+  if (!instance.propValues || instance.propValues[payload.propertyId] === undefined) {
+    throw new CommandError(`Instance ${instance.id} has no explicit value for property ${payload.propertyId}`);
+  }
+  const next = { ...instance.propValues };
+  delete next[payload.propertyId];
+  instance.propValues = next;
+  applyInstanceProperties(document, instance);
+}
+
 /** 给实例里的物化副本写入覆盖值，并把它记进实例的 overrides。 */
 function overrideInstanceNode(
   document: DesignDocument,
@@ -694,6 +942,16 @@ function overrideInstanceNode(
   const allowed = overridableFields(copy);
   for (const key of patchKeys) {
     if (!(allowed as readonly string[]).includes(key)) throw new CommandError(`Node ${copy.id} cannot override ${key}`);
+  }
+  // 被组件属性驱动的字段不能被 override 覆盖：属性值在物化时最后应用，
+  // 覆盖写了也会被盖掉——这里直接拒绝，不让人以为改成功了。
+  const source = document.nodes[payload.sourceNodeId];
+  const bindings = source?.componentPropertyBindings;
+  if (bindings?.text && text !== undefined) {
+    throw new CommandError(`Node ${copy.id} text is controlled by component property ${bindings.text}`);
+  }
+  if (bindings?.visible && visible !== undefined) {
+    throw new CommandError(`Node ${copy.id} visibility is controlled by component property ${bindings.visible}`);
   }
   if (!patchKeys.length) throw new CommandError("Override patch cannot be empty");
   if (appearance?.opacity !== undefined && (!Number.isFinite(appearance.opacity) || appearance.opacity < 0 || appearance.opacity > 1)) {
@@ -795,6 +1053,9 @@ function instantiateComponent(document: DesignDocument, node: InstanceNode, inde
     copy.id = copyId;
     copy.parentId = parentId;
     copy.childIds = [];
+    // 绑定是组件定义的属性，不是副本的：副本上的绑定会被剥掉，
+    // 否则副本会指向一个它并不属于的组件的属性。
+    delete copy.componentPropertyBindings;
     document.nodes[copyId] = copy;
     for (const childId of source.childIds) {
       const childCopyId = materialize(childId, copyId);
@@ -808,6 +1069,7 @@ function instantiateComponent(document: DesignDocument, node: InstanceNode, inde
   instance.childIds = materializedChildIds;
 
   applyOverrides(instance, node.overrides, copies, document);
+  applyInstanceProperties(document, instance);
 
   document.nodes[node.id] = instance;
   insertAt(owner.childIds, node.id, index);

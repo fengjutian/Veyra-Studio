@@ -13,3 +13,4 @@ export * from "./tokens";
 export * from "./paint";
 export * from "./blend";
 export * from "./components";
+export * from "./component-properties";

@@ -1,6 +1,8 @@
 import { designDocumentSchema } from "./schema";
 import { fontKey, isFontMimeType } from "./fonts";
 import { supportsBooleanOperand } from "./boolean";
+import { findOwningComponentId } from "./components";
+import { isInsideSubtree } from "./component-properties";
 import type { DesignDocument, NodeId } from "./types";
 
 export class DocumentValidationError extends Error {
@@ -73,6 +75,55 @@ export function validateDocument(input: unknown): DesignDocument {
     if (!claimed.has(nodeId)) issues.push(`node ${nodeId} is orphaned`);
   }
 
+  // 组件属性绑定：绑定必须指向组件内部节点、属性必须存在且类型匹配。
+  // 命令层也会拦，但导入一份手改过的 JSON 时只能靠这里。
+  for (const [nodeId, node] of Object.entries(document.nodes)) {
+    const bindings = node.componentPropertyBindings;
+    if (!bindings) continue;
+    const ownerId = findOwningComponentId(document, nodeId);
+    if (!ownerId) {
+      issues.push(`node ${nodeId} has component property bindings but is not inside a component`);
+      continue;
+    }
+    const owner = document.components[ownerId];
+    const properties = new Map((owner?.properties ?? []).map(property => [property.id, property]));
+    if (!isInsideSubtree(document, nodeId, owner!.rootNodeId)) {
+      issues.push(`node ${nodeId} has component property bindings but is not inside component ${ownerId}`);
+    }
+    if (bindings.text) {
+      const property = properties.get(bindings.text);
+      if (!property) issues.push(`node ${nodeId} text binding references unknown property ${bindings.text} of component ${ownerId}`);
+      else if (property.type !== "text") issues.push(`node ${nodeId} text binding cannot use ${property.type} property ${property.id}`);
+      else if (node.type !== "text") issues.push(`node ${nodeId} text binding requires a text node`);
+    }
+    if (bindings.visible) {
+      const property = properties.get(bindings.visible);
+      if (!property) issues.push(`node ${nodeId} visible binding references unknown property ${bindings.visible} of component ${ownerId}`);
+      else if (property.type !== "boolean") issues.push(`node ${nodeId} visible binding cannot use ${property.type} property ${property.id}`);
+    }
+  }
+
+  // 实例属性值：键必须是所属组件声明过的属性，值类型必须匹配。
+  for (const [nodeId, node] of Object.entries(document.nodes)) {
+    if (node.type !== "instance") continue;
+    const properties = new Map(
+      (document.components[node.componentId]?.properties ?? []).map(property => [property.id, property]),
+    );
+    for (const [propertyId, value] of Object.entries(node.propValues ?? {})) {
+      const property = properties.get(propertyId);
+      if (!property) {
+        issues.push(`instance ${nodeId} sets unknown component property ${propertyId}`);
+        continue;
+      }
+      if (property.type === "text" && typeof value !== "string") {
+        issues.push(`instance ${nodeId} property ${propertyId} must be a string`);
+      }
+      if (property.type === "boolean" && typeof value !== "boolean") {
+        issues.push(`instance ${nodeId} property ${propertyId} must be a boolean`);
+      }
+    }
+  }
+
   detectCycles(document, issues);
 
   for (const [componentId, component] of Object.entries(document.components)) {
@@ -85,6 +136,13 @@ export function validateDocument(input: unknown): DesignDocument {
     }
     if (component.variant && !component.variantSetId) {
       issues.push(`component ${componentId} has variant values but no variant set`);
+    }
+    // 组件属性：id 在组件内唯一，属性名不能为空。
+    const propertyIds = new Set<string>();
+    for (const property of component.properties ?? []) {
+      if (propertyIds.has(property.id)) issues.push(`component ${componentId} has duplicate property ${property.id}`);
+      propertyIds.add(property.id);
+      if (!property.name.trim()) issues.push(`component ${componentId} property ${property.id} has an empty name`);
     }
   }
 

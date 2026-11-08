@@ -1,5 +1,6 @@
 import type { DesignDocument, DesignNode, InstanceNode, Paint } from "@ufira/design-schema";
 import { NumberField, TextField } from "./property-panel";
+import { instancePropertyViews, nodeBoundByProperty } from "./component-props";
 import type { VariantOption } from "./components";
 
 /**
@@ -27,6 +28,10 @@ export interface InstancePanelProps {
   onResetAll(): void;
   /** 把实例脱离成普通 frame。 */
   onDetach(): void;
+  /** 设置实例的组件属性值。 */
+  onSetProperty?(propertyId: string, value: string | boolean): void;
+  /** 删掉实例的显式属性值，回到默认值。 */
+  onResetProperty?(propertyId: string): void;
 }
 
 export interface TextCopy {
@@ -38,9 +43,10 @@ export interface TextCopy {
   opacityPercent: number;
 }
 
-export function InstancePanel({ document, instance, disabled, variants, onSwitchVariant, onOverride, onReset, onResetAll, onDetach }: InstancePanelProps) {
+export function InstancePanel({ document, instance, disabled, variants, onSwitchVariant, onOverride, onReset, onResetAll, onDetach, onSetProperty, onResetProperty }: InstancePanelProps) {
   const copies = collectTextCopies(document, instance.id);
   const overridden = Object.keys(instance.overrides).length;
+  const properties = instancePropertyViews(document, instance);
   return (
     <div className="instance-panel">
       {variants && variants.length > 1 && (
@@ -57,6 +63,39 @@ export function InstancePanel({ document, instance, disabled, variants, onSwitch
             ))}
           </select>
         </label>
+      )}
+      {properties.length > 0 && (
+        <>
+          <div className="section-heading">
+            <h2>组件属性</h2>
+          </div>
+          {properties.map(property => (
+            <div className="instance-override" key={property.propertyId}>
+              {property.type === "text" ? (
+                <TextField
+                  label={property.name}
+                  value={String(property.value)}
+                  disabled={disabled}
+                  onCommit={value => onSetProperty?.(property.propertyId, value)}
+                />
+              ) : (
+                <label className="field field-inline">
+                  <span className="field-label">{property.name}</span>
+                  <input
+                    type="checkbox"
+                    disabled={disabled}
+                    checked={Boolean(property.value)}
+                    onChange={event => onSetProperty?.(property.propertyId, event.target.checked)}
+                  />
+                </label>
+              )}
+              <div className="instance-override-appearance">
+                <span className="field-label" title={property.targetName ?? ""}>{property.targetName ?? "未绑定"}</span>
+                {property.explicit && <button type="button" disabled={disabled} onClick={() => onResetProperty?.(property.propertyId)}>恢复默认</button>}
+              </div>
+            </div>
+          ))}
+        </>
       )}
       <div className="section-heading">
         <h2>实例覆盖{overridden ? ` · ${overridden}` : ""}</h2>
@@ -110,22 +149,31 @@ function normalizeHex(value: string): string {
  *
  * 只收 `instanceId--sourceId` 这种直接物化的节点；插槽内容（`--slot--` 前缀）
  * 是用户后来填进去的，不属于组件定义，也不该被"覆盖"。
+ *
+ * 被组件属性接管的文本节点也不收：它的内容归属性管，
+ * 两处都能改会让人以为有一个改动没生效。
  */
 export function collectTextCopies(document: DesignDocument, instanceId: string): TextCopy[] {
   const prefix = `${instanceId}--`;
+  const instance = document.nodes[instanceId];
+  const componentId = instance?.type === "instance" ? instance.componentId : undefined;
   const copies: TextCopy[] = [];
   const walk = (id: string): void => {
     const node = document.nodes[id];
     if (!node) return;
     if (node.type === "text" && id.startsWith(prefix) && !id.includes("--slot--")) {
-      copies.push({
-        id,
-        sourceNodeId: id.slice(prefix.length),
-        name: node.name,
-        text: node.text,
-        fill: primaryFill(node) ?? "#000000",
-        opacityPercent: Math.round((node.appearance.opacity ?? 1) * 100),
-      });
+      const sourceNodeId = id.slice(prefix.length);
+      const bound = componentId ? nodeBoundByProperty(document, componentId, sourceNodeId, "text") : undefined;
+      if (!bound) {
+        copies.push({
+          id,
+          sourceNodeId,
+          name: node.name,
+          text: node.text,
+          fill: primaryFill(node) ?? "#000000",
+          opacityPercent: Math.round((node.appearance.opacity ?? 1) * 100),
+        });
+      }
     }
     for (const childId of node.childIds) walk(childId);
   };

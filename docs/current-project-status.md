@@ -423,6 +423,23 @@
   实例也支持 `component.detachMany` 批量脱离，任一目标不是实例就整批失败并回滚。
   「实例覆盖」面板已接上这些能力：每个文本副本可改文字、填充色与透明度，可单条重置；
   顶部有「全部重置」与「脱离组件」，多选全是实例时还有「批量脱离」。
+- 组件属性（component props，2026-11-08）：组件可以声明一组**有类型、有默认值**的对外参数，
+  实例按属性改值而不改结构。`ComponentDefinition.properties` 是属性声明
+  （`text` / `boolean` 两种，用判别联合保证类型与默认值配对），
+  `node.componentPropertyBindings` 是绑定（方向「字段 → 属性 id」，
+  只支持 `text` 与 `visible` 两个字段），`instance.propValues` 存**实例显式改过**的值——
+  没改过的跟随组件默认值，与 Figma 一致。三个字段全可选，文档格式版本仍是 v4。
+  物化顺序是「复制子树 → 应用 override → 应用属性值」：属性是更高层的契约，
+  优先于字段级覆盖，与之配套 `component.override` 拒绝写入被属性绑定的字段，
+  不让人以为改成功了。命令：`component.property.set / remove / bind / unbind`、
+  `instance.property.set / reset`；实例面板新增「组件属性」区（文本框 / 勾选框 + 恢复默认），
+  选中组件内部节点时属性面板新增「组件属性」区（暴露 / 解绑 / 删除）。
+  变体创建时继承属性声明，切换变体时实例的显式值按属性 id 保留。
+  规格见 `component-properties.md`；
+  **尚未实现**：实例交换 / 颜色 / 字号等属性类型；
+  属性声明按组件各存一份（不是变体集共享），源组件改默认值不会同步到已有变体；
+  文本属性写纯文本，会清掉被绑定文本节点的段内样式；
+  属性不能跨组件嵌套引用；
 - 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
   以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
 - 属性面板是独立的 `PropertyPanel` 组件，覆盖布局引擎已支持的完整词汇：布局模式

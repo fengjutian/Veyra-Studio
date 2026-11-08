@@ -1,6 +1,8 @@
 import type {
   AssetMetadata,
   ComponentDefinition,
+  ComponentProperty,
+  ComponentPropertyField,
   ComponentSetDefinition,
   BooleanOperation,
   ComponentSetId,
@@ -314,7 +316,13 @@ export type DesignCommand =
   | ResetComponentOverrideCommand
   | ResetAllComponentOverridesCommand
   | DetachManyComponentsCommand
-  | PatchInteractionCommand;
+  | PatchInteractionCommand
+  | SetComponentPropertyCommand
+  | RemoveComponentPropertyCommand
+  | BindComponentPropertyCommand
+  | UnbindComponentPropertyCommand
+  | SetInstancePropertyCommand
+  | ResetInstancePropertyCommand;
 
 export interface CommandEnvelope {
   commandId: string;
@@ -376,4 +384,56 @@ export interface DetachManyComponentsCommand {
 export interface PatchInteractionCommand {
   type: "interaction.patch";
   payload: { id: NodeId; interactions: Interaction[] };
+}
+
+/**
+ * 声明或更新一个组件属性。
+ *
+ * 按 `property.id` 覆盖：同一个 id 再次提交就是更新（改名 / 改默认值）。
+ * 改默认值会立刻作用到该组件的所有实例——没显式改过值的实例跟着变，
+ * 改过的实例保持自己的值。
+ */
+export interface SetComponentPropertyCommand {
+  type: "component.property.set";
+  payload: { componentId: string; property: ComponentProperty };
+}
+
+/**
+ * 删除一个组件属性。
+ *
+ * 同时清掉：组件子树里指向它的绑定、各实例上的显式值。
+ * 被绑定的字段会恢复成组件定义里的原始样子。
+ */
+export interface RemoveComponentPropertyCommand {
+  type: "component.property.remove";
+  payload: { componentId: string; propertyId: string };
+}
+
+/**
+ * 把组件属性绑定到组件内部某个节点的字段。
+ *
+ * 字段只有 `text` 与 `visible` 两个：`text` 要求属性是 text 类型且节点是文本节点，
+ * `visible` 要求属性是 boolean 类型。同一字段重复绑定是覆盖。
+ */
+export interface BindComponentPropertyCommand {
+  type: "component.property.bind";
+  payload: { componentId: string; propertyId: string; nodeId: NodeId; field: ComponentPropertyField };
+}
+
+/** 解除绑定；被绑定的字段恢复成组件定义里的原始样子。 */
+export interface UnbindComponentPropertyCommand {
+  type: "component.property.unbind";
+  payload: { componentId: string; propertyId: string; nodeId: NodeId; field: ComponentPropertyField };
+}
+
+/** 设置实例上某个属性的值；立即作用到实例的物化副本。 */
+export interface SetInstancePropertyCommand {
+  type: "instance.property.set";
+  payload: { instanceId: NodeId; propertyId: string; value: string | boolean };
+}
+
+/** 删掉实例的显式值，回到组件声明的默认值。 */
+export interface ResetInstancePropertyCommand {
+  type: "instance.property.reset";
+  payload: { instanceId: NodeId; propertyId: string };
 }

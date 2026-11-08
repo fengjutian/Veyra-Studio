@@ -176,6 +176,21 @@ const vectorGeometrySchema = z.object({
 
 const constraintAxisSchema = z.enum(["start", "end", "center", "stretch", "scale"]);
 
+/**
+ * 组件属性的 schema。
+ *
+ * 判别联合：类型与默认值必须配对，`text` 属性的默认值不能是布尔值。
+ */
+export const componentPropertySchema = z.discriminatedUnion("type", [
+  z.object({ id: id, name: z.string().min(1), type: z.literal("text"), defaultValue: z.string() }),
+  z.object({ id: id, name: z.string().min(1), type: z.literal("boolean"), defaultValue: z.boolean() }),
+]);
+
+const componentPropertyBindingsSchema = z.object({
+  text: z.string().min(1).optional(),
+  visible: z.string().min(1).optional(),
+});
+
 const baseNodeShape = {
   id,
   name: z.string(),
@@ -196,6 +211,7 @@ const baseNodeShape = {
   externalRefs: z.array(z.object({ provider: z.string().min(1), id })).optional(),
   slot: z.boolean().optional(),
   mask: z.boolean().optional(),
+  componentPropertyBindings: componentPropertyBindingsSchema.optional(),
   interactions: z.array(interactionSchema).optional(),
 };
 
@@ -256,6 +272,7 @@ const instanceNodeSchema = z.object({
   type: z.literal("instance"),
   componentId: id,
   overrides: z.record(z.string(), z.unknown()),
+  propValues: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
 });
 
 // 判别联合按 type 选分支，报错会直接落到出问题的字段上；
@@ -286,6 +303,7 @@ export const designDocumentSchema = z.object({
     rootNodeId: id,
     variantSetId: id.optional(),
     variant: z.record(z.string().min(1), z.string().min(1)).optional(),
+    properties: z.array(componentPropertySchema).optional(),
   })),
   componentSets: z.record(id, z.object({
     id,

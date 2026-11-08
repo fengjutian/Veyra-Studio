@@ -257,6 +257,8 @@ export interface BaseNode {
   constraints?: Constraints;
   /** 作为组件插槽的 frame：实例可以往这里填充自己的内容。 */
   slot?: boolean;
+  /** 组件属性绑定；只在组件定义子树里有意义。 */
+  componentPropertyBindings?: ComponentPropertyBindings;
   /**
    * 蒙版：这个形状不直接绘制，而是裁剪同一父级里排在它上面的兄弟层。
    *
@@ -330,6 +332,40 @@ export interface InstanceNode extends BaseNode {
   type: "instance";
   componentId: ComponentId;
   overrides: Record<string, unknown>;
+  /**
+   * 实例显式设置过的组件属性值；键是属性 id。
+   *
+   * 只存**改过**的值：没改过的实例不写任何东西，这样组件默认值变化时
+   * 这类实例会跟着变（和 Figma 一致）。
+   */
+  propValues?: Record<string, string | boolean>;
+}
+
+/**
+ * 组件属性：组件对外暴露的一个可变参数。
+ *
+ * 用判别联合而不是 `defaultValue: string | boolean`——类型与默认值必须配对，
+ * 写成联合会让「text 属性的默认值是 false」这种错误数据也能通过 schema。
+ */
+export type ComponentProperty =
+  | { id: string; name: string; type: "text"; defaultValue: string }
+  | { id: string; name: string; type: "boolean"; defaultValue: boolean };
+
+/**
+ * 节点字段与组件属性的绑定，方向是「字段 → 属性 id」。
+ *
+ * 绑定写在**被绑定的节点**上而不是写在属性上：一个节点最多绑一个 text 属性
+ * 和一个 visible 属性，这样天然满足；节点被删除时绑定随之消失，
+ * 不会留下指向已删节点的悬空引用。
+ *
+ * 只支持 `text` 与 `visible` 两个字段——一旦允许绑定任意字段，
+ * 属性就会退化成 override 的别名。
+ */
+export interface ComponentPropertyBindings {
+  /** 文本字段由哪个 text 属性驱动。 */
+  text?: string;
+  /** 可见性由哪个 boolean 属性驱动。 */
+  visible?: string;
 }
 
 export interface VectorNode extends BaseNode {
@@ -358,6 +394,12 @@ export interface ComponentDefinition {
   variantSetId?: ComponentSetId;
   /** 变体属性取值；键必须是所属集合 `properties` 的子集，并覆盖全部属性。 */
   variant?: Record<string, string>;
+  /**
+   * 对外暴露的组件属性；可选，旧文档没有它也不需要迁移。
+   *
+   * 规格见 `docs/component-properties.md`。
+   */
+  properties?: ComponentProperty[];
 }
 
 /**
