@@ -37,7 +37,7 @@ import { PropertyPanel } from "./property-panel";
 import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
 import { CanvasSurface } from "./renderer/canvas-surface";
-import { buildScene } from "./renderer/scene";
+import { PrototypePreview } from "./prototype/preview";import { buildScene } from "./renderer/scene";
 import { hitTest, pointFromEvent, type HitPoint } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
 import { usePenTool, type PenCommit } from "./renderer/use-pen-tool";
@@ -163,6 +163,8 @@ function App() {
   // 隔离预览：弹窗里渲染导出器真实产物。
   const [exportPreview, setExportPreview] = useState<ExportPreview>();
   const [previewOpen, setPreviewOpen] = useState(false);
+  // 原型预览：非空时进入全屏预览（Esc 退出）。这是视图状态，不写文档。
+  const [prototypeScreenId, setPrototypeScreenId] = useState<string>();
   // 已提交事务：操作历史面板据此列出每一条可回退的步骤。
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
@@ -183,6 +185,21 @@ function App() {
     const committed = await project[direction]();
     const snapshot = project.snapshot();
     setDocument(snapshot); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setMessage(`已${direction === "undo" ? "撤销" : "重做"} · r${committed.result.revision}`);
+  };
+
+  /**
+   * 从「当前选中（或页面第一个根节点）」开始预览。
+   *
+   * 只有容器型节点能当屏幕：文本/矢量当屏幕没有意义，预览里也点不到东西。
+   */
+  const startPrototypePreview = () => {
+    const SCREEN_TYPES = new Set(["frame", "component", "instance"]);
+    const candidate = selected && SCREEN_TYPES.has(selected.type) ? selected.id : document.pages[page.id]?.childIds[0];
+    if (!candidate || !document.nodes[candidate]) {
+      setMessage("当前页面没有可预览的屏幕：先画一个 Frame 或容器");
+      return;
+    }
+    setPrototypeScreenId(candidate);
   };
 
   /**
@@ -1400,6 +1417,9 @@ function App() {
         <Tooltip label="撤销 · Ctrl/Cmd+Z"><button className="icon-only" aria-label="撤销" disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" /></button></Tooltip>
         <Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button className="icon-only" aria-label="重做" disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" /></button></Tooltip>
       </div>
+      <div className="toolbar-group" role="group" aria-label="原型">
+        <Tooltip label="预览原型（从选中的 Frame 开始）"><button className="icon-only" aria-label="预览原型" disabled={busy} onClick={startPrototypePreview}><Icon name="prototypePlay" /></button></Tooltip>
+      </div>
       <div className="toolbar-group" role="group" aria-label="项目">
         <Tooltip label="新建项目"><button className="icon-only" aria-label="新建项目" disabled={busy} onClick={createProject}><Icon name="newProject" /></button></Tooltip>
         <Tooltip label="重命名项目"><button className="icon-only" aria-label="重命名项目" disabled={busy} onClick={renameProject}><Icon name="rename" /></button></Tooltip>
@@ -1713,6 +1733,7 @@ function App() {
       </div>
     </aside>
     <ExportPreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} preview={exportPreview} />
+    {prototypeScreenId && <PrototypePreview document={document} repository={repository} projectId={document.id} startScreenId={prototypeScreenId} onExit={() => setPrototypeScreenId(undefined)} />}
   </div>;
 }
 

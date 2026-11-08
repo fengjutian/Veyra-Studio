@@ -218,3 +218,43 @@ button.icon-only{padding:5px;min-width:26px}
 .canvas-text-edit{position:absolute;z-index:30;border:1px solid #8b5cf6;border-radius:4px;background:#fff;color:#111;padding:2px;resize:none;outline:none;overflow:hidden}
 .canvas-a11y{position:absolute;left:0;top:0;width:1px;height:1px;margin:0;padding:0;list-style:none;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .canvas-a11y-kind{color:#64748b}
+/* ── 原型预览 ───────────────────────────────────────────────────────── */
+.prototype-preview{position:fixed;inset:0;z-index:60;display:flex;flex-direction:column;background:#0b0d12}
+.prototype-toolbar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #2b303b;color:#e7e9ee;font-size:12px}
+.prototype-toolbar button{border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;padding:4px 10px;cursor:pointer;font-size:12px}
+.prototype-toolbar button:disabled{opacity:.45;cursor:default}
+.prototype-screen-name{color:#98a2b3}
+.prototype-spacer{flex:1}
+.prototype-viewport{flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:24px}
+.prototype-stage{position:relative;flex:0 0 auto;background:#fff;box-shadow:0 12px 40px rgba(0,0,0,.45);overflow:hidden}
+.prototype-layer{position:absolute;inset:0}
+.prototype-layer canvas{display:block}
+.prototype-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.35);pointer-events:none}
+/* 动画只吃进入/退出层的 transform/opacity，时长与缓动由内联 style 提供 */
+.proto-anim{animation-fill-mode:both;animation-duration:300ms;animation-timing-function:ease}
+.proto-fade-in{animation-name:proto-fade-in}
+.proto-slide-in-right{animation-name:proto-slide-in-right}
+.proto-slide-in-left{animation-name:proto-slide-in-left}
+.proto-slide-in-up{animation-name:proto-slide-in-up}
+.proto-slide-in-down{animation-name:proto-slide-in-down}
+.proto-push-in-right{animation-name:proto-push-in-right}
+.proto-push-in-left{animation-name:proto-push-in-left}
+.proto-push-in-up{animation-name:proto-push-in-up}
+.proto-push-in-down{animation-name:proto-push-in-down}
+.proto-push-out-right{animation-name:proto-push-out-right}
+.proto-push-out-left{animation-name:proto-push-out-left}
+.proto-push-out-up{animation-name:proto-push-out-up}
+.proto-push-out-down{animation-name:proto-push-out-down}
+@keyframes proto-fade-in{from{opacity:0}to{opacity:1}}
+@keyframes proto-slide-in-right{from{transform:translateX(100%)}to{transform:translateX(0)}}
+@keyframes proto-slide-in-left{from{transform:translateX(-100%)}to{transform:translateX(0)}}
+@keyframes proto-slide-in-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes proto-slide-in-down{from{transform:translateY(-100%)}to{transform:translateY(0)}}
+@keyframes proto-push-in-right{from{transform:translateX(100%)}to{transform:translateX(0)}}
+@keyframes proto-push-in-left{from{transform:translateX(-100%)}to{transform:translateX(0)}}
+@keyframes proto-push-in-up{from{transform:translateY(100%)}to{transform:translateY(0)}}
+@keyframes proto-push-in-down{from{transform:translateY(-100%)}to{transform:translateY(0)}}
+@keyframes proto-push-out-right{from{transform:translateX(0)}to{transform:translateX(100%)}}
+@keyframes proto-push-out-left{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+@keyframes proto-push-out-up{from{transform:translateY(0)}to{transform:translateY(-100%)}}
+@keyframes proto-push-out-down{from{transform:translateY(0)}to{transform:translateY(100%)}}

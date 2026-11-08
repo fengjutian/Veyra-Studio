@@ -520,9 +520,11 @@
   尚未实现：锚点类型切换（corner/smooth）、多选锚点、锚点吸附、
   保留布尔组、曲线级布尔；相位划分见 `editor-tooling-roadmap.md`，
   P3 见 `pen-and-path-editing.md`，P4 见 `boolean-and-mask.md`；
-- **原型交互只有数据层，没有运行时**：事件/动作/动画/overlay 定位的模型与
-  `interaction.patch` 命令已落地，但预览模式、交互状态机、跳转执行、overlay 渲染
-  全部未实现；协作（实时多人、评论、分享）完全空缺；
+- **原型已有运行时**：`interaction.patch` 的数据层 + `studio-web/src/prototype/` 的预览，
+  支持点击/悬停/延迟三种事件、navigate/overlay/prev-screen/open-url 五类动作、
+  dissolve/slide/push 动画与 overlay 定位（详见下方「原型预览」条目）；
+  仍未实现：鼠标按下/悬停离开事件、滚动保持（`preserveScroll` 字段已建模未消费）、
+  原型内的固定元素与滚动容器；协作（实时多人、评论、分享）完全空缺；
 - **Grid 只有数据模型与求解，没有可视化编辑**：轨道能通过属性面板录入，
   但拖拽调整轨道宽度、命名网格区域（`grid-template-areas`）、
   自动轨道（`auto-fill` / `auto-fit`）都未实现；
@@ -534,13 +536,21 @@
   非法输入让**整条路径作废**，不做部分解析；
   弧线算法与上游逐字节对拍（`test/arc-parity.test.ts`）。
   语义来源与许可证边界见 `penpot-porting.md`；
-- 原型交互模型（**仅数据层**）：`design-schema/src/interactions.ts` 按 Penpot 的
+- 原型交互模型：`design-schema/src/interactions.ts` 按 Penpot 的
   interactions 语义定义事件（click / mouse-press / mouse-over / mouse-enter /
   mouse-leave / after-delay）、动作（navigate / open-overlay / toggle-overlay /
   close-overlay / prev-screen / open-url）、动画（dissolve / slide / push）与
   overlay 定位；节点上以可选 `interactions` 数组承载，
-  运行时新增 `interaction.patch` 命令（校验语义自洽与跳转目标存在性）。
-  **尚未实现**：预览模式、交互状态机、跳转执行、overlay 渲染；
+  运行时 `interaction.patch` 命令校验语义自洽与跳转目标存在性；
+- 原型预览（运行时）：顶栏「预览」从选中容器或页面第一个根节点进入全屏预览，
+  Esc 退出。状态机在 `studio-web/src/prototype/state.ts`（纯函数，Node 里可测）：
+  点击命中从最深节点向上冒泡找交互、`after-delay` 按屏幕排计时器、
+  navigate/back/prev-screen 维护屏幕历史；overlay 支持中心与四角定位、manual 相对触发节点、
+  背景遮罩与点外部关闭（`closeClickOutside`）；动画用 DOM 层的 CSS keyframes 实现
+  （dissolve 淡入、slide 入场、push 新旧两屏同步位移），每层一张 canvas，
+  图片仍走与编辑器同一套对象 URL。规格见 `prototype-runtime.md`；
+  **尚未实现**：mouse-press / mouse-over / mouse-leave 事件、`preserveScroll` 的滚动保持、
+  原型内滚动容器与固定元素；
 - 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
 - 生产可用的渲染系统；画布已切到 Canvas 2D 场景渲染（`renderer/scene.ts` +
   `renderer/canvas-renderer.ts`），有根节点级视口裁剪、像素回归和绘制耗时基线，

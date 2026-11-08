@@ -49,6 +49,7 @@ import {
   MousePointer2,
   PanelLeft,
   PanelRight,
+  Play,
   Pencil,
   PenTool,
   Pentagon,
@@ -132,6 +133,7 @@ export const ICONS = {
   // 面板开合
   panelLeft: PanelLeft,
   panelRight: PanelRight,
+  prototypePlay: Play,
 
   // 通用
   search: Search,

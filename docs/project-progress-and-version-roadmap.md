@@ -274,10 +274,14 @@ AI 原型：
   v3 → v4 迁移只补版本号与缺省轨道配置，旧文档内容不变。
   **尚未实现**：拖拽调整轨道、命名网格区域、自动轨道。
   差距清单与优先级见 `figma-gap-roadmap.md`；
-- 原型交互（**仅数据层**）：`design-schema/src/interactions.ts` 按 Penpot 的
+- 原型交互与运行时：`design-schema/src/interactions.ts` 按 Penpot 的
   interactions 语义定义事件、动作、动画与 overlay 定位，节点上以可选
-  `interactions` 数组承载，运行时新增 `interaction.patch` 命令（校验语义自洽与
-  跳转目标存在性）。**尚未实现**：预览模式、交互状态机、跳转执行、overlay 渲染；
+  `interactions` 数组承载，`interaction.patch` 校验语义自洽与跳转目标存在性。
+  `studio-web/src/prototype/` 补齐运行时：顶栏「预览」进入全屏预览，
+  点击命中向上冒泡、after-delay 计时器、屏幕历史与 prev-screen、
+  overlay 定位/遮罩/点外部关闭、dissolve/slide/push 动画（DOM 层 CSS keyframes）。
+  规格见 `prototype-runtime.md`。仍未实现：mouse-press/over/leave 事件、
+  `preserveScroll`、原型内滚动容器与固定元素；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 
 ### `0.4.0`：布局、文本与视觉一致性
