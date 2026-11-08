@@ -24,6 +24,7 @@ export const EXPORT_SUPPORT_MATRIX: ExportSupportEntry[] = [
   { feature: "layout-grid", html: "exact", svg: "exact", png: "exact", note: "Grid tracks and cells are resolved by the layout engine; HTML emits CSS Grid, SVG/PNG use the resolved absolute boxes." },
   { feature: "sizing", html: "exact", svg: "exact", png: "exact", note: "Fixed / fill / hug sizing is computed once and shared by canvas, export and rasterization." },
   { feature: "text-typography", html: "exact", svg: "exact", png: "exact", note: "Family, size, line height, weight, style, alignment and letter spacing." },
+  { feature: "font-inline", html: "exact", svg: "unsupported", png: "rasterized", note: "HTML inlines the declared font files as @font-face data URLs, so the deliverable carries its own type. Fonts above 1 MB are not inlined and are reported. SVG references system fonts; PNG has already rasterized the text." },
   { feature: "text-wrapping", html: "exact", svg: "exact", png: "exact", note: "Line breaks come from the injected text measurer." },
   { feature: "paragraph-styles", html: "exact", svg: "exact", png: "exact", note: "List type and indent level. HTML uses real <ul>/<ol> with explicit <li value> so numbering matches the canvas; SVG emits the marker and the body as separate <text> elements." },
   { feature: "tokens", html: "exact", svg: "exact", png: "exact", note: "Color, number and string tokens become CSS variables / SVG variables." },

@@ -45,7 +45,7 @@ function html(fontFace: string): string {
 <html lang="en"><head><meta charset="utf-8"><title>font inline probe</title>
 <style>
 html,body{margin:0;padding:0;background:#fff}
-#sample{font-family:"${FAMILY}",monospace;font-size:32px;white-space:nowrap}
+#sample{display:inline-block;font-family:"${FAMILY}",monospace;font-size:32px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -96,43 +96,32 @@ async function main(): Promise<void> {
   const bytes = new Uint8Array(readFileSync(FONT_PATH));
   const face = fontFaceCss({ family: FAMILY, weight: 400, style: "normal", bytes, mime: "font/ttf" });
 
-  const withFontPath = join(CACHE, "with-font.html");
-  const withoutFontPath = join(CACHE, "without-font.html");
-  writeFileSync(withFontPath, html(face), "utf8");
-  writeFileSync(withoutFontPath, html(""), "utf8");
-
-  const withFont = extractReport(await dumpHtml({ htmlPath: withFontPath }));
-  const withoutFont = extractReport(await dumpHtml({ htmlPath: withoutFontPath }));
+  const htmlPath = join(CACHE, "inline.html");
+  writeFileSync(htmlPath, html(face), "utf8");
+  const report = extractReport(await dumpHtml({ htmlPath }));
 
   const failures: string[] = [];
   const check = (ok: boolean, message: string) => {
     if (!ok) failures.push(message);
   };
 
-  check(withFont.loaded === true, `内联字体的页面里字体没有加载成功（document.fonts.check 为假）`);
+  check(report.loaded === true, "内联字体的页面里字体没有加载成功");
+  check(report.faces.every(face => face.status === "loaded"), `字体没有全部加载成功：${JSON.stringify(report.faces)}`);
   check(
-    Math.abs(withFont.width - withoutFont.width) > 0.5,
-    `内联字体与没有字体时文字宽度相同（${withFont.width}px）——字体其实没被应用`,
+    Math.abs(report.after - report.before) > 0.5,
+    `内联字体与没有字体时文字宽度相同（${report.after}px）——字体其实没被应用`,
   );
 
   if (failures.length) {
     console.error(`字体内联探针失败（${failures.length} 项）：`);
     for (const failure of failures) console.error(`  · ${failure}`);
-    console.error(`内联页报告：${JSON.stringify(withFont)}`);
-    console.error(`无字体页报告：${JSON.stringify(withoutFont)}`);
+    console.error(`页面报告：${JSON.stringify(report)}`);
     process.exitCode = 1;
     return;
   }
   console.log(
-    `字体内联探针通过：导出的 HTML 自带字体（加载成功，文字宽度 ${withFont.width}px ≠ 回退字体 ${withoutFont.width}px）。`,
+    `字体内联探针通过：导出的 HTML 自带字体（加载成功，文字宽度 ${report.before}px → ${report.after}px，与回退字体不同）。`,
   );
-  void failures;
-}
-
-async function debug(): Promise<void> {
-  const bytes = new Uint8Array(readFileSync(FONT_PATH));
-  const face = fontFaceCss({ family: FAMILY, weight: 400, style: "normal", bytes, mime: "font/ttf" });
-  console.log("faces =", JSON.stringify(face).slice(0, 160));
 }
 
 main().catch(error => {

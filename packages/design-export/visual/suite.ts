@@ -29,7 +29,7 @@
  * ```
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findBrowser, renderHtmlToPng } from "./browser";
 import { decodePng, diffImages, encodePng, type IgnoreRegion } from "./png";
@@ -138,9 +138,10 @@ async function runCase(
 ): Promise<CaseResult> {
   const htmlPath = resolveAgainst(baseDir, testCase.html);
   const baselinePath = resolveAgainst(baseDir, testCase.baseline);
-  const diffPath = testCase.diff
-    ? resolveAgainst(baseDir, testCase.diff)
-    : join(reportDir, `${testCase.name}.diff.png`);
+  // 报告引用的是 reportDir 内的副本：HTML 里的 src 必须是相对报告目录的
+  // POSIX 路径，写 Windows 反斜杠或指到报告目录外都渲染不出来。
+  const reportDiffPath = join(reportDir, `${testCase.name}.diff.png`);
+  const declaredDiffPath = testCase.diff ? resolveAgainst(baseDir, testCase.diff) : undefined;
   const width = testCase.width ?? 960;
   const height = testCase.height ?? 680;
 
@@ -159,7 +160,8 @@ async function runCase(
     return { ...empty, detail: `找不到 HTML：${htmlPath}` };
   }
 
-  mkdirSync(dirname(diffPath), { recursive: true });
+  mkdirSync(dirname(reportDiffPath), { recursive: true });
+  if (declaredDiffPath) mkdirSync(dirname(declaredDiffPath), { recursive: true });
   const renderedPath = join(reportDir, `${testCase.name}.rendered.png`);
   mkdirSync(dirname(renderedPath), { recursive: true });
 
@@ -193,11 +195,14 @@ async function runCase(
     ignoreAntiAlias: testCase.ignoreAntiAlias ?? true,
     ignoreRegions: testCase.ignoreRegions,
   });
-  writeFileSync(diffPath, encodePng(diff.image));
+  const diffBuffer = encodePng(diff.image);
+  writeFileSync(reportDiffPath, diffBuffer);
+  if (declaredDiffPath) writeFileSync(declaredDiffPath, diffBuffer);
 
   const threshold = testCase.threshold ?? 0.005;
   const passed = diff.ratio <= threshold;
-  const diffFile = relative(reportDir, diffPath);
+  // 报告里的图片 src 用 POSIX 分隔符，且始终指向 reportDir 内的副本。
+  const diffFile = `${testCase.name}.diff.png`;
   const parts = [
     `差异 ${diff.differentPixels}/${diff.totalPixels}（${(diff.ratio * 100).toFixed(3)}%）`,
     `AA 豁免 ${diff.antiAliasedPixels}`,
