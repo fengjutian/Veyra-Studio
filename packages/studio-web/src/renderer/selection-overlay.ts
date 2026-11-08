@@ -1,6 +1,7 @@
 import type { PathCommand } from "@ufira/design-schema";
 import { boxCenter, rotatePoint, rotatedCorners, rotatedHandleCenters, rotationHandlePoint, ROTATE_HANDLE_GAP } from "./rotation";
 import { HANDLE_IDS, handleCenters, type Rect } from "./selection";
+import type { SnapGuide } from "./snapping";
 
 /**
  * 选择框与手柄的绘制。
@@ -119,10 +120,31 @@ export function paintDrawPreview(
   context.restore();
 }
 
-/** 对齐辅助线：贯穿画布视口的 1px 线（按 zoom 换算保持屏幕宽度）。 */
+/**
+ * 可以画出来的辅助线。
+ *
+ * 比 {@link SnapGuide} 宽松：只要有 `orientation` 与 `position` 就能画，
+ * 辅助线上的目标节点 id 只有吸附模块自己用得上。
+ */
+export interface PaintableGuide {
+  orientation: "vertical" | "horizontal";
+  position: number;
+  kind?: SnapGuide["kind"];
+  spacing?: number;
+  segments?: SnapGuide["segments"];
+  axis?: SnapGuide["axis"];
+  cross?: number;
+}
+
+/**
+ * 对齐辅助线：贯穿画布视口的 1px 线（按 zoom 换算保持屏幕宽度）。
+ *
+ * 等间距提示（`kind: "spacing"`）画成两段带端点的短线，并标上间距值——
+ * Figma 的做法：光看一条贯穿全屏的线，用户不知道「吸过去是因为间距相等」。
+ */
 export function paintSnapGuides(
   context: CanvasRenderingContext2D,
-  guides: Array<{ orientation: "vertical" | "horizontal"; position: number }>,
+  guides: PaintableGuide[],
   extent: { width: number; height: number },
   options: { color?: string; zoom?: number } = {},
 ): void {
@@ -132,7 +154,36 @@ export function paintSnapGuides(
   context.strokeStyle = options.color ?? "#f472b6";
   context.lineWidth = 1 / zoom;
   context.beginPath();
+  const labels: Array<{ text: string; x: number; y: number }> = [];
   for (const guide of guides) {
+    if (guide.kind === "spacing" && guide.segments?.length) {
+      const cross = guide.cross ?? 0;
+      for (const segment of guide.segments) {
+        if (guide.axis === "y") {
+          context.moveTo(cross, segment.from);
+          context.lineTo(cross, segment.to);
+          // 端点刻度。
+          context.moveTo(cross - 4 / zoom, segment.from);
+          context.lineTo(cross + 4 / zoom, segment.from);
+          context.moveTo(cross - 4 / zoom, segment.to);
+          context.lineTo(cross + 4 / zoom, segment.to);
+        } else {
+          context.moveTo(segment.from, cross);
+          context.lineTo(segment.to, cross);
+          context.moveTo(segment.from, cross - 4 / zoom);
+          context.lineTo(segment.from, cross + 4 / zoom);
+          context.moveTo(segment.to, cross - 4 / zoom);
+          context.lineTo(segment.to, cross + 4 / zoom);
+        }
+        if (guide.spacing !== undefined) {
+          const middle = (segment.from + segment.to) / 2;
+          labels.push(guide.axis === "y"
+            ? { text: String(Math.round(guide.spacing)), x: cross + 6 / zoom, y: middle }
+            : { text: String(Math.round(guide.spacing)), x: middle, y: cross - 6 / zoom });
+        }
+      }
+      continue;
+    }
     if (guide.orientation === "vertical") {
       context.moveTo(guide.position, 0);
       context.lineTo(guide.position, extent.height);
@@ -142,6 +193,14 @@ export function paintSnapGuides(
     }
   }
   context.stroke();
+  // 文字单独画：fillText 不走 beginPath 的批次。
+  if (labels.length) {
+    context.font = `${11 / zoom}px sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillStyle = options.color ?? "#f472b6";
+    for (const label of labels) context.fillText(label.text, label.x, label.y);
+  }
   context.restore();
 }
 /**

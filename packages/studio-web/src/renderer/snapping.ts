@@ -17,6 +17,23 @@ export interface SnapGuide {
   /** 场景坐标：竖线是 x，横线是 y。 */
   position: number;
   targetNodeId: string;
+  /**
+   * 辅助线的语义（新增字段，旧代码只读前三个字段，不受影响）。
+   *
+   * - `corner` / `edge` / `center`：锚点对齐；
+   * - `spacing`：等间距提示，配套 `spacing` / `segments` / `axis` / `cross`。
+   */
+  kind?: "corner" | "edge" | "center" | "spacing";
+  /** 等间距辅助线上的间距值（px）。 */
+  spacing?: number;
+  /** 等间距辅助线的两段区间（沿 `axis` 轴）。 */
+  segments?: Array<{ from: number; to: number }>;
+  /** 等间距发生在哪条轴上。 */
+  axis?: "x" | "y";
+  /** 绘制等间距标注时垂直于该轴的位置。 */
+  cross?: number;
+  /** 参与等间距的两个节点。 */
+  targetNodeIds?: string[];
 }
 
 export interface SnapResult {
@@ -28,6 +45,8 @@ export interface SnapResult {
 export interface SnapOptions {
   /** 吸附阈值（场景单位，调用方按 6px / zoom 传入）。 */
   threshold: number;
+  /** 总开关：关掉就完全不吸附。 */
+  enabled?: boolean;
 }
 
 /** 选区各轴上的候选边：左、中、右（或上、中、下）。 */

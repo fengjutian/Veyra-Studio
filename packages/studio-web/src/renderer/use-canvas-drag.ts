@@ -6,7 +6,8 @@ import { angleDegrees, boxCenter, hitTestHandleRotated, hitTestRotationHandle, n
 import { selectedBoxes, selectionBounds, type HandleId } from "./selection";
 import { offsetSubtreeBoxes, resizeBox } from "./selection-drag";
 import { nodesInRect, rectFromPoints } from "./marquee";
-import { snapBox, snapTargetsFromScene, type SnapGuide } from "./snapping";
+import { snapTargetsFromScene, type SnapGuide } from "./snapping";
+import { snapNode } from "./anchor-snapping";
 import type { Rect } from "./selection";
 import type { SceneBox, SceneNode } from "./scene";
 
@@ -203,8 +204,12 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     if (gesture.kind === "move") {
       const bounds = selectionBounds(selectedBoxes(options.scene, gesture.ids));
       const targets = snapTargetsFromScene(options.scene, gesture.ids);
+      // 按住 Alt 临时关掉吸附（与 Figma 一致）：想精确放位时用。
       const snap = bounds
-        ? snapBox({ ...bounds, x: bounds.x + deltaX, y: bounds.y + deltaY }, targets, { threshold: 6 / Math.max(options.zoom, 0.01) })
+        ? snapNode({ ...bounds, x: bounds.x + deltaX, y: bounds.y + deltaY }, targets, {
+            threshold: 6 / Math.max(options.zoom, 0.01),
+            enabled: !event.altKey,
+          })
         : { deltaX: 0, deltaY: 0, guides: [] };
       setGuides(snap.guides);
       updatePreview(offsetSubtreeBoxes(options.scene, gesture.ids, deltaX + snap.deltaX, deltaY + snap.deltaY));
