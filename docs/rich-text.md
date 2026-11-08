@@ -114,12 +114,13 @@ interface TextNode {
 
 - 段内不支持行高/字体族覆盖（字号见 §1）；HTML 的行高仍是节点级 `line-height`，
   **段内字号在 HTML 里可能溢出固定行高**（浏览器按 CSS line-height 排，不像画布那样撑高行盒）；
-- 画布内联编辑器看不到样式（它是一个纯文本 textarea），只能通过面板选区编辑；
 - 组件实例的文本覆盖（`component.override`）只同步 `text`，不同步 `runs`；
 - SVG 导出不换行（既有行为），富文本只解决样式不分段的问题；
 - 段内颜色的取值不做校验（任意 CSS 颜色字符串），token 绑定不适用于段内覆盖；
 - 段落级样式（列表、缩进）走独立模型与独立命令 `text.paragraph.set`，
-  不与段内 `runs` 混用——详见 `paragraph-styles.md`。
+  不与段内 `runs` 混用——详见 `paragraph-styles.md`；
+- **画布内联编辑器已能显示段内样式与列表**（结构化 `contenteditable`，
+  见 `inline-text-editing.md`）；但编辑器里不能直接改样式，仍要经属性面板。
 
 ## 8. 测试
 

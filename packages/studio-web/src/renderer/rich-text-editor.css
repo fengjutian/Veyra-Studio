@@ -1,0 +1,4 @@
+/* 内联文本编辑器：结构化 contenteditable，段落是块，段内样式与列表标记按文档渲染。 */
+.rich-text-editor{position:absolute;z-index:30;border:1px solid #8b5cf6;border-radius:4px;background:#fff;color:#111;padding:2px;outline:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word}
+.rich-text-editor .rte-paragraph{min-height:1em}
+.rich-text-editor .rte-marker{display:inline-block;box-sizing:content-box;user-select:none;-webkit-user-select:none;vertical-align:baseline}

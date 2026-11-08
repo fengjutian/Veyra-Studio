@@ -224,7 +224,7 @@ button.icon-only{padding:5px;min-width:26px}
 :focus-visible{outline:2px solid #8b5cf6;outline-offset:2px}
 .warning-code-contrast{color:#f0abfc}
 .canvas-surface{position:absolute;inset:0;pointer-events:none;z-index:0}
-.canvas-text-edit{position:absolute;z-index:30;border:1px solid #8b5cf6;border-radius:4px;background:#fff;color:#111;padding:2px;resize:none;outline:none;overflow:hidden}
+/* 内联文本编辑器的样式在 renderer/rich-text-editor.css（探针要单独打包它）。 */
 .canvas-a11y{position:absolute;left:0;top:0;width:1px;height:1px;margin:0;padding:0;list-style:none;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .canvas-a11y-kind{color:#64748b}
 /* ── 原型预览 ───────────────────────────────────────────────────────── */

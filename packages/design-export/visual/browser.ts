@@ -61,3 +61,27 @@ export function renderHtmlToPng(options: RenderOptions): Promise<void> {
     });
   });
 }
+
+/**
+ * 用 headless 浏览器把页面渲染后的 DOM 抓回来。
+ *
+ * 截图只能看像素，读不到计算样式；探针要断言「加粗是不是真的 700」
+ * 「缩进是不是真的 24px」，得拿到浏览器排版后的 DOM。
+ */
+export function dumpHtml(options: { htmlPath: string; browserPath?: string; timeoutMs?: number }): Promise<string> {
+  const browser = options.browserPath ?? findBrowser();
+  if (!browser) return Promise.reject(new Error("找不到 Chrome/Edge；设置 CHROME_PATH 或传入 --browser"));
+  const args = [
+    "--headless=new",
+    "--disable-gpu",
+    "--virtual-time-budget=3000",
+    "--dump-dom",
+    pathToFileURL(options.htmlPath).href,
+  ];
+  return new Promise((resolve, reject) => {
+    execFile(browser, args, { timeout: options.timeoutMs ?? 30_000, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+      if (error) reject(new Error(`浏览器抓取失败：${error.message}`));
+      else resolve(stdout);
+    });
+  });
+}

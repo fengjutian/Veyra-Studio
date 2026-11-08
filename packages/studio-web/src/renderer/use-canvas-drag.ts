@@ -106,7 +106,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   const onPointerDownCapture = (event: React.PointerEvent<HTMLDivElement>) => {
     if (options.busy || event.button !== 0) return;
     // 文本编辑覆盖层自己处理输入，不要触发拖动。
-    if ((event.target as HTMLElement | null)?.closest?.(".canvas-text-edit")) return;
+    if ((event.target as HTMLElement | null)?.closest?.(".rich-text-editor")) return;
     // 每次按下都重置「刚拖过」标记：它只用来抑制拖拽结束后浏览器补发的那一次 click，
     // 不能把下一次正常点击一起吞掉（否则拖完再点别的节点会没反应）。
     movedRef.current = false;
