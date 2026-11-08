@@ -9,6 +9,8 @@ import type { FontStyle } from "./types";
 export interface TextRunStyle {
   fontWeight?: number;
   fontStyle?: FontStyle;
+  /** 字号（px）；缺省沿用节点级字号。会同时影响换行与行高。 */
+  fontSize?: number;
   color?: string;
 }
 
@@ -30,14 +32,14 @@ export interface TextRunSegment {
 }
 
 /** 段内样式的字段名；UI 与校验共用，避免两处各写一份。 */
-export const TEXT_RUN_STYLE_FIELDS = ["fontWeight", "fontStyle", "color"] as const;
+export const TEXT_RUN_STYLE_FIELDS = ["fontWeight", "fontStyle", "fontSize", "color"] as const;
 
 export function isEmptyRunStyle(style: TextRunStyle): boolean {
-  return style.fontWeight === undefined && style.fontStyle === undefined && style.color === undefined;
+  return style.fontWeight === undefined && style.fontStyle === undefined && style.fontSize === undefined && style.color === undefined;
 }
 
 export function sameRunStyle(a: TextRunStyle, b: TextRunStyle): boolean {
-  return a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && a.color === b.color;
+  return a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && a.fontSize === b.fontSize && a.color === b.color;
 }
 
 /** 该下标是否落在代理对中间。UTF-16 下标可以切在 emoji 中间，那样切出来的两半都不是合法字符。 */
@@ -59,6 +61,9 @@ function validateRunStyle(style: TextRunStyle, index: number): string | undefine
   }
   if (style.fontStyle !== undefined && style.fontStyle !== "normal" && style.fontStyle !== "italic") {
     return `runs.${index}.style.fontStyle must be normal or italic`;
+  }
+  if (style.fontSize !== undefined && (!Number.isFinite(style.fontSize) || style.fontSize <= 0)) {
+    return `runs.${index}.style.fontSize must be a positive number`;
   }
   if (style.color !== undefined && (typeof style.color !== "string" || !style.color.trim())) {
     return `runs.${index}.style.color must be a non-empty string`;

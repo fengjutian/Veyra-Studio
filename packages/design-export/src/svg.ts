@@ -381,6 +381,7 @@ function textTspans(node: TextNode): string {
     const attributes: string[] = [];
     if (segment.style.fontWeight !== undefined) attributes.push(`font-weight="${num(segment.style.fontWeight)}"`);
     if (segment.style.fontStyle !== undefined) attributes.push(`font-style="${segment.style.fontStyle}"`);
+    if (segment.style.fontSize !== undefined) attributes.push(`font-size="${num(segment.style.fontSize)}"`);
     if (segment.style.color !== undefined) attributes.push(`fill="${escapeXml(segment.style.color)}"`);
     const body = escapeXml(segment.text);
     return attributes.length ? `<tspan ${attributes.join(" ")}>${body}</tspan>` : body;

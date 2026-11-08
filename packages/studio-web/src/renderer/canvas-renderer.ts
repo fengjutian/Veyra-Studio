@@ -1,5 +1,5 @@
 import { absolutePath, gradientLine, radialGeometry, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
-import { layoutRichText } from "@ufira/design-layout";
+import { layoutRichText, type RichTextStyle } from "@ufira/design-layout";
 import type { SceneBox, SceneNode } from "./scene";
 
 /**
@@ -230,6 +230,7 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
       runs: text.runs,
       fontWeight: text.fontWeight,
       fontStyle: text.fontStyle,
+      fontSize: text.fontSize,
       lineHeight: text.lineHeight,
       letterSpacing: text.letterSpacing,
       availableWidth: width,
@@ -238,24 +239,27 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
         return context.measureText(value).width;
       },
     });
-    for (let index = 0; index < Math.min(lines.length, maxLines); index += 1) {
-      const line = lines[index]!;
+    // 逐行累加高度：段内大字号会把这一行撑高，不能按固定行高排。
+    let lineY = y;
+    for (const line of lines) {
+      if (lineY >= y + height) break;
       const offset = text.align === "center" ? (width - line.width) / 2 : text.align === "right" ? width - line.width : 0;
       for (const segment of line.segments) {
         context.font = richFont(text, segment.style);
         context.fillStyle = segment.style.color ?? text.color;
         const lineX = x + offset + segment.x;
         if (!text.letterSpacing) {
-          context.fillText(segment.text, lineX, y + index * text.lineHeight);
+          context.fillText(segment.text, lineX, lineY);
           continue;
         }
         // 有字距时逐字落笔：x 偏移已经按「字符宽度 + 字距」累加过，整段绘制会重复加一次。
         let cursor = lineX;
         for (const character of Array.from(segment.text)) {
-          context.fillText(character, cursor, y + index * text.lineHeight);
+          context.fillText(character, cursor, lineY);
           cursor += context.measureText(character).width + text.letterSpacing;
         }
       }
+      lineY += line.height;
     }
     return;
   }
@@ -272,9 +276,9 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
   setLetterSpacing(context, 0);
 }
 
-/** 段内样式的 CSS font 简写；字体族仍走同一套回退栈。 */
-function richFont(text: NonNullable<SceneNode["text"]>, style: { fontWeight: number; fontStyle: string }): string {
-  return `${style.fontStyle} ${style.fontWeight} ${text.fontSize}px ${quoteFamily(text.fontFamily)}`;
+/** 段内样式的 CSS font 简写（字号来自段内覆盖）；字体族仍走同一套回退栈。 */
+function richFont(text: NonNullable<SceneNode["text"]>, style: RichTextStyle): string {
+  return `${style.fontStyle} ${style.fontWeight} ${style.fontSize}px ${quoteFamily(text.fontFamily)}`;
 }
 
 /** 简单换行：先按显式换行切段，再逐字符累加（对中英混排都够用）。 */

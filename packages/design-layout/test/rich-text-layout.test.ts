@@ -3,12 +3,13 @@ import test from "node:test";
 import { createEstimateTextMeasurer, layoutRichText, measureRichText, type RichTextStyle } from "../src/index";
 import { defaultAppearance, defaultLayout, type TextNode } from "@ufira/design-schema";
 
-/** 确定性的宽度：常规 10px/字，加粗 12px/字。 */
+/** 确定性的宽度：字号 × 每字系数（加粗 1.2，常规 1.0）。 */
 function measure(text: string, style: RichTextStyle): number {
-  return Array.from(text).length * (style.fontWeight >= 600 ? 12 : 10);
+  const factor = style.fontWeight >= 600 ? 1.2 : 1;
+  return Array.from(text).length * style.fontSize * factor;
 }
 
-const base = { fontWeight: 400, fontStyle: "normal" as const, lineHeight: 20, letterSpacing: 0, measure };
+const base = { fontWeight: 400, fontStyle: "normal" as const, fontSize: 10, lineHeight: 20, letterSpacing: 0, measure };
 
 test("breaks at the available width and keeps style runs intact", () => {
   const lines = layoutRichText({

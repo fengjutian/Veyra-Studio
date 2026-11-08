@@ -413,6 +413,7 @@ function textHtml(node: TextNode): string {
     const declarations: string[] = [];
     if (segment.style.fontWeight !== undefined) declarations.push(`font-weight:${segment.style.fontWeight}`);
     if (segment.style.fontStyle !== undefined) declarations.push(`font-style:${segment.style.fontStyle}`);
+    if (segment.style.fontSize !== undefined) declarations.push(`font-size:${px(segment.style.fontSize)}`);
     if (segment.style.color !== undefined) declarations.push(`color:${safeCssValue(segment.style.color)}`);
     const body = escapeHtml(segment.text);
     return declarations.length ? `<span style="${escapeAttribute(declarations.join(";"))}">${body}</span>` : body;

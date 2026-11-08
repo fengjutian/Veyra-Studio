@@ -110,10 +110,11 @@ export function createEstimateTextMeasurer(): TextMeasurer {
           runs: node.runs,
           fontWeight,
           fontStyle,
+          fontSize: node.fontSize,
           lineHeight: node.lineHeight,
           letterSpacing,
           availableWidth,
-          measure: (value, style) => estimateWidth(value, node.fontSize, style),
+          measure: (value, style) => estimateWidth(value, style),
         });
         return { width: measured.width, height: measured.height };
       }
@@ -130,9 +131,9 @@ export function createEstimateTextMeasurer(): TextMeasurer {
 }
 
 /** 估算器量一段同款样式的文字（不含字距，字距由 rich-text-layout 统一补）。 */
-function estimateWidth(text: string, fontSize: number, style: RichTextStyle): number {
+function estimateWidth(text: string, style: RichTextStyle): number {
   const scale = fontAdvanceScale(style.fontWeight);
-  return Array.from(text).reduce((sum, character) => sum + advanceRatio(character.codePointAt(0) ?? 0) * fontSize * scale, 0);
+  return Array.from(text).reduce((sum, character) => sum + advanceRatio(character.codePointAt(0) ?? 0) * style.fontSize * scale, 0);
 }
 
 /**

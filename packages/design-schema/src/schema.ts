@@ -196,8 +196,9 @@ const textRunSchema = z.object({
   style: z.object({
     fontWeight: z.number().int().min(100).max(900).optional(),
     fontStyle: z.enum(["normal", "italic"]).optional(),
+    fontSize: z.number().positive().optional(),
     color: z.string().min(1).optional(),
-  }).refine(style => style.fontWeight !== undefined || style.fontStyle !== undefined || style.color !== undefined, {
+  }).refine(style => style.fontWeight !== undefined || style.fontStyle !== undefined || style.fontSize !== undefined || style.color !== undefined, {
     message: "Text run style must set at least one field",
   }),
 });

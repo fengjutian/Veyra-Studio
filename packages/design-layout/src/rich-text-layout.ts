@@ -4,6 +4,8 @@ import { textRunSegments, type FontStyle, type TextRun } from "@ufira/design-sch
 export interface RichTextStyle {
   fontWeight: number;
   fontStyle: FontStyle;
+  /** 字号（px）。段内字号会同时改变宽度与行高。 */
+  fontSize: number;
   color?: string;
 }
 
@@ -17,6 +19,8 @@ export interface RichTextSegment {
 export interface RichTextLine {
   segments: RichTextSegment[];
   width: number;
+  /** 这一行的高度：节点行高与该行最大字号的较大者——大字号不会被上一行压住。 */
+  height: number;
 }
 
 export interface RichTextLayoutInput {
@@ -25,6 +29,8 @@ export interface RichTextLayoutInput {
   /** 节点级默认样式，段内没有覆盖时用它。 */
   fontWeight: number;
   fontStyle: FontStyle;
+  /** 节点级字号；段内没有覆盖时用它。 */
+  fontSize: number;
   lineHeight: number;
   letterSpacing: number;
   /** 不给宽度就不换行（只按显式 `\n` 断行）。 */
@@ -39,7 +45,7 @@ interface StyledChar {
 }
 
 function sameStyle(a: RichTextStyle, b: RichTextStyle): boolean {
-  return a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && a.color === b.color;
+  return a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && a.fontSize === b.fontSize && a.color === b.color;
 }
 
 /**
@@ -55,6 +61,7 @@ function toParagraphs(input: RichTextLayoutInput): StyledChar[][] {
     const style: RichTextStyle = {
       fontWeight: segment.style.fontWeight ?? input.fontWeight,
       fontStyle: segment.style.fontStyle ?? input.fontStyle,
+      fontSize: segment.style.fontSize ?? input.fontSize,
       ...(segment.style.color ? { color: segment.style.color } : {}),
     };
     for (const value of Array.from(segment.text)) {
@@ -91,7 +98,14 @@ function buildLine(input: RichTextLayoutInput, chars: StyledChar[], from: number
     segments.push({ text, style, x });
     x += input.measure(text, style) + input.letterSpacing * Array.from(text).length;
   }
-  return { segments, width: x };
+  return { segments, width: x, height: lineHeightFor(input, chars, from, to) };
+}
+
+/** 行高 = max(节点行高, 该行最大字号)；字号变大时行盒跟着变高，不会被相邻行压住。 */
+function lineHeightFor(input: RichTextLayoutInput, chars: StyledChar[], from: number, to: number): number {
+  let maxFontSize = 0;
+  for (let index = from; index < to; index += 1) maxFontSize = Math.max(maxFontSize, chars[index]!.style.fontSize);
+  return Math.max(1, input.lineHeight, maxFontSize);
 }
 
 /**
@@ -107,7 +121,7 @@ export function layoutRichText(input: RichTextLayoutInput): RichTextLine[] {
 
   for (const chars of paragraphs) {
     if (!chars.length) {
-      lines.push({ segments: [], width: 0 });
+      lines.push({ segments: [], width: 0, height: Math.max(1, input.lineHeight) });
       continue;
     }
     if (!available || available <= 0) {
@@ -142,10 +156,11 @@ export function layoutRichText(input: RichTextLayoutInput): RichTextLine[] {
   return lines;
 }
 
-/** 富文本的尺寸：最长行宽（按可用宽度截断）与行数 × 行高。 */
+/** 富文本的尺寸：最长行宽（按可用宽度截断）与**各行高度之和**（大字号行会更高）。 */
 export function measureRichText(input: RichTextLayoutInput): { width: number; height: number; lineCount: number } {
   const lines = layoutRichText(input);
   const longest = lines.reduce((max, line) => Math.max(max, line.width), 0);
   const width = input.availableWidth && input.availableWidth > 0 ? Math.min(longest, input.availableWidth) : longest;
-  return { width, height: Math.max(1, lines.length) * input.lineHeight, lineCount: Math.max(1, lines.length) };
+  const height = lines.reduce((sum, line) => sum + line.height, 0);
+  return { width, height: Math.max(1, height), lineCount: Math.max(1, lines.length) };
 }

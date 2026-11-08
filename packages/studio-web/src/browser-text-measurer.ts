@@ -50,13 +50,13 @@ function measure(
  * predictable width instead of measuring whichever face the browser picks.
  */
 function fontShorthand(request: TextMeasurementRequest): string {
-  return fontFor(request, request.fontWeight, request.fontStyle);
+  return fontFor(request, request.fontSize, request.fontWeight, request.fontStyle);
 }
 
-/** 指定字重/字形的 CSS font 简写；段内样式切换字体时逐段换。 */
-function fontFor(request: TextMeasurementRequest, fontWeight: number, fontStyle: string): string {
+/** 指定字号/字重/字形的 CSS font 简写；段内样式切换字体时逐段换。 */
+function fontFor(request: TextMeasurementRequest, fontSize: number, fontWeight: number, fontStyle: string): string {
   const style = fontStyle === "italic" ? "italic " : "";
-  return `${style}${fontWeight} ${request.fontSize}px ${resolveFontFamily(request.fontFamily)}`;
+  return `${style}${fontWeight} ${fontSize}px ${resolveFontFamily(request.fontFamily)}`;
 }
 
 /**
@@ -83,11 +83,12 @@ function measureWithCanvas(
       runs: request.runs,
       fontWeight: request.fontWeight,
       fontStyle: request.fontStyle,
+      fontSize: request.fontSize,
       lineHeight: request.lineHeight,
       letterSpacing: request.letterSpacing,
       availableWidth: request.availableWidth,
       measure: (value: string, style: RichTextStyle) => {
-        context.font = fontFor(request, style.fontWeight, style.fontStyle);
+        context.font = fontFor(request, style.fontSize, style.fontWeight, style.fontStyle);
         return context.measureText(value).width;
       },
     });

@@ -64,9 +64,9 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
     onPatchText({ runs: applyTextRunStyle(node.text, node.runs, from, to, style) });
     return true;
   };
-  const selectionColor = node.type === "text" && hasTextSelection
-    ? runStyleAt(node.text, node.runs, textSelection.from).color ?? "#111111"
-    : "#111111";
+  const selectionStyle = node.type === "text" && hasTextSelection ? runStyleAt(node.text, node.runs, textSelection.from) : {};
+  const selectionColor = selectionStyle.color ?? "#111111";
+  const selectionFontSize = node.type === "text" ? selectionStyle.fontSize ?? node.fontSize : 0;
   // 删掉一层后下标可能越界，取最小值兜底，避免编辑到不存在的层。
   const activeIndex = paints.length ? Math.min(paintIndex, paints.length - 1) : 0;
   const paint = paints[activeIndex];
@@ -374,6 +374,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
           <p className="field-hint">{hasTextSelection ? `已选中 ${textSelection.to - textSelection.from} 个字符：粗细、字形、颜色只作用于选区` : "在文本框里选中文字后，粗细/字形/颜色只作用于选区"}</p>
           {hasTextSelection && (
             <div className="rich-text-selection">
+              <NumberField label="选区字号" value={selectionFontSize} min={1} disabled={disabled} onCommit={fontSize => patchRunStyle({ fontSize })} />
               <label className="field field-inline">
                 <span className="field-label">选区颜色</span>
                 <input type="color" value={selectionColor} disabled={disabled} onChange={event => patchRunStyle({ color: event.target.value })} />
