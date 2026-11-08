@@ -11,11 +11,11 @@
 
 | 能力 | 状态 |
 | --- | --- |
-| 点击（含冒泡）、悬停进入、延迟触发 | ✅ |
+| 点击（含冒泡）、鼠标按下、悬停进入/离开、延迟触发 | ✅ |
 | navigate / open-overlay / toggle-overlay / close-overlay / prev-screen / open-url | ✅ |
 | overlay 定位（center / 四角 / manual）与背景遮罩、点外部关闭 | ✅ |
 | dissolve / slide / push 动画 | ✅ |
-| 鼠标按下、悬停离开（mouse-press / mouse-over / mouse-leave） | ❌ |
+| 滚动保持（`preserveScroll`）、原型内滚动容器 | ❌ |
 | `preserveScroll`、原型内滚动容器、固定元素 | ❌ |
 
 ## 2. 分层
@@ -87,7 +87,7 @@ Esc 或工具栏「退出预览」关闭；「返回」按钮等价于 `back`。
 
 ## 7. 已知限制
 
-- `mouse-press` / `mouse-over` / `mouse-leave` 事件没有接线（数据可写、预览不响应）；
+- `mouse-over` 只在进入节点时触发一次（不做每帧触发，否则悬停动作会自我循环）；`mouse-enter` 优先于它；
 - `preserveScroll` 已建模但未消费：navigate 总是从新屏左上开始；
 - 原型内没有滚动容器与固定元素的概念，长页面只能靠画板尺寸容纳；
 - push 的位移量按视口宽度整屏计算，不做「部分推入」；

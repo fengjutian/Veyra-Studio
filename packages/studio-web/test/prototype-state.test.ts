@@ -64,15 +64,31 @@ function prototypeDocument(): DesignDocument {
     interactions: [interaction({ actionType: "navigate", destination: "screen:delayed" })],
   });
 
-  for (const node of [home, label, labelText, openMenu, detail, menu, menuBody, delayed, back, external, nestedBack]) {
+  const pressable = frame("pressable", "screen:home", {
+    interactions: [interaction({ eventType: "mouse-press", destination: "screen:detail" })],
+  });
+  const hoverBoth = frame("hover-both", "screen:home", {
+    interactions: [
+      interaction({ eventType: "mouse-enter", destination: "screen:detail" }),
+      interaction({ eventType: "mouse-over", destination: "screen:delayed" }),
+    ],
+  });
+  const hoverOverOnly = frame("hover-over-only", "screen:home", {
+    interactions: [interaction({ eventType: "mouse-over", destination: "screen:delayed" })],
+  });
+  const hoverLeave = frame("hover-leave", "screen:detail", {
+    interactions: [interaction({ eventType: "mouse-leave", actionType: "close-overlay" })],
+  });
+
+  for (const node of [home, label, labelText, openMenu, detail, menu, menuBody, delayed, back, external, nestedBack, pressable, hoverBoth, hoverOverOnly, hoverLeave]) {
     document.nodes[node.id] = node;
   }
   document.pages["page:1"]!.childIds = ["screen:home", "screen:detail", "screen:delayed"];
   document.pages["page:2"]!.childIds = ["screen:menu"];
-  home.childIds = ["label", "open-menu", "external"];
+  home.childIds = ["label", "open-menu", "external", "pressable", "hover-both", "hover-over-only"];
   label.childIds = ["label-text"];
   labelText.childIds = ["nested-back"];
-  detail.childIds = ["back"];
+  detail.childIds = ["back", "hover-leave"];
   menu.childIds = ["menu-body"];
   return document;
 }
@@ -211,4 +227,29 @@ test("prototype actions never mutate the input state", () => {
   dispatchPrototype(state, document, { kind: "click", nodeId: "open-menu" });
   dispatchPrototype(state, document, { kind: "click", nodeId: "label-text" });
   assert.equal(JSON.stringify(state), snapshot);
+});
+
+test("mouse-press fires on pointer down, independently of click", () => {
+  const document = prototypeDocument();
+  const state = startPrototype(document, "screen:home");
+  assert.equal(dispatchPrototype(state, document, { kind: "press", nodeId: "pressable" }).state.screenId, "screen:detail");
+  // 只有 mouse-press 的节点点一下（click）不该有任何动作。
+  assert.equal(dispatchPrototype(state, document, { kind: "click", nodeId: "pressable" }).state.screenId, "screen:home");
+});
+
+test("hover-in prefers mouse-enter and falls back to mouse-over", () => {
+  const document = prototypeDocument();
+  const state = startPrototype(document, "screen:home");
+  assert.equal(dispatchPrototype(state, document, { kind: "hover-in", nodeId: "hover-both" }).state.screenId, "screen:detail");
+  assert.equal(dispatchPrototype(state, document, { kind: "hover-in", nodeId: "hover-over-only" }).state.screenId, "screen:delayed");
+  // 没有 hover 交互的节点：什么都不做。
+  assert.equal(dispatchPrototype(state, document, { kind: "hover-in", nodeId: "screen:home" }).state.screenId, "screen:home");
+});
+
+test("hover-out triggers mouse-leave actions", () => {
+  const document = prototypeDocument();
+  const opened = dispatchPrototype(startPrototype(document, "screen:home"), document, { kind: "click", nodeId: "open-menu" }).state;
+  assert.equal(opened.overlays.length, 1);
+  const left = dispatchPrototype(opened, document, { kind: "hover-out", nodeId: "hover-leave" }).state;
+  assert.equal(left.overlays.length, 0);
 });

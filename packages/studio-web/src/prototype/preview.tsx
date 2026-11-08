@@ -12,7 +12,6 @@ import {
   dispatchPrototype,
   findPageId,
   interactionsOf,
-  resolveInteraction,
   scheduledInteractions,
   startPrototype,
   type PrototypeEvent,
@@ -150,20 +149,29 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   };
 
-  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    const point = pointFor(event);
-    // overlay 在最上层：命中后即使没有交互也不穿透到下面的屏幕。
+  /** 命中：overlay 优先且不穿透；返回应当派发事件的节点。 */
+  const hitNode = (point: { x: number; y: number }): NodeId | undefined => {
     for (let index = overlays.length - 1; index >= 0; index -= 1) {
       const stack = hitTestStack([overlays[index]!.scene], point);
       if (!stack.length) continue;
-      const interactive = stack.find(id => interactionsOf(document, id, "click").length > 0);
-      if (interactive) dispatch({ kind: "click", nodeId: interactive });
-      return;
+      const interactive = stack.find(id => hasAnyInteraction(document, id));
+      return interactive;
     }
     const stack = screen ? hitTestStack([screen], point) : [];
-    if (stack.length) {
-      dispatch({ kind: "click", nodeId: stack[0]! });
+    return stack[0];
+  };
+
+  const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const nodeId = hitNode(pointFor(event));
+    if (nodeId) dispatch({ kind: "press", nodeId });
+  };
+
+  const handlePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const nodeId = hitNode(pointFor(event));
+    if (nodeId) {
+      dispatch({ kind: "click", nodeId });
       return;
     }
     dispatch({ kind: "click-outside" });
@@ -171,14 +179,15 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
 
   const hoverRef = useRef<NodeId | undefined>(undefined);
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const point = pointFor(event);
-    const stack = screen ? hitTestStack([screen], point) : [];
-    const hovered = stack[0];
+    const hovered = hitNode(pointFor(event));
     if (hovered === hoverRef.current) return;
+    if (hoverRef.current) dispatch({ kind: "hover-out", nodeId: hoverRef.current });
     hoverRef.current = hovered;
-    if (!hovered) return;
-    const resolved = resolveInteraction(document, hovered, "mouse-enter");
-    if (resolved) dispatch({ kind: "enter", nodeId: hovered });
+    if (hovered) dispatch({ kind: "hover-in", nodeId: hovered });
+  };
+  const clearHover = () => {
+    if (hoverRef.current) dispatch({ kind: "hover-out", nodeId: hoverRef.current });
+    hoverRef.current = undefined;
   };
 
   const animation = state.transition?.animation;
@@ -199,9 +208,10 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
         <div
           className="prototype-stage"
           style={{ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }}
+          onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
           onPointerMove={handlePointerMove}
-          onPointerLeave={() => { hoverRef.current = undefined; }}
+          onPointerLeave={clearHover}
         >
           {previous && state.transition && (
             <div key={`prev-${state.transition.id}`} className={`prototype-layer ${previousClass ?? ""}`} style={animationStyle}>
@@ -226,6 +236,11 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
 }
 
 /** 进入中的屏幕动画。 */
+/** 命中 overlay 时：只有自身带交互的节点才算「可点」，否则点空白不该穿透到下面的屏幕。 */
+function hasAnyInteraction(document: DesignDocument, nodeId: NodeId): boolean {
+  return Boolean(document.nodes[nodeId]?.interactions?.length);
+}
+
 export function currentAnimationClass(animation: PrototypeAnimation): string {
   if (animation.type === "dissolve") return "proto-fade-in";
   const direction = animation.direction ?? "right";

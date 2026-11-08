@@ -36,7 +36,16 @@ export interface PrototypeState {
 
 export type PrototypeEvent =
   | { kind: "click"; nodeId: NodeId }
-  | { kind: "enter"; nodeId: NodeId }
+  /** 指针按下（先于 click 触发）。 */
+  | { kind: "press"; nodeId: NodeId }
+  /**
+   * 指针进入节点：优先 `mouse-enter`，没有才用 `mouse-over`。
+   *
+   * 两者在运行时都只在**进入时触发一次**，而不是每帧触发——持续触发的 hover 动作
+   * 会把「悬停打开 overlay」变成死循环。
+   */
+  | { kind: "hover-in"; nodeId: NodeId }
+  | { kind: "hover-out"; nodeId: NodeId }
   | { kind: "after-delay"; nodeId: NodeId }
   /** 点在没有交互的空白处：如果最上层 overlay 允许，就关掉它。 */
   | { kind: "click-outside" }
@@ -182,40 +191,59 @@ export function dispatchPrototype(state: PrototypeState, document: DesignDocumen
       return { state: goBack(state) };
 
     case "click":
-    case "enter":
-    case "after-delay": {
-      const eventType = event.kind === "click" ? "click" : event.kind === "enter" ? "mouse-enter" : "after-delay";
-      const resolved = resolveInteraction(document, event.nodeId, eventType);
-      if (!resolved) return { state };
-      const { interaction, triggerNodeId } = resolved;
-      switch (interaction.actionType) {
-        case "navigate": {
-          const target = interaction.destination;
-          if (!target || !document.nodes[target]) return { state };
-          return { state: navigate(state, interaction) };
-        }
-        case "open-overlay":
-        case "toggle-overlay": {
-          const target = interaction.destination;
-          if (!target || !document.nodes[target]) return { state };
-          if (interaction.actionType === "toggle-overlay" && state.overlays.some(overlay => overlay.nodeId === target)) {
-            return { state: closeOverlay(state, target) };
-          }
-          return { state: openOverlay(state, interaction, triggerNodeId) };
-        }
-        case "close-overlay":
-          return { state: closeOverlay(state, interaction.destination ?? undefined) };
-        case "prev-screen":
-          return { state: goBack(state) };
-        case "open-url": {
-          const url = interaction.url;
-          if (!url) return { state };
-          return { state, openUrl: url };
-        }
-        default:
-          return { state };
-      }
+      return applyInteraction(state, document, resolveInteraction(document, event.nodeId, "click"));
+    case "press":
+      return applyInteraction(state, document, resolveInteraction(document, event.nodeId, "mouse-press"));
+    case "hover-in":
+      // enter 优先于 over：两者都是「进入时一次」，同时写时按更具体的语义走。
+      return applyInteraction(state, document,
+        resolveInteraction(document, event.nodeId, "mouse-enter") ?? resolveInteraction(document, event.nodeId, "mouse-over"));
+    case "hover-out":
+      return applyInteraction(state, document, resolveInteraction(document, event.nodeId, "mouse-leave"));
+    case "after-delay":
+      return applyInteraction(state, document, resolveInteraction(document, event.nodeId, "after-delay"));
+  }
+}
+
+/**
+ * 把一条已解析的交互作用到状态上。
+ *
+ * 事件解析（点击冒泡、hover 回退）与动作执行分开：新增事件类型时只改上半段，
+ * 动作语义始终只有一份。
+ */
+function applyInteraction(
+  state: PrototypeState,
+  document: DesignDocument,
+  resolved: ReturnType<typeof resolveInteraction>,
+): PrototypeResult {
+  if (!resolved) return { state };
+  const { interaction, triggerNodeId } = resolved;
+  switch (interaction.actionType) {
+    case "navigate": {
+      const target = interaction.destination;
+      if (!target || !document.nodes[target]) return { state };
+      return { state: navigate(state, interaction) };
     }
+    case "open-overlay":
+    case "toggle-overlay": {
+      const target = interaction.destination;
+      if (!target || !document.nodes[target]) return { state };
+      if (interaction.actionType === "toggle-overlay" && state.overlays.some(overlay => overlay.nodeId === target)) {
+        return { state: closeOverlay(state, target) };
+      }
+      return { state: openOverlay(state, interaction, triggerNodeId) };
+    }
+    case "close-overlay":
+      return { state: closeOverlay(state, interaction.destination ?? undefined) };
+    case "prev-screen":
+      return { state: goBack(state) };
+    case "open-url": {
+      const url = interaction.url;
+      if (!url) return { state };
+      return { state, openUrl: url };
+    }
+    default:
+      return { state };
   }
 }
 

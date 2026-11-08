@@ -532,7 +532,7 @@
 - **原型已有运行时**：`interaction.patch` 的数据层 + `studio-web/src/prototype/` 的预览，
   支持点击/悬停/延迟三种事件、navigate/overlay/prev-screen/open-url 五类动作、
   dissolve/slide/push 动画与 overlay 定位（详见下方「原型预览」条目）；
-  仍未实现：鼠标按下/悬停离开事件、滚动保持（`preserveScroll` 字段已建模未消费）、
+  仍未实现：滚动保持（`preserveScroll` 字段已建模未消费）、
   原型内的固定元素与滚动容器；协作（实时多人、评论、分享）完全空缺；
 - **Grid 只有数据模型与求解，没有可视化编辑**：轨道能通过属性面板录入，
   但拖拽调整轨道宽度、命名网格区域（`grid-template-areas`）、
@@ -553,12 +553,14 @@
   运行时 `interaction.patch` 命令校验语义自洽与跳转目标存在性；
 - 原型预览（运行时）：顶栏「预览」从选中容器或页面第一个根节点进入全屏预览，
   Esc 退出。状态机在 `studio-web/src/prototype/state.ts`（纯函数，Node 里可测）：
-  点击命中从最深节点向上冒泡找交互、`after-delay` 按屏幕排计时器、
+  点击命中从最深节点向上冒泡找交互；`mouse-press` 在按下时触发，`mouse-enter` /
+  `mouse-over` 在进入节点时各触发一次（enter 优先，over 不做每帧触发以免自我循环），
+  `mouse-leave` 在离开时触发；`after-delay` 按屏幕排计时器；
   navigate/back/prev-screen 维护屏幕历史；overlay 支持中心与四角定位、manual 相对触发节点、
   背景遮罩与点外部关闭（`closeClickOutside`）；动画用 DOM 层的 CSS keyframes 实现
   （dissolve 淡入、slide 入场、push 新旧两屏同步位移），每层一张 canvas，
   图片仍走与编辑器同一套对象 URL。规格见 `prototype-runtime.md`；
-  **尚未实现**：mouse-press / mouse-over / mouse-leave 事件、`preserveScroll` 的滚动保持、
+  **尚未实现**：`preserveScroll` 的滚动保持、
   原型内滚动容器与固定元素；
 - 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
 - 生产可用的渲染系统；画布已切到 Canvas 2D 场景渲染（`renderer/scene.ts` +

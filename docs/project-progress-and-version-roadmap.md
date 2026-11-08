@@ -278,10 +278,10 @@ AI 原型：
   interactions 语义定义事件、动作、动画与 overlay 定位，节点上以可选
   `interactions` 数组承载，`interaction.patch` 校验语义自洽与跳转目标存在性。
   `studio-web/src/prototype/` 补齐运行时：顶栏「预览」进入全屏预览，
-  点击命中向上冒泡、after-delay 计时器、屏幕历史与 prev-screen、
+  点击命中向上冒泡、mouse-press 按下触发、mouse-enter/mouse-over 进入触发（enter 优先）、
+  mouse-leave 离开触发、after-delay 计时器、屏幕历史与 prev-screen、
   overlay 定位/遮罩/点外部关闭、dissolve/slide/push 动画（DOM 层 CSS keyframes）。
-  规格见 `prototype-runtime.md`。仍未实现：mouse-press/over/leave 事件、
-  `preserveScroll`、原型内滚动容器与固定元素；
+  规格见 `prototype-runtime.md`。仍未实现：`preserveScroll`、原型内滚动容器与固定元素；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 
 ### `0.4.0`：布局、文本与视觉一致性
