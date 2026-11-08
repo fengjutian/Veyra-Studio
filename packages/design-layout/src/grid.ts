@@ -17,6 +17,8 @@
  * 它们依赖内容测量与反复迭代，收益低于复杂度；轨道由用户显式定义。
  */
 
+import type { GridTrack } from "@ufira/design-schema";
+
 /** 单条轨道的求解结果。 */
 export interface ResolvedTrack {
   /** 轨道的起点偏移（相对容器内容区起点）。 */

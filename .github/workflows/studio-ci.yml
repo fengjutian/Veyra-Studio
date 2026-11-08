@@ -1,0 +1,76 @@
+name: Studio CI
+
+# Studio（独立 AI Design Studio）的构建、测试与性能门禁。
+# legacy Vibma 的发布流程在 release.yml，两者不要混用。
+#
+# 视觉回归单独成 job 且 `continue-on-error`：产物基线绑定本机字体，
+# 在 Linux runner 上像素差异来自字体而不是代码，因此只作为参考信号，不阻断合并。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: studio-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: 核心包 build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:studio-core
+      - run: npm run test:studio-core
+
+  web:
+    name: 工作台 build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:studio-core
+      - run: npm run build:studio-web
+      - run: npm run test:studio-web
+
+  budgets:
+    name: 性能预算（layout / export / paint）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:studio-core
+      # 预算是数量级门禁（5000 节点 12s、绘制 1.6s），不卡毫秒级抖动。
+      - run: npm run check:budgets
+
+  visual:
+    name: 视觉回归（参考，不阻断）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:studio-core
+      - run: npm run check:visual

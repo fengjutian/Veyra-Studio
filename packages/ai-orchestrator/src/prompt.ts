@@ -1,4 +1,4 @@
-import type { DesignDocument, DesignNode } from "@ufira/design-schema";
+import type { DesignDocument, DesignNode, Paint } from "@ufira/design-schema";
 import { describeCommandVocabulary, describeNodeTemplate } from "./command-vocabulary";
 import type { AiPlanRequest } from "./safe-ai-editor";
 
@@ -107,7 +107,7 @@ function describeNode(node: DesignNode): string {
     `尺寸=${round(node.layout.width)}×${round(node.layout.height)}`,
   ];
   const fill = node.appearance.fills?.[0];
-  if (fill) parts.push(`填充=${fill.type === "solid" ? fill.color : `线性渐变(${fill.angle}deg)`}`);
+  if (fill) parts.push(`填充=${describePaint(fill)}`);
   if (node.appearance.stroke) parts.push(`描边=${node.appearance.stroke}`);
   if (node.type === "text") parts.push(`文本="${node.text}"`, `字号=${node.fontSize}`);
   return parts.join(" ");
@@ -115,4 +115,16 @@ function describeNode(node: DesignNode): string {
 
 function round(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+/**
+ * 把填充层压成一句给模型看的描述。
+ *
+ * 必须按 `type` 收窄：`Paint` 是 solid / linear / radial 三选一，早先这里只判断了
+ * `solid` 就直接读 `angle`，径向渐变一进文档就让 dts 构建失败（TS2339）。
+ */
+function describePaint(paint: Paint): string {
+  if (paint.type === "solid") return paint.color;
+  if (paint.type === "linear") return `线性渐变(${paint.angle}deg)`;
+  return `径向渐变(中心 ${round(paint.cx * 100)}%,${round(paint.cy * 100)}%，半径 ${round(paint.r * 100)}%)`;
 }

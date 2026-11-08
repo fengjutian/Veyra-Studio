@@ -42,6 +42,7 @@ import { hitTest, pointFromEvent, type HitPoint } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
 import { usePenTool, type PenCommit } from "./renderer/use-pen-tool";
 import { usePathEdit, type PathEditTarget } from "./renderer/use-path-edit";
+import { constrainedBoxes } from "./constraint-preview";
 import { TOOLS, clampRect, defaultRectFor, isDrawTool, isVectorTool, nextToolAfterDraw, shortcutTool, toolSpec, type DrawToolId, type ToolId, type VectorToolId } from "./tools";
 import { buildVectorShape, type VectorShape } from "./shapes";
 import { BOOLEAN_OPERATIONS, applyBoolean, booleanOperands, type BooleanOperation } from "./boolean";
@@ -377,6 +378,15 @@ function App() {
   });
 
   // 路径编辑只在选中单个矢量节点、且该节点有几何时生效。
+  // 缩放父级时，按约束实时推算子节点的新盒子（提交时运行时用同一套公式重算）。
+  const constraintPreview = useMemo(() => {
+    const id = canvasDrag.resizingId;
+    if (!id || !document) return {};
+    const from = canvasLayout.boxes[id];
+    const to = canvasDrag.previewBoxes[id];
+    if (!from || !to) return {};
+    return constrainedBoxes(document, canvasLayout.boxes, id, from, to);
+  }, [canvasDrag.resizingId, canvasDrag.previewBoxes, canvasLayout.boxes, document]);
   const pathEdit = usePathEdit({
     target: pathEditTarget,
     zoom,
@@ -1417,7 +1427,7 @@ function App() {
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
               <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}${canvasDrag.hoverRotate && tool === "select" ? " rotate-hover" : ""}${pathEditId && pathEdit.hoverSegment ? " segment-hover" : ""}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : pathEditId ? pathEdit.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } handleCanvasDoubleClick(event); }}>
-                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
               {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
                 <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>

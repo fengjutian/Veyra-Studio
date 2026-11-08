@@ -49,3 +49,22 @@ test("the document summary lists pages, nodes, tokens and components", () => {
   assert.match(summary, /color\.primary = #6366f1/);
   assert.match(summary, /组件：/);
 });
+
+test("the summary describes every fill kind without assuming a linear gradient", () => {
+  const document = documentWithText();
+  const node = document.nodes["text:1"]!;
+  const stops = [
+    { offset: 0, color: "#f9fafb" },
+    { offset: 1, color: "#111827" },
+  ];
+
+  node.appearance.fills = [{ type: "solid", color: "#111827" }];
+  assert.match(summarizeDocument(document, []), /填充=#111827/);
+
+  node.appearance.fills = [{ type: "linear", angle: 90, stops }];
+  assert.match(summarizeDocument(document, []), /填充=线性渐变\(90deg\)/);
+
+  // 回归：这里此前只判断 solid，其余一律按 linear 读 angle，径向渐变会让 dts 构建失败。
+  node.appearance.fills = [{ type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops }];
+  assert.match(summarizeDocument(document, []), /填充=径向渐变\(中心 50%,50%，半径 50%\)/);
+});

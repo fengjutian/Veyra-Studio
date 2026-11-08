@@ -113,17 +113,19 @@ function syntheticDocument(target: number): DesignDocument {
     const isText = index % 3 === 0;
     const base = {
       id,
+      type: "frame" as const,
       name: id,
       parentId: "page:1",
       childIds: [],
       visible: true,
       locked: false,
       layout: { ...defaultLayout(), x, y, width: 110, height: 60 },
-      appearance: { ...defaultAppearance(), fill: isText ? "#0f172a" : "#e2e8f0" },
+      // schema v3 起填充是 `appearance.fills: Paint[]`，这里同步成实色层。
+      appearance: { ...defaultAppearance(), fills: [{ type: "solid" as const, color: isText ? "#0f172a" : "#e2e8f0" }] },
     } as DesignNode;
     document.nodes[id] = isText
       ? ({ ...base, type: "text", text: "示例文字", fontFamily: "Inter", fontSize: 14, lineHeight: 20 } as DesignNode)
-      : ({ ...base, type: "frame" } as DesignNode);
+      : base;
     page.childIds.push(id);
     created += 1;
     index += 1;

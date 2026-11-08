@@ -17,11 +17,21 @@
   联合，字段级错误不再被吞成一句 "Invalid input"（例如 `textAlign: "justify"` 会直接
   报出 `nodes.<id>.textAlign`）；文本节点新增可选的 `fontWeight`（100–900）、`fontStyle`、
   `textAlign`、`letterSpacing`，缺省值统一由 `TEXT_DEFAULTS` 兜底，旧文档无需迁移；
-  文档格式版本升到 **2**，并提供迁移引擎：`CURRENT_SCHEMA_VERSION` 声明当前版本，
-  `MIGRATIONS` 是 `旧版本 → 新版本` 的步骤表（当前登记 v1 → v2），`migrateDocument()`
-  把任意来源的数据升级到当前版本，失败抛 `MigrationError` 并带上原始版本号，
+  文档格式版本升到 **4**，并提供迁移引擎：`CURRENT_SCHEMA_VERSION` 声明当前版本，
+  `MIGRATIONS` 是 `旧版本 → 新版本` 的步骤表（当前登记 v1 → v2、v2 → v3、v3 → v4），
+  `migrateDocument()` 把任意来源的数据升级到当前版本，失败抛 `MigrationError` 并带上原始版本号，
   成功则把迁移记录写进文档自带的 `migrations` 历史；`detectSchemaVersion()` 负责判断
   版本，高于当前版本或缺少版本的文档一律拒绝，不猜版本；
+- **Grid 布局**（文档格式 v4 新增）：`LayoutSpec.mode` 新增 `grid`，与 `absolute` / `stack`
+  平级；轨道配置放在可选的 `layout.grid` 上（`columns` / `rows` 各是一组轨道，
+  每条轨道有 `fixed` / `fraction` / `auto` / `min-content` / `max-content` 五种类型），
+  子节点占哪一格由 `grid.cells` 按子节点 id 声明（可跨行跨列）。
+  `design-layout/src/grid.ts` 是唯一求解入口：测轨道固有尺寸 → fraction 按权重分剩余空间
+  → 按单元格定位 → 格子内对齐；子节点超出已声明轨道数时**补出隐式轨道**（CSS Grid 语义），
+  不钳位造成重叠。属性面板提供轨道编辑器（类型 / 尺寸 / 权重 / 增删）。
+  HTML 导出输出 CSS Grid，SVG/PNG 用布局引擎解出的绝对盒子。
+  语义对齐 Penpot 的 grid-layout，见 `figma-gap-roadmap.md`；
+  **尚未实现**：拖拽调整轨道、命名网格区域、自动轨道（`auto-fill` / `auto-fit`）；
 - `packages/design-runtime`：早期命令和运行时原型；`text.patch` 接受并校验上述文本样式字段；
 - `packages/design-persistence`：文件系统快照、事务日志、资产存储，以及从最后有效快照
   连续重放已提交事务的崩溃恢复原型；仓库契约收敛为单一入口 `contract.ts`：
@@ -123,9 +133,13 @@
   `aria-selected`/`aria-level`/`aria-disabled`）。旧的 Moveable/Selecto 交互层、
   DOM 节点副本与 `react-moveable` / `react-selecto` 依赖已随 Phase C 完成一并删除。
   场景构建与绘制调用都有单元测试
-  （假 2D 上下文断言 fill/clip/drawImage/fillText），但还没有对真实浏览器里的画布做
-  像素验证，也没有做视口裁剪（culling）；
-- `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、DOM 画布、
+  （假 2D 上下文断言 fill/clip/drawImage/fillText），并另有真实 Chrome 里的像素回归
+  （`visual:canvas:check`）与视口裁剪后的绘制耗时门禁（`visual:canvas:paint -- --budget`）。
+  像素基线的 fixture 直接构造文档、不走 schema 校验，所以必须写 v3 的
+  `appearance.fills`：此前它仍写 v2 时代的 `appearance.fill`，渐变落地后填充全部丢失，
+  这条回归从那时起一直是红的（只是没人跑）。`harness/` 现已纳入 `studio-web` 的
+  tsconfig include，fixture 与 schema 再漂移会直接编译失败，而不是静默丢渲染；
+- `packages/studio-web`：可运行的 React 工作台垂直切片，包含本地图层列表、Canvas 画布、
   节点创建/选择/框选/拖动/缩放/吸附/删除、基础属性编辑、Dexie/IndexedDB 项目、事务
   和二进制资产存储，以及 AI 计划预览、过期提示、取消和确认提交界面；画布交互层
   完全走 Canvas（单击/双击编辑、拖拽/缩放、框选、吸附），
@@ -235,7 +249,9 @@
   重排在同一条命令里，`inverse` 同时包含父子状态，撤销一次整体还原；子节点被拉伸/缩放
   改变尺寸时会继续向它自己的子节点传播。stack 父级与 `hug` 父级跳过（前者由布局引擎排，
   后者尺寸是结果不是输入，重排会形成回路）。属性面板「约束」区只在父级是绝对布局容器时
-  出现。尚未实现：约束的可视化预览、组件实例里的约束覆盖；
+  出现。**拖动父级手柄时子节点按约束实时跟随**（`constrainLayout()` 由运行时导出，画布预览与
+  提交共用同一套公式；预览只喂绘制层，提交仍是一条 `node.patch`）。尚未实现：
+  组件实例里的约束覆盖、多选整体旋转；
 - 阴影与模糊（P6.1）：`appearance.shadow?`（x/y/blur/color）与 `appearance.blur?`，纯新增
   可选字段、旧文档无需迁移。画布每个节点绘制前重置 shadow/filter（父节点效果不会被
   子节点继承），再用 `shadowBlur`/`ctx.filter` 绘制；SVG 走 `<filter>` +
@@ -391,17 +407,16 @@
   `canvas-zoom.ts` 纯函数层提供 `clampZoom`/`zoomStep`/`fitZoom`/`zoomPercent`/
   `contentBounds`，缩放范围 10%–400%；`Ctrl/Cmd + 滚轮` 与右下角控件（缩小、百分比
   回到 100%、放大、适应内容）都可调整；「适应内容」按布局引擎解出的内容包围盒计算
-  （而非整块 960×680 画布）且只缩不放；缩放用 CSS `zoom` 实现，Moveable 读取
-  offsetParent 的 `zoom` 并纳入矩阵栈，拖拽与手柄几何在缩放下保持正确；工作区过窄时
+  （而非整块 960×680 画布）且只缩不放；缩放用 CSS `zoom` 实现，画布命中、拖拽与
+  手柄几何都按 `zoom` 换算，因此选择框与手柄始终保持屏幕尺寸；工作区过窄时
   控件按重要性用容器查询降级；
 - 画布拖拽的根因修复：入口不再在模块顶层无条件 `createRoot`，而是在容器上缓存并复用
   root，Vite HMR 重新执行模块时只重新 render，不会出现两棵 React 树互相撕裂 DOM
   （此前表现为点击随机失效、拖拽坐标错乱）；
-- 画布拖拽与缩放的坐标修复：Moveable 的 `bounds` 之前带 `position: "css"`，该模式下
-  `right`/`bottom` 被当成 CSS 的 `right`/`bottom` 偏移反算，960×680 的画布因此退化成
-  0×0 的边界框，于是任何一次拖拽或缩放都会把节点甩到 `left = -width`/`top = -height`；
-  现在 `bounds` 固定为坐标语义的 `CANVAS_BOUNDS`，拖拽位移与指针位移一一对应，
-  拖出画布时按画布边界正确钳制，缩放手柄同样恢复正常；
+- 画布拖拽与缩放的坐标：指针事件先按 `zoom` 换算成 960×680 的画布坐标
+  （`pointFromEvent`，见 `renderer/hit-test.ts`），拖出画布时按画布边界钳制；
+  拖拽、框选、缩放手柄与旋转手柄共用 `renderer/selection.ts` 的同一套盒子计算，
+  因此几何在任意缩放下都一致；
 - 图层工具栏提供椭圆节点入口（`ellipse` 节点类型），形状由 `borderRadius: 50%` 表达；
 - 布局引擎的 warnings 上浮到「属性」分段的「布局警告」区块，点击警告行可直接选中对应节点；
 - 属性面板支持文本内容、字体、字号、行高、节点显隐和锁定；文本修改通过独立
@@ -485,6 +500,10 @@
 - **原型交互只有数据层，没有运行时**：事件/动作/动画/overlay 定位的模型与
   `interaction.patch` 命令已落地，但预览模式、交互状态机、跳转执行、overlay 渲染
   全部未实现；协作（实时多人、评论、分享）完全空缺；
+- **Grid 只有数据模型与求解，没有可视化编辑**：轨道能通过属性面板录入，
+  但拖拽调整轨道宽度、命名网格区域（`grid-template-areas`）、
+  自动轨道（`auto-fill` / `auto-fit`）都未实现；
+  与 Figma 的差距清单见 `figma-gap-roadmap.md`；
 - SVG 路径导入：`design-schema/src/svg-path.ts` 按 Penpot 的解析语义支持
   `M/L/C/Q/A/H/V/S/T/Z` 及小写相对形式与隐式命令（`M` 之后省略命令字母按 `L` 处理），
   `A`（椭圆弧）用搬来的 MIT 算法转成贝塞尔；导入产物统一归一化成 `[0,1]` 相对路径，
@@ -565,7 +584,7 @@ npm run build:studio-core
 npm run test:studio-core
 npm run bench:layout
 npm run build:studio-web
-npm run test -w packages/studio-web
+npm run test:studio-web
 ```
 
 本地启动 Web 垂直切片：
@@ -575,5 +594,10 @@ npm run dev:studio-web
 ```
 
 这些命令成功仅表示底层包能够构建并通过已有测试，不表示独立 Studio 已经可运行。
+
+上述构建、测试与 `npm run check:budgets` 已由 `.github/workflows/studio-ci.yml` 在
+push / PR 上执行；视觉回归（`npm run check:visual`）单独成 job 且允许失败，因为产物
+基线绑定本机字体，Linux runner 上的像素差异来自字体而不是代码。legacy Vibma 的发布
+仍走 `release.yml`，与 Studio 无关。
 
 不要把 `npm run socket`、Figma 插件安装或 Vibma MCP 配置作为本项目的运行步骤。

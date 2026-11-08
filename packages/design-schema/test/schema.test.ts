@@ -145,6 +145,95 @@ test("only frames or components can be slots", () => {
   assert.throws(() => validateDocument(document), /cannot be a slot/);
 });
 
+test("grid layout requires a track configuration", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  document.nodes["node:1"] = {
+    id: "node:1",
+    type: "frame",
+    name: "Grid",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: { ...defaultLayout(), mode: "grid" },
+    appearance: defaultAppearance(),
+  } as never;
+  document.pages["page:1"]!.childIds = ["node:1"];
+  // 没有轨道就没有格子可放——写入时就该被拒绝。
+  assert.throws(() => validateDocument(document), /grid configuration/i);
+});
+
+test("grid configuration is rejected on a non-grid layout", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  document.nodes["node:1"] = {
+    id: "node:1",
+    type: "frame",
+    name: "Grid",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: {
+      ...defaultLayout(),
+      mode: "absolute",
+      grid: { columns: [{ type: "auto" }], rows: [{ type: "auto" }], columnGap: 0, rowGap: 0 },
+    },
+    appearance: defaultAppearance(),
+  } as never;
+  document.pages["page:1"]!.childIds = ["node:1"];
+  // 留着 grid 配置会让「这个容器到底怎么排版」变得含糊。
+  assert.throws(() => validateDocument(document), /only allowed on grid layouts/i);
+});
+
+test("accepts a valid grid layout", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  document.nodes["node:1"] = {
+    id: "node:1",
+    type: "frame",
+    name: "Grid",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: {
+      ...defaultLayout(),
+      mode: "grid",
+      grid: {
+        columns: [{ type: "fixed", size: 100 }, { type: "fraction", weight: 1 }],
+        rows: [{ type: "auto" }],
+        columnGap: 8,
+        rowGap: 0,
+        cells: { "node:2": { row: 1, column: 2, rowSpan: 1, columnSpan: 1 } },
+      },
+    },
+    appearance: defaultAppearance(),
+  } as never;
+  document.pages["page:1"]!.childIds = ["node:1"];
+  assert.doesNotThrow(() => validateDocument(document));
+});
+
+test("rejects a fraction track with a non-positive weight", () => {
+  const document = createDocument("doc:1", "Demo", "page:1");
+  document.nodes["node:1"] = {
+    id: "node:1",
+    type: "frame",
+    name: "Grid",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: {
+      ...defaultLayout(),
+      mode: "grid",
+      grid: { columns: [{ type: "fraction", weight: 0 }], rows: [{ type: "auto" }], columnGap: 0, rowGap: 0 },
+    },
+    appearance: defaultAppearance(),
+  } as never;
+  document.pages["page:1"]!.childIds = ["node:1"];
+  // 0 权重的 fraction 轨道永远分不到空间，等于把这条轨道废了。
+  assert.throws(() => validateDocument(document));
+});
+
 test("accepts four-value corner radii and rejects malformed tuples", () => {
   const make = (cornerRadii: unknown) => {
     const document = createDocument("doc:1", "Demo");

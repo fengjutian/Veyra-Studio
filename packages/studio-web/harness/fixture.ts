@@ -1,4 +1,4 @@
-import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
 
 /**
  * 画布像素基线的 fixture。
@@ -62,7 +62,7 @@ function frame(
   y: number,
   width: number,
   height: number,
-  appearance: { fill?: string; stroke?: string; cornerRadius?: number; opacity?: number } = {},
+  appearance: FrameAppearance = {},
 ): DesignNode {
   return {
     id,
@@ -73,7 +73,29 @@ function frame(
     visible: true,
     locked: false,
     layout: { ...defaultLayout(), x, y, width, height },
-    appearance: { ...defaultAppearance(), ...appearance },
+    appearance: appearanceOf(appearance),
+  };
+}
+
+interface FrameAppearance {
+  fill?: string;
+  stroke?: string;
+  cornerRadius?: number;
+  opacity?: number;
+}
+
+/**
+ * fixture 里用 `fill` 简写，落到文档时必须写成 schema v3 的 `appearance.fills`。
+ *
+ * 这里曾经直接把 `fill` 摊进 `appearance`，而 v3 之后渲染器只读 `fills`——于是
+ * 基线截图里的填充全部消失，像素回归却一直"通过"（对比的是同一份坏渲染）。
+ * harness 目录此前不在 tsconfig 的 include 里，类型检查也没拦住。
+ */
+function appearanceOf({ fill, ...rest }: FrameAppearance) {
+  return {
+    ...defaultAppearance(),
+    ...rest,
+    ...(fill ? { fills: [{ type: "solid", color: fill }] as Paint[] } : {}),
   };
 }
 
@@ -98,3 +120,4 @@ function text(
     textAlign: options.align ?? "left",
   } as DesignNode;
 }
+

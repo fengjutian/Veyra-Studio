@@ -23,7 +23,7 @@
 
 | # | 能力 | Figma | Penpot | 本项目 | 线 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Grid 布局 | ✅ | ✅ | ❌ | A | **本轮开发** |
+| 1 | Grid 布局 | ✅ | ✅ | ✅ 数据模型 + 求解 + 面板 | A | **本轮完成**（缺可视化轨道编辑） |
 | 2 | 组件变体（variant） | ✅ | ✅ | ❌ | A | 下一步 |
 | 3 | 原型运行时 | ✅ | ✅ | 仅数据层 | A | 数据层已落地，运行时待做 |
 | 4 | 富文本（段内混排） | ✅ | ✅ | 仅节点级样式 | A | 待做 |
@@ -162,6 +162,28 @@ export type GridTrack =
 - hug 容器尺寸 = 轨道 + gap + padding；
 - 旧文档（无 `grid` 字段）布局结果**逐字不变**——布局引擎的 golden 基线不破；
 - 轨道总和超出容器时产生 `overflow` 警告，而不是静默溢出。
+
+### 3.6 落地结果（2026-11-08）
+
+已实现：
+
+- **数据模型**：`LayoutSpec.mode` 新增 `grid`；轨道配置在可选的 `layout.grid` 上；
+  `GridTrack` 五种类型；`GridCell` 声明子节点占的行列区间。
+- **求解**：`design-layout/src/grid.ts`（`solveGrid` / `ensureTracks` / `assignCellsByOrder`）。
+- **接入**：布局引擎（画布、SVG/PNG 导出共用同一份解）、属性面板轨道编辑器、
+  HTML 导出输出 CSS Grid、导出支持矩阵新增 `layout-grid` 行。
+- **迁移**：文档格式 v3 → v4（只补版本号与缺省轨道配置，旧文档内容不变）。
+- **测试**：`design-layout/test/grid.test.ts`（16 条）、
+  `design-export/test/grid.test.ts`（6 条）、
+  `studio-web/test/layout-edit.test.ts`（+7 条）。
+
+实现中改掉的两个真实缺陷：
+
+1. **子节点超出轨道数时被钳到末位** → 两个子节点重叠。
+   改成 CSS Grid 的隐式轨道语义：超出就补 `auto` 轨道。
+2. **fraction 权重全为 0 时轨道永远分不到空间** → 改成均分。
+
+未实现（下一轮）：拖拽调整轨道、命名网格区域、自动轨道（`auto-fill` / `auto-fit`）。
 
 ## 4. 后续排期
 

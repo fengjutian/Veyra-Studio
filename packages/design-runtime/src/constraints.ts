@@ -50,14 +50,25 @@ function constrainChildren(document: DesignDocument, parent: DesignNode, fromWid
 }
 
 function constrainNode(node: DesignNode, fromWidth: number, fromHeight: number, toWidth: number, toHeight: number): LayoutSpec | undefined {
-  const constraints: Constraints | undefined = node.constraints;
   // 没写约束等于 start：父级变大时不动，和 Figma 的默认值一致。
+  return constrainLayout(node.layout, node.constraints, { width: fromWidth, height: fromHeight }, { width: toWidth, height: toHeight });
+}
+
+/**
+ * 约束的纯计算：给定节点布局、它的约束、父级的变化前后尺寸，算出新的布局。
+ *
+ * 公开出来是为了让画布能在拖动时**用同一套公式**实时预览——预览和提交各写一份的话，
+ * 松手那一刻子节点会跳一下。
+ *
+ * 返回 undefined 表示「不需要改」：没有约束，或者按规则算出来和原来一样。
+ */
+export function constrainLayout(layout: LayoutSpec, constraints: Constraints | undefined, from: { width: number; height: number }, to: { width: number; height: number }): LayoutSpec | undefined {
   if (!constraints) return undefined;
-  const horizontal = constrainAxis(constraints.horizontal, node.layout.x, node.layout.width, fromWidth, toWidth);
-  const vertical = constrainAxis(constraints.vertical, node.layout.y, node.layout.height, fromHeight, toHeight);
-  if (horizontal.position === node.layout.x && horizontal.size === node.layout.width
-    && vertical.position === node.layout.y && vertical.size === node.layout.height) return undefined;
-  return { ...node.layout, x: horizontal.position, y: vertical.position, width: horizontal.size, height: vertical.size };
+  const horizontal = constrainAxis(constraints.horizontal, layout.x, layout.width, from.width, to.width);
+  const vertical = constrainAxis(constraints.vertical, layout.y, layout.height, from.height, to.height);
+  if (horizontal.position === layout.x && horizontal.size === layout.width
+    && vertical.position === layout.y && vertical.size === layout.height) return undefined;
+  return { ...layout, x: horizontal.position, y: vertical.position, width: horizontal.size, height: vertical.size };
 }
 
 /** 单轴约束。`from` 为 0 时 `scale` 退化成不动，避免除零。 */

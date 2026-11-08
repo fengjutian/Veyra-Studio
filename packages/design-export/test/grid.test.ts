@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { exportPageToHtml, exportPageToSvg } from "../src/index";
+import { supportFor } from "../src/support";
+
+/**
+ * Grid 布局的导出用例。
+ *
+ * Grid 的语义对齐 Penpot，见 `docs/figma-gap-roadmap.md`。
+ */
+
+const PAGE_ID = "page:1";
+const VIEWPORT = { width: 960, height: 680 };
+
+function node(id: string, parentId: string, overrides: Partial<DesignNode> = {}): DesignNode {
+  return {
+    id,
+    type: "frame",
+    name: id,
+    parentId,
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: defaultAppearance(),
+    ...overrides,
+  } as DesignNode;
+}
+
+function gridDocument(): DesignDocument {
+  const document = createDocument("doc:grid", "Grid", PAGE_ID);
+  const root = node("root", PAGE_ID);
+  root.layout = {
+    ...defaultLayout(),
+    mode: "grid",
+    width: 400,
+    height: 200,
+    grid: {
+      columns: [{ type: "fixed", size: 100 }, { type: "fraction", weight: 1 }],
+      rows: [{ type: "fixed", size: 60 }],
+      columnGap: 10,
+      rowGap: 0,
+      cells: {
+        first: { row: 1, column: 1 },
+        second: { row: 1, column: 2 },
+      },
+    },
+  };
+  const first = node("first", "root");
+  first.layout = { ...defaultLayout(), width: 40, height: 20 };
+  const second = node("second", "root");
+  second.layout = { ...defaultLayout(), width: 40, height: 20 };
+
+  root.childIds = [first.id, second.id];
+  document.pages[PAGE_ID]!.childIds = [root.id];
+  document.nodes[root.id] = root;
+  document.nodes[first.id] = first;
+  document.nodes[second.id] = second;
+  return document;
+}
+
+test("grid: HTML 导出输出 CSS Grid", () => {
+  const result = exportPageToHtml(gridDocument(), { pageId: PAGE_ID, viewport: VIEWPORT });
+  assert.match(result.html, /display:grid/);
+  // 轨道：固定 100px + 比例 1fr。
+  assert.match(result.html, /grid-template-columns:100px 1fr/);
+  assert.match(result.html, /column-gap:10px/);
+});
+
+test("grid: HTML 导出把子节点放进指定格子", () => {
+  const result = exportPageToHtml(gridDocument(), { pageId: PAGE_ID, viewport: VIEWPORT });
+  assert.match(result.html, /grid-column:1 \/ span 1/);
+  assert.match(result.html, /grid-column:2 \/ span 1/);
+  assert.match(result.html, /grid-row:1 \/ span 1/);
+});
+
+test("grid: HTML 导出对 fraction 轨道输出 fr 单位", () => {
+  const result = exportPageToHtml(gridDocument(), { pageId: PAGE_ID, viewport: VIEWPORT });
+  assert.match(result.html, /1fr/);
+});
+
+test("grid: SVG 导出用布局引擎解出的绝对坐标", () => {
+  const result = exportPageToSvg(gridDocument(), { pageId: PAGE_ID, viewport: VIEWPORT });
+  // 第一列起点 x=0（容器在页面左上），第二列起点 x=100+gap10=110。
+  assert.match(result.svg, /data-node-id="first"[\s\S]*?<rect x="0" y="0" width="40"/);
+  assert.match(result.svg, /data-node-id="second"[\s\S]*?<rect x="110" y="0" width="40"/);
+});
+
+test("grid: 导出支持矩阵登记了 grid 特性", () => {
+  assert.equal(supportFor("layout-grid", "html"), "exact");
+  assert.equal(supportFor("layout-grid", "svg"), "exact");
+  assert.equal(supportFor("layout-grid", "png"), "exact");
+});
+
+test("grid: 导出没有产生诊断", () => {
+  const result = exportPageToHtml(gridDocument(), { pageId: PAGE_ID, viewport: VIEWPORT });
+  assert.deepEqual(result.diagnostics, []);
+});

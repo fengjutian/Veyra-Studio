@@ -59,6 +59,8 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   previewRotation?: { id: string; rotation: number };
   /** 指针是否停在旋转手柄上（用于换光标）。 */
   hoverRotate: boolean;
+  /** 正在被缩放的节点 id（用于算约束预览）。 */
+  resizingId?: string;
   /** 框选中的矩形（场景坐标）。 */
   marquee: Rect | undefined;
   /** 绘制中的矩形（场景坐标）。 */
@@ -74,6 +76,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   const [drawRect, setDrawRect] = useState<Rect | undefined>(undefined);
   const [previewRotation, setPreviewRotation] = useState<{ id: string; rotation: number } | undefined>(undefined);
   const [hoverRotate, setHoverRotate] = useState(false);
+  const [resizingId, setResizingId] = useState<string | undefined>(undefined);
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   const marqueeRef = useRef<Rect | undefined>(undefined);
   const drawRectRef = useRef<Rect | undefined>(undefined);
@@ -146,6 +149,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
 
     if (handle && bounds) {
       gestureRef.current = { kind: "resize", id: options.selectedIds[0]!, handle, start: point, box: bounds, radians };
+      setResizingId(options.selectedIds[0]!);
     } else {
       const hit = hitTest(options.scene, point);
       if (hit && options.selectedIds.includes(hit)) {
@@ -259,13 +263,16 @@ export function useCanvasDrag(options: CanvasDragOptions): {
         const box = finalBoxes[id]!;
         const layout = options.layoutOf(id);
         if (!layout) continue;
-        // 只提交选中根节点的布局；预览里还有后代，它们由布局引擎按相对坐标重算。
-        if (gesture.kind === "move" && !gesture.ids.includes(id)) continue;
+        // 只提交这次手势真正改动的节点：移动是整组、缩放是那一个。
+        // 预览里可能还有约束跟随的子节点，它们的布局由运行时按同一条命令重算，不能再提交一遍。
+        const target = gesture.kind === "move" ? gesture.ids.includes(id) : gesture.kind === "resize" && id === gesture.id;
+        if (!target) continue;
         changes.push({ id, layout: { ...layout, x: box.x, y: box.y, width: box.width, height: box.height } });
       }
       if (changes.length) options.onCommit(changes);
     }
     updatePreview({});
+    setResizingId(undefined);
     setGuides([]);
     marqueeRef.current = undefined;
     setMarquee(undefined);
@@ -274,6 +281,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   return {
     previewRotation,
     hoverRotate,
+    resizingId,
     previewBoxes,
     marquee,
     drawRect,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDocument } from "@ufira/design-schema";
+import { createDocument, CURRENT_SCHEMA_VERSION } from "@ufira/design-schema";
 import { buildRecoveryReport, recoveryReportFileName, recoveryReportRows } from "../src/recovery-report";
 
 function report(overrides: Partial<Parameters<typeof buildRecoveryReport>[0]> = {}) {
@@ -26,7 +26,7 @@ test("记录项目、修订与事务重放情况", () => {
   assert.equal(built.recoveredFromRevision, 4);
   assert.equal(built.replayedTransactions, 2);
   assert.equal(built.latestKnownRevision, 6);
-  assert.equal(built.documentSchemaVersion, 3);
+  assert.equal(built.documentSchemaVersion, CURRENT_SCHEMA_VERSION);
   assert.equal(built.degraded, false);
   assert.equal(built.generatedAt, "2026-11-06T00:00:00.000Z");
 });
@@ -44,7 +44,7 @@ test("格式升级会写明来源版本", () => {
   const version = rows.find(row => row.label === "文档格式版本");
 
   assert.match(version?.value ?? "", /v1/);
-  assert.match(version?.value ?? "", /v3/);
+  assert.match(version?.value ?? "", new RegExp(`v${CURRENT_SCHEMA_VERSION}`));
 });
 
 test("正常恢复的每一行都有内容", () => {
