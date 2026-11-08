@@ -84,7 +84,7 @@ test("reorders a node when reparenting within the same container", () => {
 test("returns structural warnings without blocking a valid change", () => {
   const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   const node = frame("node:1");
-  node.appearance.fill = "#ff0000";
+  node.appearance.fills = [{ type: "solid", color: "#ff0000" }];
   const result = runtime.execute(envelope(0, [{ type: "node.create", payload: { node } }]));
   assert.match(result.warnings[0], /hardcoded fill/);
 });

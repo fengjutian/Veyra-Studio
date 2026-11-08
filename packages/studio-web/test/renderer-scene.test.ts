@@ -65,7 +65,7 @@ test("text nodes carry wrapping and alignment information", () => {
     lineHeight: 26,
     fontWeight: 700,
     textAlign: "center",
-    appearance: { ...defaultAppearance(), fill: "#334155", opacity: 0.8 },
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#334155" }], opacity: 0.8 },
   });
   const scene = buildScene(documentWith([label]), "page:1", {});
   assert.deepEqual(scene[0]?.box, { x: 10, y: 20, width: 100, height: 40 });

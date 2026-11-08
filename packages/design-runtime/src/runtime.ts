@@ -1,4 +1,4 @@
-import { findOwningComponentId, isValidVectorPath, overridableFields, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
+import { findOwningComponentId, isValidVectorPath, overridableFields, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -376,7 +376,7 @@ function overrideInstanceNode(
   payload: {
     instanceId: NodeId;
     sourceNodeId: NodeId;
-    patch: { text?: string; name?: string; visible?: boolean; appearance?: { fill?: string; stroke?: string; opacity?: number; cornerRadius?: number } };
+    patch: { text?: string; name?: string; visible?: boolean; appearance?: { fills?: Paint[]; stroke?: string; opacity?: number; cornerRadius?: number } };
   },
 ): void {
   const instance = requireNode(document, payload.instanceId);
@@ -601,7 +601,8 @@ function isDescendant(document: DesignDocument, ancestorId: NodeId, candidateId:
 function collectWarnings(document: DesignDocument): string[] {
   const warnings: string[] = [];
   for (const node of Object.values(document.nodes)) {
-    if (node.appearance.fill?.startsWith("#") && !node.bindings?.fill) warnings.push(`Node ${node.id} uses a hardcoded fill without a token binding`);
+    const hardcodedAll = (node.appearance.fills ?? []).every(paint => paint.type === "solid" && paint.color.startsWith("#"));
+      if ((node.appearance.fills?.length ?? 0) > 0 && hardcodedAll && !node.bindings?.fill) warnings.push(`Node ${node.id} uses a hardcoded fill without a token binding`);
   }
   return warnings;
 }

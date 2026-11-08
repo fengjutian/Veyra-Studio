@@ -42,7 +42,7 @@ test("escapes XML special characters in text", () => {
 
 test("preserves token bindings as CSS variables", () => {
   const root = frame("root");
-  root.appearance.fill = "#000000";
+  root.appearance.fills = [{ type: "solid", color: "#000000" }];
   root.bindings = { fill: "Color/Primary" };
   const document = documentWith([root]);
   document.tokens["Color/Primary"] = { type: "color", value: "#3366ff" };
@@ -110,7 +110,7 @@ test("exports a vector node as an absolute path", () => {
     ...frame("logo"),
     type: "vector",
     layout: { ...defaultLayout(), x: 100, y: 50, width: 200, height: 100 },
-    appearance: { ...defaultAppearance(), fill: "#8b5cf6" },
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#8b5cf6" }] },
     geometry: { kind: "path", d: "M 0 0 L 1 0 L 1 1 Z" },
   };
   const result = exportPageToSvg(documentWith([vector]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
@@ -139,7 +139,7 @@ test("exports per-corner radii as a path with arcs", () => {
     ...frame("card"),
     type: "rectangle",
     layout: { ...defaultLayout(), x: 100, y: 50, width: 200, height: 100 },
-    appearance: { ...defaultAppearance(), fill: "#ffffff", cornerRadii: [10, 20, 30, 40] },
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#ffffff" }], cornerRadii: [10, 20, 30, 40] },
   };
   const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
   // <rect rx> 只有单值，四角不同只能用路径；圆弧是导出产物，不是文档格式。
@@ -201,4 +201,15 @@ test("exports shadow and blur as a filter", () => {
   assert.match(result.svg, /<feGaussianBlur stdDeviation="3" \/>/);
   assert.match(result.svg, /<feDropShadow dx="4" dy="8" stdDeviation="6" flood-color="#00000080" \/>/);
   assert.match(result.svg, /filter="url\(#effect-1\)"/);
+});
+test("exports a linear gradient as defs and a paint reference", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), fills: [{ type: "linear", angle: 90, stops: [{ offset: 0, color: "#111111" }, { offset: 1, color: "#ffffff" }] }] },
+  };
+  const result = exportPageToSvg(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /<linearGradient id="paint-1" gradientUnits="userSpaceOnUse"/);
+  assert.match(result.svg, /<stop offset="0" stop-color="#111111" \/>/);
+  assert.match(result.svg, /fill:url\(#paint-1\)/);
 });

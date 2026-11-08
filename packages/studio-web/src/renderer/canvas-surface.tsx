@@ -42,6 +42,10 @@ export interface CanvasSurfaceProps {
   penAnchors?: Array<{ x: number; y: number }>;
   /** 指针停在起点上，提示「点击会闭合」。 */
   penClosing?: boolean;
+  /** 旋转预览：拖动手柄时节点的临时角度（度）。 */
+  rotationOverride?: { id: string; rotation: number };
+  /** 是否绘制框外的旋转手柄（单选时才有意义）。 */
+  showRotateHandle?: boolean;
   /** 路径编辑中的实时几何：覆盖某个节点的路径，不写文档。 */
   pathOverride?: { id: string; commands: PathCommand[] };
   /** 路径编辑的锚点、手柄与当前选中项（绝对场景坐标）。 */
@@ -52,7 +56,7 @@ export interface CanvasSurfaceProps {
   guides?: SnapGuide[];
 }
 
-export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, pathOverride, editAnchors, editHandles, editSelected, guides }: CanvasSurfaceProps) {
+export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, rotationOverride, showRotateHandle, pathOverride, editAnchors, editHandles, editSelected, guides }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
@@ -61,8 +65,8 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
     [document, pageId, boxes, viewport],
   );
   const paintedScene = useMemo(
-    () => applyPathOverride(applyBoxOverrides(scene, previewBoxes ?? {}), pathOverride),
-    [scene, previewBoxes, pathOverride],
+    () => applyRotationOverride(applyPathOverride(applyBoxOverrides(scene, previewBoxes ?? {}), pathOverride), rotationOverride),
+    [scene, previewBoxes, pathOverride, rotationOverride],
   );
   const assetIds = useMemo(() => collectAssetIds(scene), [scene]);
 
@@ -114,7 +118,7 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
           const bounds = radians
             ? selectionBounds(selectedBoxes(paintedScene, selection))
             : selectionBounds(rotatedAabbBoxes(paintedScene, selection));
-          if (bounds) paintSelectionOverlay(context, bounds, { zoom, rotation: radians });
+          if (bounds) paintSelectionOverlay(context, bounds, { zoom, rotation: radians, showRotateHandle });
         }
         if (editAnchors?.length) paintPathEdit(context, { anchors: editAnchors, handles: editHandles ?? [], selected: editSelected ?? null }, { zoom });
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
@@ -176,4 +180,14 @@ function findSceneNode(nodes: SceneNode[], id: string): SceneNode | undefined {
     if (found) return found;
   }
   return undefined;
+}
+/** 旋转预览：只覆盖绘制用的副本，松手提交后才写文档。 */
+function applyRotationOverride(nodes: SceneNode[], override?: { id: string; rotation: number }): SceneNode[] {
+  if (!override) return nodes;
+  const walk = (list: SceneNode[]): SceneNode[] => list.map(node => {
+    const children = node.children.length ? walk(node.children) : node.children;
+    if (node.id !== override.id) return children === node.children ? node : { ...node, children };
+    return { ...node, rotation: override.rotation || undefined, children };
+  });
+  return walk(nodes);
 }

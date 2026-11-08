@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { DesignNode } from "@ufira/design-schema";
 import { isClickDraw, isDrawTool, rectFromDrag, type DrawToolId, type ToolId } from "../tools";
 import { hitTest, type HitPoint } from "./hit-test";
-import { hitTestHandleRotated, resizeRotatedBox, toLocalPoint, toRadians } from "./rotation";
+import { angleDegrees, boxCenter, hitTestHandleRotated, hitTestRotationHandle, normalizeAngle, resizeRotatedBox, ROTATE_HANDLE_GAP, ROTATE_HANDLE_RADIUS, snapAngle, toLocalPoint, toRadians } from "./rotation";
 import { selectedBoxes, selectionBounds, type HandleId } from "./selection";
 import { offsetSubtreeBoxes, resizeBox } from "./selection-drag";
 import { nodesInRect, rectFromPoints } from "./marquee";
@@ -43,7 +43,8 @@ type Gesture =
   | { kind: "move"; ids: string[]; start: HitPoint }
   | { kind: "resize"; id: string; handle: HandleId; start: HitPoint; box: SceneBox; radians: number }
   | { kind: "marquee"; start: HitPoint }
-  | { kind: "draw"; tool: DrawToolId; start: HitPoint };
+  | { kind: "draw"; tool: DrawToolId; start: HitPoint }
+  | { kind: "rotate"; id: string; center: HitPoint; start: HitPoint; startPointerAngle: number; startRotation: number };
 
 export interface CanvasDragHandlers {
   onPointerDownCapture(event: React.PointerEvent<HTMLDivElement>): void;
@@ -54,6 +55,10 @@ export interface CanvasDragHandlers {
 
 export function useCanvasDrag(options: CanvasDragOptions): {
   previewBoxes: Record<string, SceneBox>;
+  /** 旋转预览：拖动手柄时节点的临时角度。 */
+  previewRotation?: { id: string; rotation: number };
+  /** 指针是否停在旋转手柄上（用于换光标）。 */
+  hoverRotate: boolean;
   /** 框选中的矩形（场景坐标）。 */
   marquee: Rect | undefined;
   /** 绘制中的矩形（场景坐标）。 */
@@ -67,14 +72,28 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   const [previewBoxes, setPreviewBoxes] = useState<Record<string, SceneBox>>({});
   const [marquee, setMarquee] = useState<Rect | undefined>(undefined);
   const [drawRect, setDrawRect] = useState<Rect | undefined>(undefined);
+  const [previewRotation, setPreviewRotation] = useState<{ id: string; rotation: number } | undefined>(undefined);
+  const [hoverRotate, setHoverRotate] = useState(false);
   const [guides, setGuides] = useState<SnapGuide[]>([]);
   const marqueeRef = useRef<Rect | undefined>(undefined);
   const drawRectRef = useRef<Rect | undefined>(undefined);
   const drawEndRef = useRef<HitPoint | undefined>(undefined);
   const previewRef = useRef<Record<string, SceneBox>>({});
+  const previewRotationRef = useRef<{ id: string; rotation: number } | undefined>(undefined);
   const gestureRef = useRef<Gesture | null>(null);
   const movedRef = useRef(false);
   const consumedRef = useRef(false);
+
+
+  /** 指针是否落在当前选中节点的旋转手柄上（屏幕像素阈值）。 */
+  function isOverRotateHandle(event: React.PointerEvent<HTMLDivElement>): boolean {
+    const id = options.selectedIds[0];
+    if (id === undefined) return false;
+    const bounds = selectionBounds(selectedBoxes(options.scene, [id]));
+    if (!bounds) return false;
+    const scale = Math.max(options.zoom, 0.01);
+    return hitTestRotationHandle(bounds, toRadians(options.rotationOf?.(id) ?? 0), options.pointOf(event), ROTATE_HANDLE_GAP / scale, ROTATE_HANDLE_RADIUS / scale);
+  }
 
   const updatePreview = (boxes: Record<string, SceneBox>) => {
     previewRef.current = boxes;
@@ -105,8 +124,24 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     const bounds = selectionBounds(selectedBoxes(options.scene, options.selectedIds));
     // 旋转节点的缩放手柄要先把点逆变换到本地坐标再命中，否则手柄位置和视觉对不上。
     const radians = options.selectedIds.length === 1 ? toRadians(options.rotationOf?.(options.selectedIds[0]!) ?? 0) : 0;
+    const scale = Math.max(options.zoom, 0.01);
+    // 旋转手柄优先于缩放手柄：它挂在盒子外面，但极小节点上两者可能重叠。
+    if (bounds && options.selectedIds.length === 1 && hitTestRotationHandle(bounds, radians, point, ROTATE_HANDLE_GAP / scale, ROTATE_HANDLE_RADIUS / scale)) {
+      const center = boxCenter(bounds);
+      gestureRef.current = {
+        kind: "rotate",
+        id: options.selectedIds[0]!,
+        center,
+        start: point,
+        startPointerAngle: angleDegrees(center, point),
+        startRotation: options.rotationOf?.(options.selectedIds[0]!) ?? 0,
+      };
+      event.stopPropagation();
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      return;
+    }
     const handle = bounds && options.selectedIds.length === 1
-      ? hitTestHandleRotated(bounds, radians, point, 8 / Math.max(options.zoom, 0.01))
+      ? hitTestHandleRotated(bounds, radians, point, 8 / scale)
       : undefined;
 
     if (handle && bounds) {
@@ -130,7 +165,14 @@ export function useCanvasDrag(options: CanvasDragOptions): {
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
     const gesture = gestureRef.current;
-    if (!gesture) return;
+    if (!gesture) {
+      // 没有拖拽时也跟踪一下指针，用于把光标换成「可旋转」。
+      const over = options.selectedIds.length === 1 && !options.busy
+        ? isOverRotateHandle(event)
+        : false;
+      setHoverRotate(current => current === over ? current : over);
+      return;
+    }
     const point = options.pointOf(event);
     const deltaX = point.x - gesture.start.x;
     const deltaY = point.y - gesture.start.y;
@@ -141,6 +183,16 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       drawRectRef.current = rect;
       drawEndRef.current = point;
       setDrawRect(rect);
+      event.stopPropagation();
+      return;
+    }
+    if (gesture.kind === "rotate") {
+      // 角度差在「指针相对盒子中心」的极角上算，与手柄挂在哪无关。
+      const current = angleDegrees(gesture.center, point);
+      const raw = normalizeAngle(gesture.startRotation + (current - gesture.startPointerAngle));
+      const rotation = event.shiftKey ? snapAngle(raw, 15) : raw;
+      previewRotationRef.current = { id: gesture.id, rotation };
+      setPreviewRotation(previewRotationRef.current);
       event.stopPropagation();
       return;
     }
@@ -184,6 +236,18 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       setDrawRect(undefined);
       return;
     }
+    if (gesture.kind === "rotate") {
+      const preview = previewRotationRef.current;
+      // 旋转是「松手才提交」：拖动过程只更新预览，一次拖动 = 一条 node.patch。
+      if (commit && movedRef.current && preview) {
+        const layout = options.layoutOf(gesture.id);
+        if (layout) options.onCommit([{ id: gesture.id, layout: { ...layout, rotation: preview.rotation === 0 ? undefined : preview.rotation } }]);
+      }
+      consumedRef.current = movedRef.current;
+      previewRotationRef.current = undefined;
+      setPreviewRotation(undefined);
+      return;
+    }
     const finalBoxes = previewRef.current;
     const shouldCommit = commit && movedRef.current;
     consumedRef.current = movedRef.current;
@@ -208,6 +272,8 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   };
 
   return {
+    previewRotation,
+    hoverRotate,
     previewBoxes,
     marquee,
     drawRect,

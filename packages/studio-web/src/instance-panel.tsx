@@ -1,4 +1,4 @@
-import type { DesignDocument, InstanceNode } from "@ufira/design-schema";
+import type { DesignDocument, DesignNode, InstanceNode, Paint } from "@ufira/design-schema";
 import { NumberField, TextField } from "./property-panel";
 
 /**
@@ -10,7 +10,7 @@ import { NumberField, TextField } from "./property-panel";
 export interface OverridePatch {
   text?: string;
   visible?: boolean;
-  appearance?: { fill?: string; opacity?: number };
+  appearance?: { fills?: Paint[]; opacity?: number };
 }
 
 export interface InstancePanelProps {
@@ -63,7 +63,7 @@ export function InstancePanel({ document, instance, disabled, onOverride, onRese
                   type="color"
                   disabled={disabled}
                   value={normalizeHex(copy.fill)}
-                  onChange={event => onOverride(copy.sourceNodeId, { appearance: { fill: event.target.value } })}
+                  onChange={event => onOverride(copy.sourceNodeId, { appearance: { fills: [{ type: "solid", color: event.target.value }] } })}
                 />
               </label>
               <NumberField
@@ -104,7 +104,7 @@ export function collectTextCopies(document: DesignDocument, instanceId: string):
         sourceNodeId: id.slice(prefix.length),
         name: node.name,
         text: node.text,
-        fill: node.appearance.fill ?? "#000000",
+        fill: primaryFill(node) ?? "#000000",
         opacityPercent: Math.round((node.appearance.opacity ?? 1) * 100),
       });
     }
@@ -112,4 +112,11 @@ export function collectTextCopies(document: DesignDocument, instanceId: string):
   };
   walk(instanceId);
   return copies;
+}
+
+/** 覆盖面板里的填充是单一颜色：实色取自身、渐变取首个色标。 */
+function primaryFill(node: DesignNode): string | undefined {
+  const paint = node.appearance.fills?.[0];
+  if (!paint) return undefined;
+  return paint.type === "solid" ? paint.color : paint.stops[0]?.color;
 }

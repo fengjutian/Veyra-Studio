@@ -49,12 +49,12 @@ test("keeps the original file as a backup when a legacy document is migrated", a
 
   const recovered = await repository.open("project:1");
   assert.equal(recovered.migratedFrom, 1);
-  assert.equal(recovered.document.schemaVersion, 2);
+  assert.equal(recovered.document.schemaVersion, 3);
 
   const backup = await readFile(join(directory, encodeURIComponent("project:1"), "backups", "000000000000.json"), "utf8");
   assert.equal(JSON.parse(backup).schemaVersion, 1);
   const migrated = await readFile(join(snapshots, "000000000000.json"), "utf8");
-  assert.equal(JSON.parse(migrated).schemaVersion, 2);
+  assert.equal(JSON.parse(migrated).schemaVersion, 3);
 });
 
 test("stores transaction records in revision order", async t => {
@@ -89,6 +89,6 @@ test("records the storage layout version in the manifest", async t => {
   await repository.saveSnapshot(document);
   const manifest = JSON.parse(await readFile(join(directory, encodeURIComponent(document.id), "manifest.json"), "utf8"));
   assert.equal(manifest.storageVersion, 2);
-  assert.equal(manifest.documentSchemaVersion, 2);
+  assert.equal(manifest.documentSchemaVersion, 3);
   assert.equal(manifest.name, "Demo");
 });

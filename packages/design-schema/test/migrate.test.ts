@@ -37,9 +37,9 @@ test("migrates a version 1 document to the current version", () => {
 
   assert.equal(result.fromVersion, 1);
   assert.equal(result.toVersion, CURRENT_SCHEMA_VERSION);
-  assert.equal(result.document.schemaVersion, 2);
-  assert.deepEqual(result.applied, [{ from: 1, to: 2, at: "2026-11-06T00:00:00.000Z" }]);
-  assert.deepEqual(result.document.migrations, [{ from: 1, to: 2, at: "2026-11-06T00:00:00.000Z" }]);
+  assert.equal(result.document.schemaVersion, 3);
+  assert.deepEqual(result.applied, [{ from: 1, to: 2, at: "2026-11-06T00:00:00.000Z" }, { from: 2, to: 3, at: "2026-11-06T00:00:00.000Z" }]);
+  assert.deepEqual(result.document.migrations, [{ from: 1, to: 2, at: "2026-11-06T00:00:00.000Z" }, { from: 2, to: 3, at: "2026-11-06T00:00:00.000Z" }]);
 });
 
 test("keeps the node tree intact across a migration", () => {
@@ -103,4 +103,30 @@ test("detects the declared schema version", () => {
   assert.equal(detectSchemaVersion({ schemaVersion: "2" }), undefined);
   assert.equal(detectSchemaVersion({}), undefined);
   assert.equal(detectSchemaVersion(null), undefined);
+});
+
+test("migrates a v2 document fill into a paint layer", () => {
+  const document = createDocument("doc:1", "Legacy");
+  const legacy = document as unknown as Record<string, unknown>;
+  legacy.schemaVersion = 2;
+  document.nodes["node:1"] = {
+    id: "node:1",
+    type: "rectangle",
+    name: "Card",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    // 旧形状：appearance.fill 是单值字符串。
+    appearance: { opacity: 1, fill: "#8b5cf6", cornerRadius: 8 },
+  } as unknown as DesignNode;
+  document.pages["page:1"].childIds = ["node:1"];
+
+  const result = migrateDocument(legacy);
+  const appearance = result.document.nodes["node:1"]!.appearance;
+  assert.deepEqual(appearance.fills, [{ type: "solid", color: "#8b5cf6" }]);
+  assert.equal("fill" in appearance, false);
+  // 圆角等其它字段原样保留。
+  assert.equal(appearance.cornerRadius, 8);
 });

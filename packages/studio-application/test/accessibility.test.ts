@@ -13,7 +13,7 @@ function frame(id: string, parentId: string, fill?: string): DesignNode {
     visible: true,
     locked: false,
     layout: { ...defaultLayout(), width: 100, height: 100 },
-    appearance: { ...defaultAppearance(), ...(fill ? { fill } : {}) },
+    appearance: { ...defaultAppearance(), ...(fill ? { fills: [{ type: "solid" as const, color: fill }] } : {}) },
   };
 }
 
@@ -27,7 +27,7 @@ function text(id: string, parentId: string, options: { fill?: string; text?: str
     visible: true,
     locked: false,
     layout: defaultLayout(),
-    appearance: { ...defaultAppearance(), ...(options.fill ? { fill: options.fill } : {}) },
+    appearance: { ...defaultAppearance(), ...(options.fill ? { fills: [{ type: "solid" as const, color: options.fill }] } : {}) },
     text: options.text ?? "示例文字",
     fontFamily: "Inter",
     fontSize: options.fontSize ?? 14,
@@ -111,10 +111,13 @@ test("uses token colours when a text node is bound", () => {
   assert.equal(issues[0]?.foreground, "#f0f0f0");
 });
 
-test("skips empty text and unpaintable fills", () => {
+test("skips empty text and evaluates gradient fills through their first stop", () => {
+  const gradient = text("gradient", "page:1", {});
+  gradient.appearance = { ...gradient.appearance, fills: [{ type: "linear", angle: 0, stops: [{ offset: 0, color: "#111111" }, { offset: 1, color: "#111111" }] }] };
   const document = documentWith([
     text("empty", "page:1", { text: "   " }),
-    text("gradient", "page:1", { fill: "linear-gradient(red, blue)" }),
+    gradient,
   ]);
+  // 渐变按首个色标近似：首色标是深色，和白色背景对比度足够，因此不报问题。
   assert.deepEqual(collectContrastIssues(document), []);
 });

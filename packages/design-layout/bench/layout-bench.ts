@@ -54,7 +54,7 @@ function textNode(id: string, index: number, x: number, y: number): DesignNode {
 /** 构造一份目标规模的合成文档；导出给性能 smoke 测试复用。 */
 export function documentWithNodes(target: number): DesignDocument {
   const document: DesignDocument = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     id: "doc:bench",
     revision: 0,
     meta: { name: "Bench", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },

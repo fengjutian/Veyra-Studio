@@ -21,7 +21,7 @@ function rectangle(id: string, x: number, y: number, width: number, height: numb
     visible: true,
     locked: false,
     layout: { ...defaultLayout(), x, y, width, height },
-    appearance: { ...defaultAppearance(), fill: "#8b5cf6" },
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#8b5cf6" }] },
   };
 }
 

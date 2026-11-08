@@ -1,4 +1,4 @@
-import { tokenColor, type DesignDocument, type DesignNode, type NodeId } from "@ufira/design-schema";
+import { primaryFillColor, tokenColor, type DesignDocument, type DesignNode, type NodeId } from "@ufira/design-schema";
 
 /**
  * 可访问性检查（当前覆盖对比度）。
@@ -67,7 +67,8 @@ const PAGE_BACKGROUND = "#ffffff";
 
 /** 文本节点的有效前景色：token 绑定优先，其次自身 fill。 */
 function effectiveFill(document: DesignDocument, node: DesignNode): string | undefined {
-  return tokenColor(document, node.bindings?.fill) ?? node.appearance.fill;
+  // 渐变文本没法逐像素算对比度，按首个色标近似。
+  return primaryFillColor(document, node);
 }
 
 /**

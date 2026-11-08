@@ -4,28 +4,28 @@ import { defaultAppearance, defaultLayout, type DesignDocument, type DesignNode 
 import { mergedAppearance, mergedLayout, planAppearancePatches, planLayoutPatches, selectAllIds, sharedField } from "../src/batch-edit";
 
 test("reports the shared value when every node agrees", () => {
-  const field = sharedField([frame("a"), frame("b")], node => node.appearance.fill ?? "");
+  const field = sharedField([frame("a"), frame("b")], node => { const paint = node.appearance.fills?.[0]; return paint ? (paint.type === "solid" ? paint.color : paint.stops[0]?.color ?? "") : ""; });
   assert.equal(field.value, "#111111");
   assert.equal(field.mixed, false);
 });
 
 test("marks the field as mixed when the nodes disagree", () => {
-  const nodes = [frame("a"), { ...frame("b"), appearance: { ...defaultAppearance(), fill: "#222222" } }];
-  const field = sharedField(nodes, node => node.appearance.fill ?? "");
+  const nodes = [frame("a"), { ...frame("b"), appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#222222" }] } }];
+  const field = sharedField(nodes, node => { const paint = node.appearance.fills?.[0]; return paint ? (paint.type === "solid" ? paint.color : paint.stops[0]?.color ?? "") : ""; });
   assert.equal(field.mixed, true);
 });
 
 test("keeps the fields the user did not touch", () => {
-  const node = { ...frame("a"), appearance: { ...defaultAppearance(), fill: "#111111", stroke: "#333333", opacity: 0.5 } };
+  const node = { ...frame("a"), appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#111111" }], stroke: "#333333", opacity: 0.5 } };
   const appearance = mergedAppearance(node, { fill: "#444444" });
-  assert.equal(appearance.fill, "#444444");
+  assert.deepEqual(appearance.fills, [{ type: "solid", color: "#444444" }]);
   assert.equal(appearance.stroke, "#333333");
   assert.equal(appearance.opacity, 0.5);
 });
 
 test("clears the fill when an empty value is committed", () => {
-  const node = { ...frame("a"), appearance: { ...defaultAppearance(), fill: "#111111" } };
-  assert.equal(mergedAppearance(node, { fill: "" }).fill, undefined);
+  const node = { ...frame("a"), appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#111111" }] } };
+  assert.equal(mergedAppearance(node, { fill: "" }).fills, undefined);
 });
 
 test("keeps the layout fields the user did not touch", () => {
@@ -46,7 +46,7 @@ test("switches the size mode to fixed when a size is committed", () => {
 });
 
 test("skips the nodes whose appearance would not change", () => {
-  const nodes = [frame("a"), { ...frame("b"), appearance: { ...defaultAppearance(), fill: "#222222" } }];
+  const nodes = [frame("a"), { ...frame("b"), appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#222222" }] } }];
   const patches = planAppearancePatches(nodes, { fill: "#111111" });
   assert.deepEqual(patches.map(patch => patch.id), ["b"]);
 });
@@ -89,7 +89,7 @@ function frame(id: string): DesignNode {
     visible: true,
     locked: false,
     layout: { ...defaultLayout(), x: 10, y: 20, width: 100, height: 80 },
-    appearance: { ...defaultAppearance(), fill: "#111111" },
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#111111" }] },
   };
 }
 

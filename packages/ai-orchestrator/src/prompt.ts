@@ -106,7 +106,8 @@ function describeNode(node: DesignNode): string {
     `位置=(${round(node.layout.x)},${round(node.layout.y)})`,
     `尺寸=${round(node.layout.width)}×${round(node.layout.height)}`,
   ];
-  if (node.appearance.fill) parts.push(`填充=${node.appearance.fill}`);
+  const fill = node.appearance.fills?.[0];
+  if (fill) parts.push(`填充=${fill.type === "solid" ? fill.color : `线性渐变(${fill.angle}deg)`}`);
   if (node.appearance.stroke) parts.push(`描边=${node.appearance.stroke}`);
   if (node.type === "text") parts.push(`文本="${node.text}"`, `字号=${node.fontSize}`);
   return parts.join(" ");

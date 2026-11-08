@@ -130,3 +130,26 @@ export interface AppearanceSpec {
   `studio-web` 375 条、`design-export` 58 条通过。
 
 非目标（写在 §4）：`spread`、内阴影、子树整体模糊、背景模糊。
+## 6. P6.2 实现结果（2026-11-08）
+
+- **模型**：`Paint = { solid } | { linear, angle, stops }`；`AppearanceSpec.fills?: Paint[]`
+  取代 `fill?: string`。色标 `offset` 限定在 [0,1]，线性渐变至少两个色标。
+- **迁移**：`CURRENT_SCHEMA_VERSION` 升到 3，`MIGRATIONS` 登记 `v2 → v3`：把每个节点的
+  `appearance.fill` 改写成 `fills: [{ type: "solid", color }]` 并删掉 `fill`；没有 fill 的
+  节点原样返回（不凭空造空数组，避免把「无填充」和「空填充层」混掉）。
+- **读取收敛**：`resolveFills()` 是唯一入口——颜色 token 绑定生效时整组填充压成单一实色
+  （一个颜色 token 表达不了渐变）。`primaryFillColor()` 给只接受单色的地方用（文本颜色、
+  对比度检查、批量面板、实例面板）。
+- **画布**：`gradientLine()`（design-schema）算出渐变线，`createLinearGradient` + 按
+  offset 排序后 `addColorStop`。
+- **导出**：HTML 输出 `linear-gradient(θdeg, color offset%, …)`；SVG 输出
+  `<linearGradient gradientUnits="userSpaceOnUse">` + `fill="url(#paint-N)"`；矢量节点的
+  内联 `<svg>` 也生成同一条 gradient（CSS 渐变函数不能直接用在 SVG 路径上）。
+- **UI**：属性面板「填充」变成填充层编辑器——纯色时可「改为线性渐变」，渐变时可调角度
+  与起止色、并能「改回纯色」。
+- **测试**：`gradientLine` 1 条、paint 校验 1 条、v2→v3 迁移 1 条、画布渐变 1 条、
+  导出 2 条；`design-schema` 55、`design-export` 60、`design-runtime` 59、
+  `studio-application` 52、`ai-orchestrator` 50、`studio-web` 375 全部通过。
+
+一个刻意的取舍：**多填充层还没做**。`fills` 已经是数组，但 UI 与渲染只取第 0 层——
+等真正需要「底色 + 渐变叠加」时再加层，模型不需要再改。

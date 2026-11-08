@@ -33,7 +33,7 @@ test("exports escaped text inside a structural stack", () => {
 test("preserves design token bindings as CSS variables", () => {
   const document = createDocument("doc:1", "Demo");
   const root = frame("root");
-  root.appearance.fill = "#000000";
+  root.appearance.fills = [{ type: "solid", color: "#000000" }];
   root.bindings = { fill: "Color/Primary" };
   document.tokens["Color/Primary"] = { type: "color", value: "#3366ff" };
   document.pages["page:1"].childIds = [root.id];
@@ -104,7 +104,7 @@ test("exports a vector node as an inline svg path", () => {
     ...frame("logo"),
     type: "vector",
     layout: { ...defaultLayout(), x: 20, y: 30, width: 100, height: 50 },
-    appearance: { ...defaultAppearance(), fill: "#8b5cf6", stroke: "#111111", strokeWidth: 2 },
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#8b5cf6" }], stroke: "#111111", strokeWidth: 2 },
     geometry: { kind: "path", d: "M 0 0 L 1 0 L 0.5 1 Z" },
   };
   const result = exportPageToHtml(documentWith([vector]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
@@ -170,4 +170,13 @@ test("exports shadow and blur as css", () => {
   const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
   assert.match(result.html, /box-shadow:4px 8px 12px #00000080/);
   assert.match(result.html, /filter:blur\(6px\)/);
+});
+test("exports a linear gradient as css", () => {
+  const box: DesignNode = {
+    ...frame("card"),
+    type: "rectangle",
+    appearance: { ...defaultAppearance(), fills: [{ type: "linear", angle: 180, stops: [{ offset: 0, color: "#111111" }, { offset: 1, color: "#ffffff" }] }] },
+  };
+  const result = exportPageToHtml(documentWith([box]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /background:linear-gradient\(180deg, #111111 0%, #ffffff 100%\)/);
 });

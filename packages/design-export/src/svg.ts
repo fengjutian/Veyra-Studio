@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveCornerRadii, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -96,7 +96,7 @@ function renderNode(
   // 布局引擎给出的坐标是页面绝对坐标，所以导出原点对所有节点统一平移。
   const raw = boxes[nodeId] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
   const box = shiftBox(raw, options.origin);
-  const style = nodeStyle(document, node, tokenVariables);
+  const style = nodeStyle(document, node, tokenVariables, paintValue(document, node, box, tokenVariables, state));
   // 旋转绕盒子中心，与画布/HTML 一致；导出坐标已经平移到视口，中心也一起平移。
   const rotation = node.layout.rotation ?? 0;
   const transform = rotation
@@ -280,10 +280,10 @@ function shiftBox(box: ComputedBox, origin?: { x: number; y: number }): Computed
   return { ...box, x: box.x - origin.x, y: box.y - origin.y };
 }
 
-function nodeStyle(document: DesignDocument, node: DesignNode, tokenVariables: Record<string, string>): string {
+function nodeStyle(document: DesignDocument, node: DesignNode, tokenVariables: Record<string, string>, fillValue: string): string {
   const declarations: string[] = [];
   declarations.push(`opacity:${num(node.appearance.opacity)}`);
-  declarations.push(`fill:${node.appearance.fill ? boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables) : "none"}`);
+  declarations.push(`fill:${fillValue}`);
   if (resolveStroke(document, node) || node.bindings?.stroke) {
     declarations.push(`stroke:${boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables)}`);
     declarations.push(`stroke-width:${num(node.appearance.strokeWidth ?? 1)}`);
@@ -390,4 +390,23 @@ function registerEffect(node: DesignNode, state: MaskState): string {
   // 滤镜区域放大到 200%，否则偏移/模糊到元素外的部分会被裁掉。
   state.defs.push(`<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">${primitives.join("")}</filter>`);
   return id;
+}
+/**
+ * 填充层的 SVG 值：实色 → 颜色（可带 CSS 变量），渐变 → 登记一条 `<linearGradient>`
+ * 并返回 `url(#id)`。
+ *
+ * 渐变坐标用 `userSpaceOnUse` + 导出坐标系里的盒子，和画布/HTML 用同一套 `gradientLine`，
+ * 所以三处朝向一致；`objectBoundingBox` 会在非等比盒子上把方向拉歪。
+ */
+function paintValue(document: DesignDocument, node: DesignNode, box: ComputedBox, tokenVariables: Record<string, string>, state: MaskState): string {
+  const paint = resolveFills(document, node)[0];
+  if (!paint) return "none";
+  if (paint.type === "solid") return boundValue(node.bindings?.fill, paint.color, tokenVariables);
+  const id = `paint-${state.nextId++}`;
+  const line = gradientLine(box, paint.angle);
+  const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
+    .map(stop => `<stop offset="${num(stop.offset)}" stop-color="${escapeXml(stop.color)}" />`)
+    .join("");
+  state.defs.push(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient>`);
+  return `url(#${id})`;
 }

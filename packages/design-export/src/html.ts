@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, pathDataFromCommands, resolveCornerRadii, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -172,13 +172,28 @@ function renderVectorPath(
   const width = Math.max(node.layout.width, 1);
   const height = Math.max(node.layout.height, 1);
   const d = pathDataFromCommands(absolutePath(commands, { x: 0, y: 0, width, height }));
-  const fill = node.appearance.fill ? boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables) : "none";
+  // 填充层：实色走 CSS 变量，渐变走 linear-gradient（角度与画布/SVG 同一套约定）。
+  const fills = resolveFills(document, node);
+  const paint = fills[0];
+  let fill = "none";
+  let paintDefs = "";
+  if (paint?.type === "solid") {
+    fill = boundValue(node.bindings?.fill, paint.color, tokenVariables);
+  } else if (paint?.type === "linear") {
+    // 内联 <svg> 里不能用 CSS 渐变函数，只能生成一条 gradient；坐标用 viewBox 的本地空间。
+    const line = gradientLine({ x: 0, y: 0, width, height }, paint.angle);
+    const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
+      .map(stop => `<stop offset="${num(stop.offset)}" stop-color="${escapeAttribute(stop.color)}" />`)
+      .join("");
+    paintDefs = `<defs><linearGradient id="paint" gradientUnits="userSpaceOnUse" x1="${num(line.x1)}" y1="${num(line.y1)}" x2="${num(line.x2)}" y2="${num(line.y2)}">${stops}</linearGradient></defs>`;
+    fill = "url(#paint)";
+  }
   const hasStroke = Boolean(resolveStroke(document, node) || node.bindings?.stroke);
   const stroke = hasStroke ? boundValue(node.bindings?.stroke, node.appearance.stroke ?? "transparent", tokenVariables) : "none";
   const strokeWidth = node.appearance.strokeWidth ?? 1;
   const attributes = [`d="${escapeAttribute(d)}"`, `fill="${escapeAttribute(fill)}"`, `stroke="${escapeAttribute(stroke)}"`];
   if (hasStroke) attributes.push(`stroke-width="${num(strokeWidth)}"`);
-  return `<div ${common}><svg viewBox="0 0 ${num(width)} ${num(height)}" preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:visible"><path ${attributes.join(" ")} /></svg></div>`;
+  return `<div ${common}><svg viewBox="0 0 ${num(width)} ${num(height)}" preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:visible">${paintDefs}<path ${attributes.join(" ")} /></svg></div>`;
 }
 
 function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
@@ -199,7 +214,8 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   addSize(declarations, "height", node.layout.heightMode, node.layout.height, parent);
   declarations.push(`opacity:${node.appearance.opacity}`);
   if (!node.visible) declarations.push("display:none");
-  if (node.appearance.fill && !pathVector) declarations.push(`background:${boundValue(node.bindings?.fill, node.appearance.fill, tokenVariables)}`);
+  const fills = resolveFills(document, node);
+  if (fills[0] && !pathVector) declarations.push(`background:${cssPaint(node, fills[0], tokenVariables)}`);
   // 旋转绕元素中心（transform-origin 的初始值就是 50% 50%），与画布、SVG 一致。
   if (node.layout.rotation) declarations.push(`transform:rotate(${num(node.layout.rotation)}deg)`);
   if (node.appearance.shadow) {
@@ -343,4 +359,13 @@ function dedupeDiagnostics(diagnostics: ExportDiagnostic[]): ExportDiagnostic[] 
     seen.add(key);
     return true;
   });
+}
+
+/** 填充层 → CSS 背景值。颜色 token 绑定由 resolveFills 提前压成实色。 */
+function cssPaint(node: DesignNode, paint: Paint, tokenVariables: Record<string, string>): string {
+  if (paint.type === "solid") return boundValue(node.bindings?.fill, paint.color, tokenVariables);
+  const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
+    .map(stop => `${safeCssValue(stop.color)} ${num(stop.offset * 100)}%`)
+    .join(", ");
+  return `linear-gradient(${num(paint.angle)}deg, ${stops})`;
 }

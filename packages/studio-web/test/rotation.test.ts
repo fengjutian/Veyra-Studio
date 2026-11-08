@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  angleDegrees,
   boxCenter,
   hitTestHandleRotated,
+  hitTestRotationHandle,
   resizeRotatedBox,
+  normalizeAngle,
   rotatePoint,
+  rotationHandlePoint,
   rotatedBounds,
   rotatedCorners,
   rotatedHandleCenters,
+  snapAngle,
   toLocalPoint,
   toRadians,
 } from "../src/renderer/rotation";
@@ -64,4 +69,41 @@ test("an unrotated box is returned unchanged", () => {
   assert.deepEqual(rotatedBounds(box, 0), box);
   const resized: Rect = { x: 0, y: 0, width: 140, height: 50 };
   assert.deepEqual(resizeRotatedBox(box, resized, "se", 0), resized);
+});
+
+test("the rotate handle sits above the box and follows the rotation", () => {
+  const box: Rect = { x: 0, y: 0, width: 100, height: 50 };
+  // 未旋转：正上方，水平居中。
+  const up = rotationHandlePoint(box, 0, 26);
+  assert.equal(up.x, 50);
+  assert.equal(up.y, -26);
+  // 旋转 90°：跑到右侧。
+  const right = rotationHandlePoint(box, QUARTER, 26);
+  assert.ok(Math.abs(right.x - 101) < 1e-9, String(right.x));
+  assert.ok(Math.abs(right.y - 25) < 1e-9, String(right.y));
+});
+
+test("hit testing the rotate handle", () => {
+  const box: Rect = { x: 0, y: 0, width: 100, height: 50 };
+  const handle = rotationHandlePoint(box, 0, 26);
+  assert.equal(hitTestRotationHandle(box, 0, handle, 26, 9), true);
+  assert.equal(hitTestRotationHandle(box, 0, { x: handle.x, y: handle.y + 30 }, 26, 9), false);
+});
+
+test("angles normalise into (-180, 180] and snap to 15 degrees", () => {
+  assert.equal(normalizeAngle(370), 10);
+  assert.equal(normalizeAngle(-190), 170);
+  assert.equal(normalizeAngle(180), 180);
+  assert.equal(normalizeAngle(-180), 180);
+  assert.equal(snapAngle(7), 0);
+  assert.equal(snapAngle(8), 15);
+  assert.equal(snapAngle(-7), 0);
+  assert.equal(snapAngle(-8), -15);
+});
+
+test("angle from a centre follows screen coordinates", () => {
+  // y 轴向下：正下方是 +90 度。
+  assert.equal(angleDegrees({ x: 0, y: 0 }, { x: 0, y: 10 }), 90);
+  assert.equal(angleDegrees({ x: 0, y: 0 }, { x: 10, y: 0 }), 0);
+  assert.equal(angleDegrees({ x: 0, y: 0 }, { x: -10, y: 0 }), 180);
 });

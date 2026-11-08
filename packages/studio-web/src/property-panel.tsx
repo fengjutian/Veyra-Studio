@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
 import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
 export interface PropertyPanelProps {
@@ -35,6 +35,9 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
     radii[index] = value;
     onPatch({ appearance: { ...node.appearance, cornerRadii: radii } });
   };
+  /** 填充层目前只支持一层，所以「改填充」= 整体替换 `fills`。 */
+  const paint = node.appearance.fills?.[0];
+  const patchPaint = (next: Paint | undefined) => onPatch({ appearance: { ...node.appearance, fills: next ? [next] : undefined } });
   /** 阴影是整体替换的对象：合并时保留没改的字段，空对象就是「新建默认阴影」。 */
   const patchShadow = (changes: Partial<ShadowSpec>) => {
     const shadow: ShadowSpec = { x: 0, y: 4, blur: 12, color: "#00000040", ...node.appearance.shadow, ...changes };
@@ -136,7 +139,25 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
       )}
 
       <Section title="外观">
-        <TextField label="填充" value={node.appearance.fill ?? ""} disabled={disabled} onCommit={fill => onPatch({ appearance: { ...node.appearance, fill: fill || undefined } })} />
+        {paint?.type === "linear" ? (
+          <>
+            <NumberField label="渐变角度" value={paint.angle} disabled={disabled} onCommit={angle => patchPaint({ ...paint, angle })} />
+            <TextField label="起始色" value={paint.stops[0]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, 0, color))} />
+            <TextField label="结束色" value={paint.stops[paint.stops.length - 1]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, paint.stops.length - 1, color))} />
+            <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint({ type: "solid", color: paint.stops[0]?.color ?? "#8b5cf6" })}>
+              改回纯色
+            </button>
+          </>
+        ) : (
+          <>
+            <TextField label="填充" value={paint?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(color ? { type: "solid", color } : undefined)} />
+            {paint?.type === "solid" && (
+              <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint(toGradient(paint.color))}>
+                改为线性渐变
+              </button>
+            )}
+          </>
+        )}
         <TextField label="描边" value={node.appearance.stroke ?? ""} disabled={disabled} onCommit={stroke => onPatch({ appearance: { ...node.appearance, stroke: stroke || undefined } })} />
         <NumberField label="描边宽度" value={node.appearance.strokeWidth ?? 1} min={0} disabled={disabled} onCommit={strokeWidth => onPatch({ appearance: { ...node.appearance, strokeWidth: strokeWidth > 0 ? strokeWidth : undefined } })} />
         {node.appearance.cornerRadii ? (
@@ -401,3 +422,12 @@ function maxRadius(radii: CornerRadii): number {
 }
 /** 只有形状能当蒙版：文本/图片/容器的「轮廓」没有明确语义。 */
 const MASKABLE_TYPES = new Set(["vector", "rectangle", "ellipse"]);
+/** 纯色 → 线性渐变：默认上下两段，结束色先给白色，用户自己改。 */
+function toGradient(color: string): Paint {
+  return { type: "linear", angle: 180, stops: [{ offset: 0, color }, { offset: 1, color: "#ffffff" }] };
+}
+
+/** 改一个色标，其余保持不变。 */
+function withStop(paint: Extract<Paint, { type: "linear" }>, index: number, color: string): Paint {
+  return { ...paint, stops: paint.stops.map((stop, position) => position === index ? { ...stop, color } : stop) };
+}

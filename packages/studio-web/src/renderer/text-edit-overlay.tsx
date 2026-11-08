@@ -46,7 +46,7 @@ export function TextEditOverlay({ node, box, onCommit, onCancel }: TextEditOverl
         fontSize: node.type === "text" ? node.fontSize : undefined,
         lineHeight: node.type === "text" ? `${node.lineHeight}px` : undefined,
         fontWeight: node.type === "text" ? node.fontWeight : undefined,
-        color: node.appearance.fill ?? "#111111",
+        color: primaryFillColorOf(node) ?? "#111111",
       }}
       value={value}
       onChange={event => setValue(event.target.value)}
@@ -63,4 +63,11 @@ export function TextEditOverlay({ node, box, onCommit, onCancel }: TextEditOverl
       }}
     />
   );
+}
+
+/** 文本节点的填充主色：实色取自身、渐变取首个色标。 */
+function primaryFillColorOf(node: DesignNode): string | undefined {
+  const paint = node.appearance.fills?.[0];
+  if (!paint) return undefined;
+  return paint.type === "solid" ? paint.color : paint.stops[0]?.color;
 }

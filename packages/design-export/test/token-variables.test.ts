@@ -22,7 +22,7 @@ function documentWithToken() {
     visible: true,
     locked: false,
     layout: { ...defaultLayout(), x: 10, y: 10, width: 40, height: 40 },
-    appearance: { ...defaultAppearance(), fill: "#2563eb" },
+    appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#2563eb" }] },
     bindings: { fill: "color.primary" },
   };
   document.pages["page:1"]!.childIds = ["rect:1"];

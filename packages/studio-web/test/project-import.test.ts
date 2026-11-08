@@ -41,8 +41,11 @@ test("upgrades an imported file from an older format version", () => {
 
   const { document, migratedFrom } = prepareImportedDocument(legacy, { now: "2026-11-05T00:00:00.000Z" });
   assert.equal(migratedFrom, 1);
-  assert.equal(document.schemaVersion, 2);
-  assert.deepEqual(document.migrations, [{ from: 1, to: 2, at: document.migrations?.[0]?.at }]);
+  assert.equal(document.schemaVersion, 3);
+  assert.deepEqual(document.migrations, [
+    { from: 1, to: 2, at: document.migrations?.[0]?.at },
+    { from: 2, to: 3, at: document.migrations?.[1]?.at },
+  ]);
 });
 
 test("refuses an imported file from a newer format version", () => {

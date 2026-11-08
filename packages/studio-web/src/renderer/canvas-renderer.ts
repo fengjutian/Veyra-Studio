@@ -1,4 +1,4 @@
-import { absolutePath, type CornerRadii, type PathCommand } from "@ufira/design-schema";
+import { absolutePath, gradientLine, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
 import type { SceneBox, SceneNode } from "./scene";
 
 /**
@@ -123,9 +123,10 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
 }
 
 function drawShape(context: CanvasRenderingContext2D, node: SceneNode): void {
-  if (node.fill) {
+  const paint = node.paints?.[0];
+  if (node.fill || paint) {
     shapePath(context, node);
-    context.fillStyle = node.fill;
+    context.fillStyle = paint ? canvasPaint(context, node, paint) : node.fill!;
     context.fill();
   }
   if (node.stroke && node.strokeWidth > 0) {
@@ -294,4 +295,18 @@ function imageHeight(image: CanvasImageSource): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * 填充 → Canvas 的 fillStyle。
+ *
+ * 渐变的几何来自 `gradientLine`，和 SVG/HTML 导出共用同一套角度定义；色标先按 offset
+ * 排序，因为 Canvas 要求 addColorStop 单调递增。
+ */
+function canvasPaint(context: CanvasRenderingContext2D, node: SceneNode, paint: Paint): string | CanvasGradient {
+  if (paint.type === "solid") return paint.color;
+  const line = gradientLine(node.box, paint.angle);
+  const gradient = context.createLinearGradient(line.x1, line.y1, line.x2, line.y2);
+  for (const stop of [...paint.stops].sort((a, b) => a.offset - b.offset)) gradient.addColorStop(stop.offset, stop.color);
+  return gradient;
 }

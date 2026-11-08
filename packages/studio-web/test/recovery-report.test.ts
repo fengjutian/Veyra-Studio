@@ -26,7 +26,7 @@ test("记录项目、修订与事务重放情况", () => {
   assert.equal(built.recoveredFromRevision, 4);
   assert.equal(built.replayedTransactions, 2);
   assert.equal(built.latestKnownRevision, 6);
-  assert.equal(built.documentSchemaVersion, 2);
+  assert.equal(built.documentSchemaVersion, 3);
   assert.equal(built.degraded, false);
   assert.equal(built.generatedAt, "2026-11-06T00:00:00.000Z");
 });
@@ -44,7 +44,7 @@ test("格式升级会写明来源版本", () => {
   const version = rows.find(row => row.label === "文档格式版本");
 
   assert.match(version?.value ?? "", /v1/);
-  assert.match(version?.value ?? "", /v2/);
+  assert.match(version?.value ?? "", /v3/);
 });
 
 test("正常恢复的每一行都有内容", () => {

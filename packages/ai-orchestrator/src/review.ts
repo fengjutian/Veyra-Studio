@@ -104,7 +104,8 @@ export function reviewAiPlan({ before, after, commands }: ReviewInput): ReviewRe
     .filter(id => after.nodes[id])
     .filter(id => {
       const node = after.nodes[id]!;
-      return Boolean(node.appearance.fill?.startsWith("#")) && !node.bindings?.fill;
+      const fills = node.appearance.fills ?? [];
+  return fills.length > 0 && fills.every(paint => paint.type === "solid" && paint.color.startsWith("#")) && !node.bindings?.fill;
     });
   if (hardcoded.length) {
     findings.push({

@@ -14,7 +14,7 @@ function node(id: string, options: { locked?: boolean; fill?: string; bindFill?:
     visible: true,
     locked: options.locked ?? false,
     layout: defaultLayout(),
-    appearance: { ...defaultAppearance(), ...(options.fill ? { fill: options.fill } : {}) },
+    appearance: { ...defaultAppearance(), ...(options.fill ? { fills: [{ type: "solid" as const, color: options.fill }] } : {}) },
     ...(options.bindFill ? { bindings: { fill: "color.primary" } } : {}),
   };
 }

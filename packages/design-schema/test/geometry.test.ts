@@ -15,6 +15,7 @@ import {
   starPathData,
   vectorPathCommands,
 } from "../src/geometry";
+import { gradientLine } from "../src/paint";
 
 const BOX = { x: 100, y: 50, width: 200, height: 100 };
 
@@ -189,4 +190,17 @@ test("a hole in a path is not clickable", () => {
   const donut = parseVectorPath("M 0 0 L 1 0 L 1 1 L 0 1 Z M 0.4 0.4 L 0.4 0.6 L 0.6 0.6 L 0.6 0.4 Z")!;
   assert.equal(hitTestVectorPath(donut, BOX, { x: 200, y: 100 }), false);
   assert.equal(hitTestVectorPath(donut, BOX, { x: 120, y: 100 }), true);
+});
+test("gradient line follows the CSS angle convention", () => {
+  const box = { x: 0, y: 0, width: 100, height: 100 };
+  // 0deg 指向上：从底到顶，x 不变。
+  const up = gradientLine(box, 0);
+  assert.equal(up.x1, 50);
+  assert.equal(up.x2, 50);
+  assert.ok(up.y1 > up.y2);
+  // 90deg 指向右：从左到右，y 不变。
+  const right = gradientLine(box, 90);
+  assert.ok(right.x1 < right.x2);
+  assert.equal(right.y1, 50);
+  assert.equal(right.y2, 50);
 });

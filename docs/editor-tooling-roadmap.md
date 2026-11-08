@@ -2,7 +2,7 @@
 
 > 文档状态：生效中的工具能力基线
 > 最后更新：2026-11-07
-> 当前阶段：P1–P5 完成；P6 进行中（阴影与模糊已完成，渐变与 schema v3 迁移待启动）
+> 当前阶段：P1–P6 完成；后续为各相位顺延项
 > 关联文档：`current-project-status.md`、`project-progress-and-version-roadmap.md`、`canvas-renderer-roadmap.md`
 
 ## 1. 问题：不是「按钮太少」
@@ -51,7 +51,7 @@
 | 几何 | **旋转（绕自身中心）** | 框外旋转手柄、多选整体旋转 | P5.1 ✅ | 否（`layout.rotation` 可选字段） |
 | 几何 | **约束（贴边/居中/拉伸/缩放）** | 约束可视化预览、实例级覆盖 | P5.2 ✅ | 否（`constraints` 可选字段） |
 | 几何 | **蒙版（兄弟层裁剪）** | alpha 蒙版 / 羽化 | P4 ✅ | 否（`mask?: boolean`） |
-| 外观 | 纯色填充 | 渐变、多填充层 | P6.2 | 是（`fills[]` 替换 `fill`，需 schema v3 迁移） |
+| 外观 | **纯色 + 线性渐变** | 径向渐变、多填充层 | P6.2 ✅ | 是（`fills[]` 替换 `fill`，schema v3 迁移已完成） |
 | 外观 | **投影 + 图层模糊** | spread、内阴影、子树整体模糊 | P6.1 ✅ | 否（新增可选字段） |
 | 排版 | 对齐（右键菜单） | **等距分布 + 多选浮出工具条** | P2 ✅ | 否 |
 
@@ -238,7 +238,7 @@ vector）导出产物逐字不变，golden 不破。
   父级跳过（前者由布局引擎排，后者尺寸是结果不是输入）。
 - **顺延**：框外旋转手柄、多选整体旋转、旋转后的自动布局重排、约束的可视化预览。
 
-### P6：外观表达能力（进行中）
+### P6：外观表达能力（✅ 已完成）
 
 完整规格见 [`appearance-effects.md`](appearance-effects.md)。
 
@@ -247,10 +247,9 @@ vector）导出产物逐字不变，golden 不破。
   `feDropShadow`/`feGaussianBlur`（`stdDeviation = 模糊半径 / 2`），HTML 用
   `box-shadow`/`filter`；支持矩阵新增 `effects` 行。
   不做 `spread`（三套实现的量纲对不齐）、内阴影、子树整体模糊。
-- **渐变（P6.2 待启动）**：`fill: string` → `fills: Paint[]`，**破坏性变更**，要升
-  `CURRENT_SCHEMA_VERSION` 到 3、登记 `MIGRATIONS` 并改所有读取点。顺序是先抽
-  `resolveFill()` 让读取点收敛，再升版本，最后接导出与 UI——这样迁移出错时不会和
-  「渐变渲染不对」混在一起排查。
+- **渐变（P6.2 ✅ 已完成）**：`fill: string` → `fills: Paint[]`，schema 升到 **v3** 并登记
+  `MIGRATIONS` 的 v2 → v3 步骤；`resolveFills()` 成为唯一读取入口（token 绑定会压成实色），
+  `gradientLine()` 让画布/HTML/SVG 共用同一套渐变几何。
 
 ## 6. 快捷键与光标约定
 

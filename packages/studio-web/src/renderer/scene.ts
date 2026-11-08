@@ -3,12 +3,12 @@ import {
   resolveFills,
   resolveRadius,
   resolveStroke,
-  tokenColor,
   vectorPathCommands,
   type CornerRadii,
   type DesignDocument,
   type DesignNode,
   type NodeId,
+  type Paint,
   type PathCommand,
   type ShadowSpec,
 } from "@ufira/design-schema";
@@ -55,6 +55,8 @@ export interface SceneNode {
   clip: boolean;
   opacity: number;
   fill?: string;
+  /** 填充层；一层纯色或一层线性渐变。 */
+  paints?: Paint[];
   stroke?: string;
   strokeWidth: number;
   radius: number;

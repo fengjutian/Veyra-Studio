@@ -1,5 +1,5 @@
 import type { PathCommand } from "@ufira/design-schema";
-import { rotatedCorners, rotatedHandleCenters } from "./rotation";
+import { boxCenter, rotatePoint, rotatedCorners, rotatedHandleCenters, rotationHandlePoint, ROTATE_HANDLE_GAP } from "./rotation";
 import { HANDLE_IDS, handleCenters, type Rect } from "./selection";
 
 /**
@@ -18,6 +18,8 @@ export interface SelectionOverlayOptions {
   outlineOnly?: boolean;
   /** 节点的旋转角（弧度）；非零时轮廓与手柄都跟着转。 */
   rotation?: number;
+  /** 是否绘制框外的旋转手柄（单选时才有意义）。 */
+  showRotateHandle?: boolean;
 }
 
 export function paintSelectionOverlay(context: CanvasRenderingContext2D, bounds: Rect, options: SelectionOverlayOptions = {}): void {
@@ -52,6 +54,22 @@ export function paintSelectionOverlay(context: CanvasRenderingContext2D, bounds:
       const y = center.y - size / 2;
       context.fillRect(x, y, size, size);
       context.strokeRect(x, y, size, size);
+    }
+    // 框外旋转手柄：从顶边中点引一条短线，末端画圆。位置随旋转走，所以始终在盒子「正上方」。
+    if (options.showRotateHandle) {
+      const rotation = options.rotation ?? 0;
+      const center = boxCenter(bounds);
+      const gap = ROTATE_HANDLE_GAP / zoom;
+      const anchor = rotatePoint({ x: center.x, y: bounds.y }, center, rotation);
+      const handle = rotationHandlePoint(bounds, rotation, gap);
+      context.beginPath();
+      context.moveTo(anchor.x, anchor.y);
+      context.lineTo(handle.x, handle.y);
+      context.stroke();
+      context.beginPath();
+      context.arc(handle.x, handle.y, 4.5 / zoom, 0, Math.PI * 2);
+      context.fill();
+      context.stroke();
     }
   }
   context.restore();

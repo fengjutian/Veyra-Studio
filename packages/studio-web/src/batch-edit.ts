@@ -53,7 +53,8 @@ export function sharedField<T, N extends DesignNode = DesignNode>(nodes: readonl
  */
 export function mergedAppearance(node: DesignNode, changes: BatchAppearanceChanges): AppearanceSpec {
   const appearance: AppearanceSpec = { ...node.appearance };
-  if (changes.fill !== undefined) appearance.fill = changes.fill || undefined;
+  // 批量填色始终写成单一实色层；空字符串表示清空填充。
+  if (changes.fill !== undefined) appearance.fills = changes.fill ? [{ type: "solid", color: changes.fill }] : undefined;
   if (changes.stroke !== undefined) appearance.stroke = changes.stroke || undefined;
   if (changes.cornerRadius !== undefined) appearance.cornerRadius = changes.cornerRadius;
   if (changes.opacity !== undefined) appearance.opacity = changes.opacity;
@@ -162,7 +163,12 @@ function withoutFillBinding(bindings: PropertyBindings): PropertyBindings {
 }
 
 function sameAppearance(left: AppearanceSpec, right: AppearanceSpec): boolean {
-  return left.opacity === right.opacity && left.fill === right.fill && left.stroke === right.stroke && left.cornerRadius === right.cornerRadius;
+  return left.opacity === right.opacity && sameFills(left, right) && left.stroke === right.stroke && left.cornerRadius === right.cornerRadius;
+}
+
+/** 填充是数组，逐层比较；纯色与渐变不能混为一谈。 */
+function sameFills(left: AppearanceSpec, right: AppearanceSpec): boolean {
+  return JSON.stringify(left.fills ?? []) === JSON.stringify(right.fills ?? []);
 }
 
 function sameLayout(left: LayoutSpec, right: LayoutSpec): boolean {

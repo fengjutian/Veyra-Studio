@@ -166,3 +166,26 @@ test("accepts four-value corner radii and rejects malformed tuples", () => {
   assert.throws(() => validateDocument(make([4, 8, 12])), /cornerRadii/);
   assert.throws(() => validateDocument(make([4, -1, 12, 16])), /cornerRadii/);
 });
+test("validates paint layers", () => {
+  const make = (fills: unknown) => {
+    const document = createDocument("doc:1", "Demo");
+    document.nodes["node:1"] = {
+      id: "node:1",
+      type: "rectangle",
+      name: "Card",
+      parentId: "page:1",
+      childIds: [],
+      visible: true,
+      locked: false,
+      layout: defaultLayout(),
+      appearance: { ...defaultAppearance(), fills: fills as never },
+    };
+    document.pages["page:1"]!.childIds = ["node:1"];
+    return document;
+  };
+  assert.ok(validateDocument(make([{ type: "solid", color: "#fff" }])));
+  assert.ok(validateDocument(make([{ type: "linear", angle: 45, stops: [{ offset: 0, color: "#fff" }, { offset: 1, color: "#000" }] }])));
+  // 少于两个色标画不出渐变；offset 超出 [0,1] 也不合法。
+  assert.throws(() => validateDocument(make([{ type: "linear", angle: 45, stops: [{ offset: 0, color: "#fff" }] }])), /fills/);
+  assert.throws(() => validateDocument(make([{ type: "linear", angle: 45, stops: [{ offset: 2, color: "#fff" }, { offset: 1, color: "#000" }] }])), /fills/);
+});

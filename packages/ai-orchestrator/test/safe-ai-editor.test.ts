@@ -16,7 +16,7 @@ const frame = (id: string): DesignNode => ({
   visible: true,
   locked: false,
   layout: { ...defaultLayout(), width: 320, height: 200 },
-  appearance: { ...defaultAppearance(), fill: "#ffffff" },
+  appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#ffffff" }] },
 });
 
 const plannerFor = (node: DesignNode): AiPlanner => ({

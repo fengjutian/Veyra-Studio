@@ -235,7 +235,15 @@
   `feDropShadow`/`feGaussianBlur`，`stdDeviation` 取模糊半径的一半，且滤镜区域放大到
   200% 以免偏移的阴影被裁；HTML 走 `box-shadow`/`filter`。支持矩阵新增 `effects` 行。
   属性面板「外观」区可添加/移除投影、调图层模糊。尚未实现：`spread`、内阴影、
-  子树整体模糊（需要离屏合成）、渐变（P6.2，需 schema v3 迁移）；
+  子树整体模糊（需要离屏合成）；
+- 渐变与 schema v3（P6.2）：填充从单值改为填充层 `appearance.fills: Paint[]`
+  （`solid` 或 `linear`），**文档格式升到 v3**，`MIGRATIONS` 登记 v2 → v3，把旧文档的
+  `appearance.fill` 改写成实色层并删除旧字段。`resolveFills()` 是唯一读取入口——颜色
+  token 绑定生效时整组填充压成单一实色（一个 token 表达不了渐变）；`primaryFillColor()`
+  服务只接受单色的地方（文本颜色、对比度、批量/实例面板）。`gradientLine()` 让画布
+  `createLinearGradient`、HTML `linear-gradient()`、SVG `<linearGradient>` 共用同一套
+  角度几何（CSS 约定：0deg 向上）。属性面板的填充编辑器支持纯色 ↔ 线性渐变互转、
+  调角度与起止色。尚未实现：径向渐变、多填充层（`fills` 已是数组，UI/渲染先只取第 0 层）；
 - 工作台外壳重做，布局对标 Figma / Penpot 一类编辑器：48px 顶栏把「创建工具、撤销重做、
   项目操作、导出/导入、自动保存状态」分组并用分隔线隔开；左侧栏拆成「页面」和「图层」两段，
   页面改用列表而不是下拉框，图层工具收成两行图标条（复制/粘贴/重复/编组/取消编组，以及

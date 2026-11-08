@@ -42,7 +42,7 @@ function fixture(): DesignDocument {
       id: "frame:card", type: "frame", name: "卡片", parentId: PAGE_ID, childIds: ["text:title", "text:body", "rect:accent"],
       visible: true, locked: false,
       layout: { ...defaultLayout(), mode: "stack", direction: "vertical", x: 40, y: 40, width: 320, height: 200, widthMode: "fixed", heightMode: "hug", gap: 12, padding: { top: 16, right: 16, bottom: 16, left: 16 }, align: "stretch" },
-      appearance: { ...defaultAppearance(), fill: "#ffffff", stroke: "#e2e8f0", cornerRadius: 16 },
+      appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#ffffff" }], stroke: "#e2e8f0", cornerRadius: 16 },
       bindings: { fill: "color.surface" },
     },
     {
@@ -65,7 +65,7 @@ function fixture(): DesignDocument {
       id: "rect:accent", type: "rectangle", name: "色块", parentId: "frame:card", childIds: [],
       visible: true, locked: false,
       layout: { ...defaultLayout(), width: 48, height: 48 },
-      appearance: { ...defaultAppearance(), fill: "#2563eb", cornerRadius: 8 },
+      appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#2563eb" }], cornerRadius: 8 },
       bindings: { fill: "color.primary" },
     },
     {
@@ -79,13 +79,13 @@ function fixture(): DesignDocument {
       id: "ellipse:dot", type: "ellipse", name: "圆点", parentId: PAGE_ID, childIds: [],
       visible: true, locked: false,
       layout: { ...defaultLayout(), x: 400, y: 240, width: 64, height: 64 },
-      appearance: { ...defaultAppearance(), fill: "#8b5cf6" },
+      appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#8b5cf6" }] },
     },
     {
       id: "node:badge", type: "component", name: "徽章", parentId: PAGE_ID, childIds: ["text:badge-label"],
       visible: true, locked: false,
       layout: { ...defaultLayout(), x: 680, y: 40, width: 120, height: 32 },
-      appearance: { ...defaultAppearance(), fill: "#eef2ff", cornerRadius: 999 },
+      appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#eef2ff" }], cornerRadius: 999 },
     },
     {
       id: "text:badge-label", type: "text", name: "徽章文字", parentId: "node:badge", childIds: [],
@@ -98,7 +98,7 @@ function fixture(): DesignDocument {
       id: "instance:badge", type: "instance", name: "徽章实例", parentId: PAGE_ID, childIds: ["instance:badge--text:badge-label"],
       visible: true, locked: false,
       layout: { ...defaultLayout(), x: 680, y: 90, width: 120, height: 32 },
-      appearance: { ...defaultAppearance(), fill: "#eef2ff", cornerRadius: 999 },
+      appearance: { ...defaultAppearance(), fills: [{ type: "solid", color: "#eef2ff" }], cornerRadius: 999 },
       componentId: "component:badge", overrides: { "text:badge-label": { text: "v0.2" } },
     },
     {

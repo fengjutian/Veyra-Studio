@@ -317,18 +317,18 @@ test("overrides appearance and can reset an instance back to the component defin
 
   runtime.execute(envelope(4, [{
     type: "component.override",
-    payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { text: "覆盖", appearance: { fill: "#ff0000" } } },
+    payload: { instanceId: "instance:1", sourceNodeId: "label", patch: { text: "覆盖", appearance: { fills: [{ type: "solid", color: "#ff0000" }] } } },
   }]));
   let snapshot = runtime.snapshot();
-  assert.equal((snapshot.nodes["instance:1--label"] as { appearance?: { fill?: string } }).appearance?.fill, "#ff0000");
-  assert.deepEqual((snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> }).overrides?.label, { text: "覆盖", appearance: { fill: "#ff0000" } });
+  assert.deepEqual((snapshot.nodes["instance:1--label"] as { appearance?: { fills?: unknown } }).appearance?.fills, [{ type: "solid", color: "#ff0000" }]);
+  assert.deepEqual((snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> }).overrides?.label, { text: "覆盖", appearance: { fills: [{ type: "solid", color: "#ff0000" }] } });
   // 组件定义没被改动。
   assert.equal((snapshot.nodes.label as { text?: string }).text, "Hello");
 
   runtime.execute(envelope(5, [{ type: "component.resetOverride", payload: { instanceId: "instance:1", sourceNodeId: "label" } }]));
   snapshot = runtime.snapshot();
   assert.equal((snapshot.nodes["instance:1--label"] as { text?: string }).text, "Hello");
-  assert.notEqual((snapshot.nodes["instance:1--label"] as { appearance?: { fill?: string } }).appearance?.fill, "#ff0000");
+  assert.notDeepEqual((snapshot.nodes["instance:1--label"] as { appearance?: { fills?: unknown } }).appearance?.fills, [{ type: "solid", color: "#ff0000" }]);
   assert.deepEqual((snapshot.nodes["instance:1"] as { overrides?: Record<string, unknown> }).overrides, {});
 });
 

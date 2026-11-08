@@ -19,7 +19,7 @@ export interface BatchPanelProps {
  * user types a value, so the panel never pretends that one of the values is the truth.
  */
 export function BatchPanel({ nodes, disabled, onPatchAppearance, onPatchLayout, onPatchText }: BatchPanelProps) {
-  const fill = sharedField(nodes, node => node.appearance.fill ?? "");
+  const fill = sharedField(nodes, node => primaryFill(node));
   const stroke = sharedField(nodes, node => node.appearance.stroke ?? "");
   const cornerRadius = sharedField(nodes, node => node.appearance.cornerRadius ?? 0);
   const opacity = sharedField(nodes, node => opacityToPercent(node.appearance.opacity));
@@ -95,4 +95,11 @@ function Section({ title, children }: { title: string; children: React.ReactNode
       {children}
     </>
   );
+}
+
+/** 批量面板里的填充是单一颜色：实色取自身、渐变取首个色标。 */
+function primaryFill(node: DesignNode): string {
+  const paint = node.appearance.fills?.[0];
+  if (!paint) return "";
+  return paint.type === "solid" ? paint.color : paint.stops[0]?.color ?? "";
 }

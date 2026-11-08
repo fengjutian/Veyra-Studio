@@ -84,10 +84,10 @@ test("migrates a legacy snapshot and keeps the upgraded copy", async t => {
 
   const recovered = await repository.open("project:1");
   assert.equal(recovered.migratedFrom, 1);
-  assert.equal(recovered.document.schemaVersion, 2);
+  assert.equal(recovered.document.schemaVersion, 3);
   const stored = await repository.storage.snapshots.where("projectId").equals("project:1").toArray();
   assert.equal(stored.length, 1);
-  assert.equal(stored[0]?.document.schemaVersion, 2);
+  assert.equal(stored[0]?.document.schemaVersion, 3);
 });
 
 test("keeps only the newest snapshots for a project", async t => {

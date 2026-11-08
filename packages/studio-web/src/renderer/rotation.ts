@@ -114,3 +114,41 @@ const OPPOSITE_HANDLE: Record<HandleId, HandleId> = {
   sw: "ne",
   w: "e",
 };
+
+/** 旋转手柄离盒子顶边的距离（屏幕像素，调用方除以 zoom 换算成场景单位）。 */
+export const ROTATE_HANDLE_GAP = 26;
+
+/** 旋转手柄的命中半径（屏幕像素）。 */
+export const ROTATE_HANDLE_RADIUS = 9;
+
+/**
+ * 旋转手柄的位置：从盒子「顶边中点」沿盒子本地 -y 方向外移。
+ *
+ * 用本地坐标再套上旋转，手柄就会一直挂在盒子的正上方——和 Figma 一样，转多少度都跟着走。
+ */
+export function rotationHandlePoint(box: Rect, radians: number, gap = ROTATE_HANDLE_GAP): Point {
+  const topCenter = { x: box.x + box.width / 2, y: box.y - gap };
+  return rotatePoint(topCenter, boxCenter(box), radians);
+}
+
+/** 指针是否落在旋转手柄上。 */
+export function hitTestRotationHandle(box: Rect, radians: number, point: Point, gap = ROTATE_HANDLE_GAP, radius = ROTATE_HANDLE_RADIUS): boolean {
+  const handle = rotationHandlePoint(box, radians, gap);
+  return Math.hypot(point.x - handle.x, point.y - handle.y) <= radius;
+}
+
+/** 两点相对「正右方」的角度（度），用于把指针位置换成旋转角。 */
+export function angleDegrees(origin: Point, point: Point): number {
+  return (Math.atan2(point.y - origin.y, point.x - origin.x) * 180) / Math.PI;
+}
+
+/** 规范到 (-180, 180]，避免文档里出现 720 度这种值。 */
+export function normalizeAngle(degrees: number): number {
+  const wrapped = ((degrees % 360) + 360) % 360;
+  return wrapped > 180 ? wrapped - 360 : wrapped;
+}
+
+/** 按 `step` 度吸附（Shift 时用 15 度）。 */
+export function snapAngle(degrees: number, step = 15): number {
+  return normalizeAngle(Math.round(degrees / step) * step);
+}

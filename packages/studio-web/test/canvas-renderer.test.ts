@@ -27,6 +27,7 @@ function fakeContext() {
     drawImage: record("drawImage"),
     fillText: record("fillText"),
     measureText: (value: string) => ({ width: value.length * 10 }),
+    createLinearGradient: (...args: unknown[]) => { calls.push({ name: "createLinearGradient", args }); return { addColorStop: (offset: number, color: string) => calls.push({ name: "addColorStop", args: [offset, color] }) }; },
     save: () => { stack.push({ alpha: state.alpha, fillStyle: state.fillStyle, font: state.font, textAlign: state.textAlign }); calls.push({ name: "save", args: [] }); },
     restore: () => {
       const previous = stack.pop();
@@ -182,4 +183,17 @@ test("applies layer blur as a canvas filter", () => {
   const renderer = createCanvas2DRenderer(fakeCanvas(context));
   renderer.paint([sceneNode({ fill: "#000000", blur: 6 })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
   assert.equal(context.filter, "blur(6px)");
+});
+test("paints a linear gradient from the shared gradient line", () => {
+  const context = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([
+    sceneNode({ paints: [{ type: "linear", angle: 90, stops: [{ offset: 0, color: "#111111" }, { offset: 1, color: "#ffffff" }] }] }),
+  ], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  const gradient = context.calls.find(call => call.name === "createLinearGradient");
+  assert.ok(gradient);
+  // 90deg = 从左到右：起止点在盒子中线两侧。
+  assert.deepEqual(gradient.args, [10, 45, 110, 45]);
+  const stops = context.calls.filter(call => call.name === "addColorStop").map(call => call.args);
+  assert.deepEqual(stops, [[0, "#111111"], [1, "#ffffff"]]);
 });
