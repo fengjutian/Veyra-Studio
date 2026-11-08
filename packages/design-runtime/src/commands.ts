@@ -6,6 +6,7 @@ import type {
   DesignPage,
   ImageNode,
   InstanceNode,
+  Interaction,
   LayoutSpec,
   NodeId,
   PageId,
@@ -226,7 +227,8 @@ export type DesignCommand =
   | ComponentOverrideCommand
   | ResetComponentOverrideCommand
   | ResetAllComponentOverridesCommand
-  | DetachManyComponentsCommand;
+  | DetachManyComponentsCommand
+  | PatchInteractionCommand;
 
 export interface CommandEnvelope {
   commandId: string;
@@ -273,4 +275,19 @@ export interface ResetAllComponentOverridesCommand {
 export interface DetachManyComponentsCommand {
   type: "component.detachMany";
   payload: { ids: NodeId[] };
+}
+
+/**
+ * 改节点的原型交互。
+ *
+ * 单独开一条命令而不是扩张通用 `node.patch`：`interactions` 只对「行为」有意义，
+ * 而且它需要**语义级校验**（延迟是否合法、动画是否与动作匹配、跳转目标是否存在），
+ * 这些不是形状校验能覆盖的。
+ *
+ * 交互是整组替换而不是增量合并——`node.patch` 的增量语义在这里会让
+ * 「删掉某条交互」无法表达。
+ */
+export interface PatchInteractionCommand {
+  type: "interaction.patch";
+  payload: { id: NodeId; interactions: Interaction[] };
 }

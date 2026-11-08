@@ -5,6 +5,7 @@ export type ComponentId = string;
 export type AssetId = string;
 
 import type { VectorGeometry } from "./geometry";
+import type { Interaction } from "./interactions";
 
 export interface DocumentMeta {
   name: string;
@@ -152,6 +153,15 @@ export interface BaseNode {
    * 新类型会牵动判别联合、导出、组件和 AI 计划解析的每一处。
    */
   mask?: boolean;
+  /**
+   * 原型交互：点击等事件触发的动作。
+   *
+   * 做成节点上的可选数组而不是新节点类型——交互是「节点的行为」，
+   * 新类型会牵动判别联合、导出、组件和 AI 计划解析的每一处。
+   *
+   * 语义对齐 Penpot 的 interactions 模型，见 `docs/penpot-porting.md`。
+   */
+  interactions?: Interaction[];
 }
 
 /** 文本在自身盒内的水平对齐方式。 */

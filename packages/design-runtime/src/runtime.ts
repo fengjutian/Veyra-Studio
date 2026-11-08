@@ -1,4 +1,4 @@
-import { findOwningComponentId, isValidVectorPath, overridableFields, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId, type Paint } from "@ufira/design-schema";
+import { findOwningComponentId, isValidVectorPath, overridableFields, validateDocument, validateInteraction, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -227,7 +227,35 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.override": return overrideInstanceNode(document, command.payload);
     case "component.resetOverride": return resetInstanceOverride(document, command.payload);
     case "component.resetOverrides": return resetInstanceOverrides(document, command.payload);
+    case "interaction.patch": return patchInteractions(document, command.payload.id, command.payload.interactions);
   }
+}
+
+/**
+ * 改节点的原型交互。
+ *
+ * 校验分两层：
+ * 1. **语义自洽**（`validateInteraction`）：延迟是否合法、动画是否与动作匹配、
+ *    `open-url` 是否有链接。这层拦的是「写进来就注定跑不起来」的交互。
+ * 2. **引用存在性**：跳转目标必须指向文档里真实存在的节点。
+ *    这层拦的是「交互存在但点了没反应」——比语法错误更难排查。
+ */
+function patchInteractions(document: DesignDocument, id: NodeId, interactions: Interaction[]): void {
+  const node = requireNode(document, id);
+  for (const interaction of interactions) {
+    const problems = validateInteraction(interaction, node.type);
+    if (problems.length) {
+      throw new CommandError(`Invalid interaction on node ${id}: ${problems.join("; ")}`);
+    }
+    // 跳转目标必须存在。overlay 的目标同理。
+    if (interaction.destination && !document.nodes[interaction.destination]) {
+      throw new CommandError(`Interaction destination ${interaction.destination} does not exist`);
+    }
+    if (interaction.positionRelativeTo && !document.nodes[interaction.positionRelativeTo]) {
+      throw new CommandError(`Interaction positionRelativeTo ${interaction.positionRelativeTo} does not exist`);
+    }
+  }
+  node.interactions = structuredClone(interactions);
 }
 
 function createPage(document: DesignDocument, page: DesignDocument["pages"][string], index?: number): void {

@@ -4,6 +4,55 @@ import { isValidVectorPath } from "./geometry";
 const nonNegative = z.number().finite().nonnegative();
 const id = z.string().min(1);
 
+/**
+ * 原型交互的 schema。
+ *
+ * 字段大多可选——不是「可省略」，而是「切换事件/动作类型后残留」（见
+ * `interactions.ts` 文件头）。因此这里**只校验值的形状**，
+ * 语义自洽性（延迟是否合法、动画是否与动作匹配）由 `validateInteraction()` 负责，
+ * 在写入命令层调用。
+ */
+const interactionSchema = z.object({
+  eventType: z.enum(["click", "mouse-press", "mouse-over", "mouse-enter", "mouse-leave", "after-delay"]),
+  actionType: z.enum(["navigate", "open-overlay", "toggle-overlay", "close-overlay", "prev-screen", "open-url"]),
+  delay: nonNegative.optional(),
+  destination: id.nullable().optional(),
+  preserveScroll: z.boolean().optional(),
+  url: z.string().optional(),
+  overlayPositionType: z.enum([
+    "manual", "center", "top-left", "top-right", "top-center",
+    "bottom-left", "bottom-right", "bottom-center",
+  ]).optional(),
+  overlayPosition: z.object({ x: z.number().finite(), y: z.number().finite() }).optional(),
+  closeClickOutside: z.boolean().optional(),
+  backgroundOverlay: z.boolean().optional(),
+  positionRelativeTo: id.nullable().optional(),
+  animation: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("dissolve"),
+      duration: nonNegative,
+      easing: z.enum(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]),
+      way: z.enum(["in", "out"]).optional(),
+      offsetEffect: z.boolean().optional(),
+      direction: z.enum(["right", "left", "up", "down"]).optional(),
+    }),
+    z.object({
+      type: z.literal("slide"),
+      duration: nonNegative,
+      easing: z.enum(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]),
+      way: z.enum(["in", "out"]),
+      direction: z.enum(["right", "left", "up", "down"]),
+      offsetEffect: z.boolean(),
+    }),
+    z.object({
+      type: z.literal("push"),
+      duration: nonNegative,
+      easing: z.enum(["linear", "ease", "ease-in", "ease-out", "ease-in-out"]),
+      direction: z.enum(["right", "left", "up", "down"]),
+    }),
+  ]).optional(),
+});
+
 export const layoutSchema = z.object({
   mode: z.enum(["absolute", "stack"]),
   direction: z.enum(["horizontal", "vertical"]).optional(),
@@ -95,6 +144,7 @@ const baseNodeShape = {
   externalRefs: z.array(z.object({ provider: z.string().min(1), id })).optional(),
   slot: z.boolean().optional(),
   mask: z.boolean().optional(),
+  interactions: z.array(interactionSchema).optional(),
 };
 
 const genericNodeShape = { ...baseNodeShape };
