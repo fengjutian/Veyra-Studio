@@ -119,3 +119,31 @@ test("operands keep their z-order so the base layer stays the bottom one", () =>
   const bool = runtime.snapshot().nodes["bool:1"]!;
   assert.deepEqual(bool.childIds, ["a", "b"]);
 });
+
+test("a boolean group hugs its operands after they move or resize", () => {
+  const runtime = runtimeWithShapes();
+  runtime.execute(envelope(1, [{ type: "boolean.create", payload: { id: "bool:1", operation: "union", nodeIds: ["a", "b"] } }]));
+  const before = runtime.snapshot().nodes["bool:1"]!;
+  assert.deepEqual({ x: before.layout.x, y: before.layout.y, width: before.layout.width, height: before.layout.height }, { x: 0, y: 0, width: 150, height: 150 });
+
+  // 往右挪：组变宽，原点不动。
+  runtime.execute(envelope(2, [{ type: "node.patch", payload: { id: "b", patch: { layout: { ...runtime.snapshot().nodes["b"]!.layout, x: 150 } } } }]));
+  const grown = runtime.snapshot().nodes["bool:1"]!;
+  assert.deepEqual({ x: grown.layout.x, width: grown.layout.width, height: grown.layout.height }, { x: 0, width: 250, height: 150 });
+
+  // 往左挪出原点：组向左扩，操作数坐标与原点一起回退，内容世界坐标不变。
+  runtime.execute(envelope(3, [{ type: "node.patch", payload: { id: "b", patch: { layout: { ...runtime.snapshot().nodes["b"]!.layout, x: -50 } } } }]));
+  const shifted = runtime.snapshot().nodes["bool:1"]!;
+  assert.deepEqual({ x: shifted.layout.x, width: shifted.layout.width }, { x: -50, width: 150 });
+  // b 的世界坐标：-50(组原点) + 0(子节点相对坐标) = -50，和 patch 的值一致。
+  assert.equal(runtime.snapshot().nodes["b"]!.layout.x, 0);
+  assert.equal(runtime.snapshot().nodes["a"]!.layout.x, 50);
+});
+
+test("a boolean group shrinks when an operand is resized smaller", () => {
+  const runtime = runtimeWithShapes();
+  runtime.execute(envelope(1, [{ type: "boolean.create", payload: { id: "bool:1", operation: "union", nodeIds: ["a", "b"] } }]));
+  runtime.execute(envelope(2, [{ type: "node.patch", payload: { id: "b", patch: { layout: { ...runtime.snapshot().nodes["b"]!.layout, width: 20, height: 20 } } } }]));
+  const bool = runtime.snapshot().nodes["bool:1"]!;
+  assert.deepEqual({ width: bool.layout.width, height: bool.layout.height }, { width: 100, height: 100 });
+});

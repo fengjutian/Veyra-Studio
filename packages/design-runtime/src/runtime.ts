@@ -150,6 +150,8 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
           if (child) child.layout = structuredClone(change.layout);
         }
       }
+      // 操作数变了，布尔组跟着 hug；手动改布尔组自己的尺寸不在这一步覆盖（下次改操作数才重算）。
+      refreshBooleanAncestors(document, node.parentId);
       return;
     }
     case "text.patch": {
@@ -839,6 +841,7 @@ function createNode(document: DesignDocument, node: DesignNode, index?: number):
   const owner = requireContainer(document, node.parentId);
   document.nodes[node.id] = structuredClone(node);
   insertAt(owner.childIds, node.id, index);
+  refreshBooleanAncestors(document, node.parentId);
 }
 
 function deleteNode(document: DesignDocument, id: NodeId): void {
@@ -860,6 +863,7 @@ function deleteNode(document: DesignDocument, id: NodeId): void {
     }
   };
   remove(id);
+  refreshBooleanAncestors(document, node.parentId);
 }
 
 function reparentNode(document: DesignDocument, id: NodeId, parentId: string, index?: number): void {
@@ -872,9 +876,12 @@ function reparentNode(document: DesignDocument, id: NodeId, parentId: string, in
   if (ownerComponent && wouldCreateComponentCycle(document, ownerComponent, id)) {
     throw new CommandError(`Cannot move ${id} into component ${ownerComponent}: it would create a component cycle`);
   }
+  const oldParentId = node.parentId;
   oldOwner.childIds = oldOwner.childIds.filter(childId => childId !== id);
   insertAt(newOwner.childIds, id, index);
   node.parentId = parentId;
+  refreshBooleanAncestors(document, oldParentId);
+  refreshBooleanAncestors(document, parentId);
 }
 
 function requireNode(document: DesignDocument, id: NodeId): DesignNode {
@@ -994,4 +1001,45 @@ function releaseBoolean(document: DesignDocument, payload: { id: NodeId }): void
   next.splice(index < 0 ? next.length : index, 1, ...children.map(child => child.id));
   owner.childIds = next;
   delete document.nodes[node.id];
+  refreshBooleanAncestors(document, node.parentId === undefined ? undefined : String(node.parentId));
+}
+
+/**
+ * 布尔组按操作数包围盒 hug。
+ *
+ * 操作数移动/缩放后重算：先把原点移到包围盒左上角（子节点坐标相应回退），再更新宽高，
+ * 内容的世界坐标因此不变。手动改布尔组自己的尺寸不在这一步覆盖——下次操作数变化才重算。
+ */
+function refreshBoolean(document: DesignDocument, node: DesignNode): void {
+  if (node.type !== "boolean") return;
+  const children = node.childIds.map(id => document.nodes[id]).filter((child): child is DesignNode => Boolean(child));
+  if (children.length < 2) return;
+  const minX = Math.min(...children.map(child => child.layout.x));
+  const minY = Math.min(...children.map(child => child.layout.y));
+  const maxX = Math.max(...children.map(child => child.layout.x + child.layout.width));
+  const maxY = Math.max(...children.map(child => child.layout.y + child.layout.height));
+  if (minX) for (const child of children) child.layout = { ...child.layout, x: child.layout.x - minX };
+  if (minY) for (const child of children) child.layout = { ...child.layout, y: child.layout.y - minY };
+  node.layout = {
+    ...node.layout,
+    x: node.layout.x + minX,
+    y: node.layout.y + minY,
+    width: Math.max(1, maxX - minX),
+    height: Math.max(1, maxY - minY),
+  };
+}
+
+/** 从某个节点往上刷新所有布尔祖先；顺序由内到外，嵌套布尔组才能逐层收对。 */
+function refreshBooleanAncestors(document: DesignDocument, nodeId: NodeId | undefined): void {
+  const chain: DesignNode[] = [];
+  const visited = new Set<NodeId>();
+  let current: NodeId | undefined = nodeId;
+  while (current && !visited.has(current)) {
+    visited.add(current);
+    const node = document.nodes[current];
+    if (!node) break;
+    if (node.type === "boolean") chain.push(node);
+    current = node.parentId;
+  }
+  for (const node of chain) refreshBoolean(document, node);
 }
