@@ -112,9 +112,8 @@ function spacingBetween(box: Rect, targets: SnapTarget[], axis: "x" | "y"): Spac
   if (Math.abs(gapLeft - gapRight) > 1) {
     const free = right.span.start - left.span.end;
     const spacing = (free - (moving.end - moving.start)) / 2;
-    const delta = axis === "x"
-      ? (left.span.start + right.span.end) / 2 - (moving.start + moving.end) / 2
-      : (left.span.start + right.span.end) / 2 - (moving.start + moving.end) / 2;
+    // 居中：把移动对象的中心对到两个目标的中点。
+    const delta = (left.span.start + right.span.end) / 2 - (moving.start + moving.end) / 2;
     return {
       axis,
       delta,
