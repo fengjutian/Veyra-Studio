@@ -1,4 +1,5 @@
 import { absolutePath, gradientLine, radialGeometry, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
+import { layoutRichText } from "@ufira/design-layout";
 import type { SceneBox, SceneNode } from "./scene";
 
 /**
@@ -218,17 +219,62 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
   context.fillStyle = text.color;
   context.globalAlpha = opacity;
   context.textBaseline = "top";
+  context.textAlign = "left";
+  const maxLines = Math.max(1, Math.floor(height / Math.max(1, text.lineHeight)));
+
+  if (text.runs?.length) {
+    // 富文本：换行与导出共用 design-layout 的布局结果，画布只负责按段上色、按 x 落笔。
+    setLetterSpacing(context, 0);
+    const lines = layoutRichText({
+      text: text.value,
+      runs: text.runs,
+      fontWeight: text.fontWeight,
+      fontStyle: text.fontStyle,
+      lineHeight: text.lineHeight,
+      letterSpacing: text.letterSpacing,
+      availableWidth: width,
+      measure: (value, style) => {
+        context.font = richFont(text, style);
+        return context.measureText(value).width;
+      },
+    });
+    for (let index = 0; index < Math.min(lines.length, maxLines); index += 1) {
+      const line = lines[index]!;
+      const offset = text.align === "center" ? (width - line.width) / 2 : text.align === "right" ? width - line.width : 0;
+      for (const segment of line.segments) {
+        context.font = richFont(text, segment.style);
+        context.fillStyle = segment.style.color ?? text.color;
+        const lineX = x + offset + segment.x;
+        if (!text.letterSpacing) {
+          context.fillText(segment.text, lineX, y + index * text.lineHeight);
+          continue;
+        }
+        // 有字距时逐字落笔：x 偏移已经按「字符宽度 + 字距」累加过，整段绘制会重复加一次。
+        let cursor = lineX;
+        for (const character of Array.from(segment.text)) {
+          context.fillText(character, cursor, y + index * text.lineHeight);
+          cursor += context.measureText(character).width + text.letterSpacing;
+        }
+      }
+    }
+    return;
+  }
+
   context.textAlign = text.align === "center" ? "center" : text.align === "right" ? "right" : "left";
   context.font = `${text.fontStyle} ${text.fontWeight} ${text.fontSize}px ${quoteFamily(text.fontFamily)}`;
   setLetterSpacing(context, text.letterSpacing);
 
   const originX = text.align === "center" ? x + width / 2 : text.align === "right" ? x + width : x;
   const lines = wrapText(context, text.value, width);
-  const maxLines = Math.max(1, Math.floor(height / Math.max(1, text.lineHeight)));
   for (let index = 0; index < Math.min(lines.length, maxLines); index += 1) {
     context.fillText(lines[index]!, originX, y + index * text.lineHeight);
   }
   setLetterSpacing(context, 0);
+}
+
+/** 段内样式的 CSS font 简写；字体族仍走同一套回退栈。 */
+function richFont(text: NonNullable<SceneNode["text"]>, style: { fontWeight: number; fontStyle: string }): string {
+  return `${style.fontStyle} ${style.fontWeight} ${text.fontSize}px ${quoteFamily(text.fontFamily)}`;
 }
 
 /** 简单换行：先按显式换行切段，再逐字符累加（对中英混排都够用）。 */

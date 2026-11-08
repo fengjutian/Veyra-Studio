@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { TEXT_DEFAULTS, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, applyTextRunStyle, runStyleAt, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 
 export interface PropertyPanelProps {
@@ -24,8 +24,7 @@ export interface PropertyPanelProps {
  */
 export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onPatchImage, onReplaceImage }: PropertyPanelProps) {
   const layout = node.layout;
-  const isStack = layout.mode === "stack";
-  const isGrid = layout.mode === "grid";
+  const isStack = layout.mode === "stack";  const isGrid = layout.mode === "grid";
   const padding = resolvePadding(layout);
   const grid = layout.grid;
 
@@ -45,6 +44,27 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
   /** 填充层：数组顺序是「第 0 层在最底下」，面板只编辑当前选中的那一层。 */
   const paints = node.appearance.fills ?? [];
   const [paintIndex, setPaintIndex] = useState(0);
+  /**
+   * 文本选区的 UTF-16 偏移。
+   *
+   * 选中文字后改「粗细 / 字形 / 选区颜色」只作用于这一段；没选中就退回整节点样式。
+   * 切到别的节点时清空——旧偏移套在新文本上会落在随机位置。
+   */
+  const [textSelection, setTextSelection] = useState<{ from: number; to: number }>({ from: 0, to: 0 });
+  useEffect(() => { setTextSelection({ from: 0, to: 0 }); }, [node.id]);
+  const hasTextSelection = node.type === "text" && textSelection.to > textSelection.from;
+  /** 返回 true 表示这次改动已经作为段内样式提交，调用方不要再改整节点样式。 */
+  const patchRunStyle = (style: TextRunStyle): boolean => {
+    if (node.type !== "text" || !hasTextSelection) return false;
+    const from = Math.max(0, Math.min(textSelection.from, node.text.length));
+    const to = Math.max(0, Math.min(textSelection.to, node.text.length));
+    if (to <= from) return false;
+    onPatchText({ runs: applyTextRunStyle(node.text, node.runs, from, to, style) });
+    return true;
+  };
+  const selectionColor = node.type === "text" && hasTextSelection
+    ? runStyleAt(node.text, node.runs, textSelection.from).color ?? "#111111"
+    : "#111111";
   // 删掉一层后下标可能越界，取最小值兜底，避免编辑到不存在的层。
   const activeIndex = paints.length ? Math.min(paintIndex, paints.length - 1) : 0;
   const paint = paints[activeIndex];
@@ -305,7 +325,13 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
 
       {node.type === "text" && (
         <Section title="文字">
-          <TextField label="文本" value={node.text} disabled={disabled} onCommit={text => onPatchText({ text })} />
+          <TextAreaField
+            label="文本"
+            value={node.text}
+            disabled={disabled}
+            onSelection={(from, to) => setTextSelection({ from, to })}
+            onCommit={text => { setTextSelection({ from: 0, to: 0 }); onPatchText({ text }); }}
+          />
           <TextField label="字体" value={node.fontFamily} disabled={disabled} onCommit={fontFamily => onPatchText({ fontFamily })} />
           <NumberField label="字号" value={node.fontSize} disabled={disabled} onCommit={fontSize => onPatchText({ fontSize })} />
           <NumberField label="行高" value={node.lineHeight} disabled={disabled} onCommit={lineHeight => onPatchText({ lineHeight })} />
@@ -314,7 +340,9 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
             value={String(node.fontWeight ?? TEXT_DEFAULTS.fontWeight)}
             disabled={disabled}
             options={fontWeightOptions}
-            onChange={value => onPatchText({ fontWeight: Number(value) })}
+            onChange={value => {
+              if (!patchRunStyle({ fontWeight: Number(value) })) onPatchText({ fontWeight: Number(value) });
+            }}
           />
           <Segmented
             label="字形"
@@ -324,7 +352,10 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
               { value: "normal", label: "常规" },
               { value: "italic", label: "斜体" },
             ]}
-            onChange={value => onPatchText({ fontStyle: value as FontStyle })}
+            onChange={value => {
+              const fontStyle = value as FontStyle;
+              if (!patchRunStyle({ fontStyle })) onPatchText({ fontStyle });
+            }}
           />
           <Segmented
             label="对齐"
@@ -338,6 +369,16 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
             onChange={value => onPatchText({ textAlign: value as TextAlign })}
           />
           <NumberField label="字距" value={node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing} disabled={disabled} onCommit={letterSpacing => onPatchText({ letterSpacing })} />
+          <p className="field-hint">{hasTextSelection ? `已选中 ${textSelection.to - textSelection.from} 个字符：粗细、字形、颜色只作用于选区` : "在文本框里选中文字后，粗细/字形/颜色只作用于选区"}</p>
+          {hasTextSelection && (
+            <div className="rich-text-selection">
+              <label className="field field-inline">
+                <span className="field-label">选区颜色</span>
+                <input type="color" value={selectionColor} disabled={disabled} onChange={event => patchRunStyle({ color: event.target.value })} />
+              </label>
+              <button type="button" disabled={disabled} onClick={() => patchRunStyle({})}>清除选区样式</button>
+            </div>
+          )}
         </Section>
       )}
     </>
@@ -602,8 +643,38 @@ export function TextField({ label, value, disabled, mixed, onCommit }: { label: 
   );
 }
 
-/** 四角圆角字段的标签，顺序与 CSS `border-radius` 一致。 */
-const CORNER_LABELS = ["左上", "右上", "右下", "左下"] as const;
+/**
+ * 多行文本输入。
+ *
+ * 除了编辑内容，还负责把选区（UTF-16 偏移）报给面板——段内样式就是按这个区间应用的。
+ * 用 `onSelect` 而不是 `onChange`：只移动光标也要更新，否则上一次的选区会被当成当前选区。
+ */
+export function TextAreaField({ label, value, disabled, onCommit, onSelection }: {
+  label: string;
+  value: string;
+  disabled?: boolean;
+  onCommit(value: string): void;
+  onSelection?(from: number, to: number): void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [dirty, setDirty] = useState(false);
+  useEffect(() => { setDraft(value); setDirty(false); }, [value]);
+  return (
+    <label className="field">
+      <span className="field-label">{label}</span>
+      <textarea
+        rows={3}
+        disabled={disabled}
+        value={draft}
+        onChange={event => { setDraft(event.target.value); setDirty(true); }}
+        onSelect={event => onSelection?.(event.currentTarget.selectionStart ?? 0, event.currentTarget.selectionEnd ?? 0)}
+        onBlur={() => { if (dirty && draft !== value) onCommit(draft); }}
+      />
+    </label>
+  );
+}
+
+/** 四角圆角字段的标签，顺序与 CSS `border-radius` 一致。 */const CORNER_LABELS = ["左上", "右上", "右下", "左下"] as const;
 
 function uniformRadii(radius: number): CornerRadii {
   return [radius, radius, radius, radius];

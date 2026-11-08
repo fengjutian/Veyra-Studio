@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -114,7 +114,7 @@ function renderNode(
     const textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
     const x = textAlign === "center" ? box.x + box.width / 2 : textAlign === "right" ? box.x + box.width : box.x;
     const anchor = textAlign === "center" ? " text-anchor=\"middle\"" : textAlign === "right" ? " text-anchor=\"end\"" : "";
-    return `<text ${common} x="${num(x)}" y="${num(box.y)}" dominant-baseline="hanging"${anchor}>${escapeXml(node.text)}</text>`;
+    return `<text ${common} x="${num(x)}" y="${num(box.y)}" dominant-baseline="hanging"${anchor}>${textTspans(node)}</text>`;
   }
 
   if (node.type === "image") {
@@ -368,6 +368,23 @@ function safeAssetUrl(url: string): boolean {
 
 function num(value: number): string {
   return String(Number(value.toFixed(4)));
+}
+
+/**
+ * 文本内容：无段内样式时与原实现逐字一致；有 runs 时按区间输出 `<tspan>`。
+ *
+ * SVG 不会自动换行，这里也不引入换行（与升级前一致），只处理段内样式。
+ */
+function textTspans(node: TextNode): string {
+  if (!node.runs?.length) return escapeXml(node.text);
+  return textRunSegments(node.text, node.runs).map(segment => {
+    const attributes: string[] = [];
+    if (segment.style.fontWeight !== undefined) attributes.push(`font-weight="${num(segment.style.fontWeight)}"`);
+    if (segment.style.fontStyle !== undefined) attributes.push(`font-style="${segment.style.fontStyle}"`);
+    if (segment.style.color !== undefined) attributes.push(`fill="${escapeXml(segment.style.color)}"`);
+    const body = escapeXml(segment.text);
+    return attributes.length ? `<tspan ${attributes.join(" ")}>${body}</tspan>` : body;
+  }).join("");
 }
 
 function escapeXml(value: string): string {

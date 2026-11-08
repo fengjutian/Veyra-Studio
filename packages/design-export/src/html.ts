@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -52,7 +52,7 @@ function renderNode(
   const style = nodeStyle(document, node, parent, tokenVariables, options.origin);
   const common = `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
 
-  if (node.type === "text") return `<p ${common}>${escapeHtml(node.text)}</p>`;
+  if (node.type === "text") return `<p ${common}>${textHtml(node)}</p>`;
   if (node.type === "image") {
     const asset = document.assets[node.assetId];
     const rawUrl = asset ? options.resolveAsset?.(asset) : undefined;
@@ -401,6 +401,22 @@ function cssTokenValue(value: string | number): string {
 
 function safeCssValue(value: string): string {
   return value.replace(/[;{}]/g, "").trim();
+}
+
+/**
+ * 文本内容：没有段内样式时就是转义后的纯文本（产物与升级前逐字一致）；
+ * 有 runs 时按区间切成 `<span>`，只写被覆盖的字段，其余继承 `<p>` 的样式。
+ */
+function textHtml(node: TextNode): string {
+  if (!node.runs?.length) return escapeHtml(node.text);
+  return textRunSegments(node.text, node.runs).map(segment => {
+    const declarations: string[] = [];
+    if (segment.style.fontWeight !== undefined) declarations.push(`font-weight:${segment.style.fontWeight}`);
+    if (segment.style.fontStyle !== undefined) declarations.push(`font-style:${segment.style.fontStyle}`);
+    if (segment.style.color !== undefined) declarations.push(`color:${safeCssValue(segment.style.color)}`);
+    const body = escapeHtml(segment.text);
+    return declarations.length ? `<span style="${escapeAttribute(declarations.join(";"))}">${body}</span>` : body;
+  }).join("");
 }
 
 function cssString(value: string): string {
