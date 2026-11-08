@@ -251,6 +251,59 @@ export function flattenPath(commands: PathCommand[], segments = FLATTEN_SEGMENTS
   return points;
 }
 
+/**
+ * 按子路径离散化：每个 `M` 开一个新环，`Z` 把起点补到环尾。
+ *
+ * 布尔运算的结果是**多环**的（外轮廓 + 洞），命中测试必须按环算——把所有子路径
+ * 首尾相连成一条折线的话，带洞形状的洞里也会命中。
+ */
+export function flattenRings(commands: PathCommand[], segments = FLATTEN_SEGMENTS): PathPoint[][] {
+  const rings: PathPoint[][] = [];
+  let ring: PathPoint[] | null = null;
+  let current: PathPoint | undefined;
+  const push = (points: PathPoint[]) => points.forEach(point => ring?.push(point));
+
+  for (const command of commands) {
+    if (command.command === "M") {
+      if (ring && ring.length > 1) rings.push(ring);
+      ring = [command.point];
+      current = command.point;
+      continue;
+    }
+    if (command.command === "Z") {
+      if (ring && ring.length > 1) {
+        ring.push(ring[0]!);
+        rings.push(ring);
+      }
+      ring = null;
+      current = undefined;
+      continue;
+    }
+    if (!ring) {
+      ring = [command.point];
+      current = command.point;
+      continue;
+    }
+    if (command.command === "L") {
+      ring.push(command.point);
+      current = command.point;
+      continue;
+    }
+    const from = current ?? command.point;
+    if (command.command === "Q") {
+      for (let step = 1; step <= segments; step += 1) ring.push(quadraticAt(from, command.control, command.point, step / segments));
+      current = command.point;
+      continue;
+    }
+    if (command.command === "C") {
+      for (let step = 1; step <= segments; step += 1) ring.push(cubicAt(from, command.control1, command.control2, command.point, step / segments));
+      current = command.point;
+    }
+  }
+  if (ring && ring.length > 1) rings.push(ring);
+  return rings;
+}
+
 /** 离散化后的紧包围盒；空路径返回 undefined。 */
 export function pathBounds(commands: PathCommand[]): { x: number; y: number; width: number; height: number } | undefined {
   const points = flattenPath(commands);
@@ -278,9 +331,11 @@ export function pathPoints(commands: PathCommand[]): PathPoint[] {
 /**
  * 命中测试。
  *
- * 先把曲线离散成折线，再沿用 P2 的规则：闭合路径按「点在多边形内」判定（射线法，
- * 奇偶规则），开放路径按「到折线的距离」判定——否则一条对角线会把它整个包围盒都
- * 变成可点击区域。
+ * 先把曲线离散成折线，再按**环**判定：
+ *
+ * - 全部环都闭合时用**非零环绕数**（与 Canvas / SVG 的默认填充规则一致，不是奇偶规则）。
+ *   布尔运算的差集会产出「外轮廓 + 洞」，洞里的点环绕数为 0，因此不会被命中。
+ * - 有开放子路径时退回「到折线的距离」，否则一条对角线会把它整个包围盒都变成可点击区域。
  */
 export function hitTestVectorPath(
   commands: PathCommand[],
@@ -294,11 +349,35 @@ export function hitTestVectorPath(
   if (point.x < box.x - tolerance || point.x > box.x + box.width + tolerance) return false;
   if (point.y < box.y - tolerance || point.y > box.y + box.height + tolerance) return false;
 
-  const points = flattenPath(absolutePath(commands, box));
-  if (!points.length) return false;
-  const closed = isClosedPath(commands);
-  if (closed && points.length >= 3 && pointInPolygon(points, point)) return true;
-  return distanceToPolyline(points, closed, point) <= tolerance;
+  const rings = flattenRings(absolutePath(commands, box));
+  if (!rings.length) return false;
+  const allClosed = rings.every(ring => ring.length > 2 && samePoint(ring[0]!, ring[ring.length - 1]!));
+  if (allClosed && windingNumber(rings, point) !== 0) return true;
+  let best = Number.POSITIVE_INFINITY;
+  for (const ring of rings) best = Math.min(best, distanceToPolyline(ring, false, point));
+  return best <= tolerance;
+}
+
+/** 非零环绕数：闭合环按方向累加，洞（反向环）会被抵消。 */
+function windingNumber(rings: PathPoint[][], point: PathPoint): number {
+  let winding = 0;
+  for (const ring of rings) {
+    for (let index = 1; index < ring.length; index += 1) {
+      const start = ring[index - 1]!;
+      const end = ring[index]!;
+      const side = (end.x - start.x) * (point.y - start.y) - (point.x - start.x) * (end.y - start.y);
+      if (start.y <= point.y) {
+        if (end.y > point.y && side > 0) winding += 1;
+      } else if (end.y <= point.y && side < 0) {
+        winding -= 1;
+      }
+    }
+  }
+  return winding;
+}
+
+function samePoint(a: PathPoint, b: PathPoint): boolean {
+  return Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
 }
 
 /** 正多边形路径（内接于单位盒的椭圆，默认一个顶点朝上）。 */
@@ -354,19 +433,6 @@ function cubicAt(from: PathPoint, control1: PathPoint, control2: PathPoint, to: 
     x: a * from.x + b * control1.x + c * control2.x + d * to.x,
     y: a * from.y + b * control1.y + c * control2.y + d * to.y,
   };
-}
-
-function pointInPolygon(points: PathPoint[], point: PathPoint): boolean {
-  let inside = false;
-  for (let index = 0, previous = points.length - 1; index < points.length; previous = index, index += 1) {
-    const current = points[index]!;
-    const last = points[previous]!;
-    const crosses = (current.y > point.y) !== (last.y > point.y);
-    if (!crosses) continue;
-    const x = ((last.x - current.x) * (point.y - current.y)) / (last.y - current.y) + current.x;
-    if (point.x < x) inside = !inside;
-  }
-  return inside;
 }
 
 function distanceToPolyline(points: PathPoint[], closed: boolean, point: PathPoint): number {

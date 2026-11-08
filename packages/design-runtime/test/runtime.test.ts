@@ -172,3 +172,51 @@ test("patches the text style fields and rejects invalid ones", () => {
   assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { textAlign: "justify" } } }])), /Text align/);
   assert.throws(() => runtime.execute(envelope(2, [{ type: "text.patch", payload: { id: text.id, patch: { fontStyle: "oblique" as never } } }])), /Font style/);
 });
+
+test("patches a vector path together with its layout", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  const vector: DesignNode = { ...frame("vector:1"), type: "vector", geometry: { kind: "path", d: "M 0 0 L 1 1" } };
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: vector } }]));
+  runtime.execute(envelope(1, [{
+    type: "vector.patch",
+    payload: {
+      id: "vector:1",
+      patch: {
+        geometry: { kind: "path", d: "M 0 0 C 0.2 0 0.8 1 1 1 Z" },
+        layout: { ...defaultLayout(), x: 10, y: 20, width: 100, height: 80 },
+      },
+    },
+  }]));
+  const node = runtime.snapshot().nodes["vector:1"]!;
+  assert.equal(node.type, "vector");
+  assert.deepEqual(node.type === "vector" ? node.geometry : undefined, { kind: "path", d: "M 0 0 C 0.2 0 0.8 1 1 1 Z" });
+  // 几何和盒子必须一起变：只改几何会让盒子不包含图形。
+  assert.deepEqual([node.layout.x, node.layout.y, node.layout.width, node.layout.height], [10, 20, 100, 80]);
+});
+
+test("rejects vector patches on other node types and invalid paths", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: frame("frame:1") } }]));
+  assert.throws(
+    () => runtime.execute(envelope(1, [{ type: "vector.patch", payload: { id: "frame:1", patch: { geometry: { kind: "path", d: "M 0 0 L 1 1" } } } }])),
+    /not a vector node/,
+  );
+  const vector: DesignNode = { ...frame("vector:1"), type: "vector" };
+  runtime.execute(envelope(1, [{ type: "node.create", payload: { node: vector } }]));
+  assert.throws(
+    () => runtime.execute(envelope(2, [{ type: "vector.patch", payload: { id: "vector:1", patch: { geometry: { kind: "path", d: "M 0 0 A 1 1 0 0 0 1 1" } } } }])),
+    /is invalid/,
+  );
+});
+test("only shapes can be used as a mask", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  const text: DesignNode = { ...frame("t"), type: "text", text: "hi", fontFamily: "Inter", fontSize: 12, lineHeight: 16 };
+  const rect: DesignNode = { ...frame("r"), type: "rectangle" };
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: text } },
+    { type: "node.create", payload: { node: rect } },
+  ]));
+  assert.throws(() => runtime.execute(envelope(1, [{ type: "node.patch", payload: { id: "t", patch: { mask: true } } }])), /cannot be used as a mask/);
+  runtime.execute(envelope(1, [{ type: "node.patch", payload: { id: "r", patch: { mask: true } } }]));
+  assert.equal(runtime.snapshot().nodes["r"]!.mask, true);
+});

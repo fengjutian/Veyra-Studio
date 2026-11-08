@@ -1,4 +1,4 @@
-import { hitTestVectorPath, vectorPathCommands, type NodeId } from "@ufira/design-schema";
+import { hitTestVectorPath, type NodeId } from "@ufira/design-schema";
 import type { SceneNode } from "./scene";
 
 /**
@@ -34,6 +34,8 @@ function pathInNode(node: SceneNode, point: HitPoint): NodeId[] {
   if (node.opacity <= 0) return [];
   if (!containsPoint(node, point)) return [];
   for (let index = node.children.length - 1; index >= 0; index -= 1) {
+    // 蒙版节点自身不可点选（能在图层树里选中），只通过 maskedBy 影响兄弟。
+    if (node.children[index]!.mask) continue;
     const childPath = pathInNode(node.children[index]!, point);
     // 返回「最深 → 最外层」，方便调用方按选择优先级取用。
     if (childPath.length) return [...childPath, node.id];
@@ -42,11 +44,15 @@ function pathInNode(node: SceneNode, point: HitPoint): NodeId[] {
 }
 
 export function containsPoint(node: SceneNode, point: HitPoint): boolean {
+  // 被蒙版裁掉的部分不可点：否则图片在视觉上被剪掉，落点却还能选中它。
+  if (node.maskedBy?.length) {
+    for (const mask of node.maskedBy) if (!containsPoint(mask, point)) return false;
+  }
   const { x, y, width, height } = node.box;
   if (width <= 0 || height <= 0) return false;
   // 矢量按真实路径判定：开放路径（直线）用容差，闭合路径用奇偶规则。
   // 否则一条对角线会把它整个包围盒都变成可点击区域。
-  if (node.path) return hitTestVectorPath(vectorPathCommands(node.path), node.box, point);
+  if (node.path) return hitTestVectorPath(node.path, node.box, point);
   if (node.type === "ellipse") {
     const radiusX = width / 2;
     const radiusY = height / 2;

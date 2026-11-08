@@ -37,6 +37,7 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "node.reparent": true,
   "asset.upsert": true,
   "image.patch": true,
+  "vector.patch": true,
   "asset.delete": true,
   "token.upsert": true,
   "token.delete": true,

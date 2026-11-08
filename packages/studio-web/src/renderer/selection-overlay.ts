@@ -176,3 +176,46 @@ export function paintPathAnchors(
   }
   context.restore();
 }
+/**
+ * 路径编辑的锚点与手柄。
+ *
+ * 画在场景坐标里，但尺寸按 zoom 换算，所以放大画布时锚点不会跟着变大。
+ * 手柄先画线、再画端点，锚点最后画——保证锚点永远在最上层，不会被手柄盖住。
+ */
+export function paintPathEdit(
+  context: CanvasRenderingContext2D,
+  edit: { anchors: Array<{ x: number; y: number }>; handles: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>; selected: number | null },
+  options: { color?: string; zoom?: number } = {},
+): void {
+  const zoom = options.zoom && options.zoom > 0 ? options.zoom : 1;
+  const color = options.color ?? "#a78bfa";
+  context.save();
+
+  context.strokeStyle = color;
+  context.lineWidth = 1 / zoom;
+  for (const handle of edit.handles) {
+    context.beginPath();
+    context.moveTo(handle.from.x, handle.from.y);
+    context.lineTo(handle.to.x, handle.to.y);
+    context.stroke();
+  }
+
+  context.fillStyle = color;
+  for (const handle of edit.handles) {
+    context.beginPath();
+    context.arc(handle.to.x, handle.to.y, 3.5 / zoom, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const size = 7 / zoom;
+  for (const [index, anchor] of edit.anchors.entries()) {
+    const x = anchor.x - size / 2;
+    const y = anchor.y - size / 2;
+    context.fillStyle = index === edit.selected ? color : "#ffffff";
+    context.fillRect(x, y, size, size);
+    context.strokeStyle = color;
+    context.lineWidth = 1.5 / zoom;
+    context.strokeRect(x, y, size, size);
+  }
+  context.restore();
+}

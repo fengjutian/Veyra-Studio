@@ -43,7 +43,10 @@ export function penCommands(anchors: readonly PenAnchor[], closed: boolean, curs
   }
   if (cursor) commands.push(segment(anchors[anchors.length - 1]!, { x: cursor.x, y: cursor.y }));
   if (closed && anchors.length >= MIN_PEN_ANCHORS) {
-    commands.push(segment(anchors[anchors.length - 1]!, first));
+    // 闭合边是直线时交给 Z；只有闭合边本身是曲线才写显式线段。
+    // 否则读回来会多出一个与起点重合的锚点（编辑态里会看见两个点叠在一起）。
+    const last = anchors[anchors.length - 1]!;
+    if (last.handleOut || first.handleIn) commands.push(segment(last, first));
     commands.push({ command: "Z" });
   }
   return commands;

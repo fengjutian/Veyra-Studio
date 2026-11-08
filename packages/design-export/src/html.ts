@@ -14,9 +14,7 @@ export function exportPageToHtml(documentInput: DesignDocument, options: HtmlExp
   const tokenVariables = createTokenVariables(document);
   const css = buildCss(document, options, tokenVariables);
   const keep = options.nodeIds ? exportNodeSet(document, options.nodeIds) : undefined;
-  const body = exportRootIds(document, options.pageId, keep)
-    .map(id => renderNode(document, id, undefined, options, tokenVariables, diagnostics, keep))
-    .join("\n");
+  const body = renderSiblingList(document, exportRootIds(document, options.pageId, keep), undefined, options, tokenVariables, diagnostics, keep);
   const title = escapeHtml(options.title ?? `${document.meta.name} — ${page.name}`);
   const html = `<main class="design-page" data-page-id="${escapeAttribute(page.id)}">${body ? `\n${indent(body)}\n` : ""}</main>`;
   const output = [
@@ -49,6 +47,8 @@ function renderNode(
   keep?: Set<string>,
 ): string {
   const node = document.nodes[nodeId];
+  // 蒙版节点自身不渲染；父级在 children 循环里把它转成裁剪容器。
+  if (node.mask) return "";
   const style = nodeStyle(document, node, parent, tokenVariables, options.origin);
   const common = `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
 
@@ -79,11 +79,80 @@ function renderNode(
     }
   }
 
-  const children = node.childIds
-    .filter(id => !keep || keep.has(id))
-    .map(id => renderNode(document, id, node, options, tokenVariables, diagnostics, keep))
-    .join("\n");
+  const children = renderChildren(document, node, options, tokenVariables, diagnostics, keep);
   return `<div ${common}>${children ? `\n${indent(children)}\n` : ""}</div>`;
+}
+
+/**
+ * 渲染子节点，并把蒙版翻译成 CSS 裁剪。
+ *
+ * HTML 没有 `<clipPath>`，用 `clip-path: path('…')`。这里给被遮罩的兄弟套一层
+ * `position:absolute; inset:0` 的容器：容器和父级同坐标系，所以路径可以直接用
+ * 父级坐标，不需要把路径平移到子元素的局部坐标（那是很容易写错的一步）。
+ * 多层蒙版就套多层容器，天然叠加。
+ */
+function renderChildren(
+  document: DesignDocument,
+  node: DesignNode,
+  options: HtmlExportOptions,
+  tokenVariables: Record<string, string>,
+  diagnostics: ExportDiagnostic[],
+  keep?: Set<string>,
+): string {
+  return renderSiblingList(document, node.childIds, node, options, tokenVariables, diagnostics, keep);
+}
+
+function renderSiblingList(
+  document: DesignDocument,
+  ids: readonly string[],
+  parent: DesignNode | undefined,
+  options: HtmlExportOptions,
+  tokenVariables: Record<string, string>,
+  diagnostics: ExportDiagnostic[],
+  keep?: Set<string>,
+): string {
+  const parts: string[] = [];
+  const masks: DesignNode[] = [];
+  for (const childId of ids) {
+    if (keep && !keep.has(childId)) continue;
+    const childNode = document.nodes[childId];
+    if (!childNode) continue;
+    if (childNode.mask) { masks.push(childNode); continue; }
+    const rendered = renderNode(document, childId, parent, options, tokenVariables, diagnostics, keep);
+    if (!rendered) continue;
+    let wrapped = rendered;
+    for (const mask of masks) {
+      const clip = maskClipPath(document, mask);
+      if (!clip) continue;
+      wrapped = `<div style="position:absolute;inset:0;clip-path:path('${escapeAttribute(clip)}')">\n${indent(wrapped, 2)}\n</div>`;
+    }
+    parts.push(wrapped);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * 蒙版轮廓（父级坐标系），供 CSS `clip-path: path()` 使用。
+ *
+ * 只取几何轮廓：圆角矩形的 `cornerRadius` 在这里被忽略（CSS path 里补圆弧会让表达式
+ * 明显变长，而蒙版用圆角矩形并不常见），椭圆用 32 段折线近似。
+ */
+function maskClipPath(document: DesignDocument, mask: DesignNode): string | undefined {
+  const { x, y, width, height } = mask.layout;
+  if (mask.type === "ellipse") {
+    const points: string[] = [];
+    const steps = 32;
+    for (let index = 0; index < steps; index += 1) {
+      const angle = (index / steps) * Math.PI * 2;
+      points.push(`${num(x + width / 2 + Math.cos(angle) * (width / 2))} ${num(y + height / 2 + Math.sin(angle) * (height / 2))}`);
+    }
+    return `M ${points[0]} ${points.slice(1).map(point => `L ${point}`).join(" ")} Z`;
+  }
+  if (mask.type === "vector") {
+    if (!mask.geometry) return undefined;
+    return pathDataFromCommands(absolutePath(vectorPathCommands(mask.geometry.d), { x, y, width, height }));
+  }
+  return `M ${num(x)} ${num(y)} L ${num(x + width)} ${num(y)} L ${num(x + width)} ${num(y + height)} L ${num(x)} ${num(y + height)} Z`;
 }
 
 /**

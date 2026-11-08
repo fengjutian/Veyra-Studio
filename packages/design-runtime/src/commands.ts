@@ -6,10 +6,12 @@ import type {
   DesignPage,
   ImageNode,
   InstanceNode,
+  LayoutSpec,
   NodeId,
   PageId,
   TextPatch,
   TokenValue,
+  VectorGeometry,
 } from "@ufira/design-schema";
 
 export interface CreateNodeCommand {
@@ -31,7 +33,7 @@ export interface PatchNodeCommand {
   type: "node.patch";
   payload: {
     id: NodeId;
-    patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot">>;
+    patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask">>;
   };
 }
 
@@ -92,6 +94,22 @@ export interface UpsertAssetCommand {
 export interface PatchImageCommand {
   type: "image.patch";
   payload: { id: NodeId; patch: { fit?: ImageFit; assetId?: string } };
+}
+
+/**
+ * 改矢量节点的路径几何。
+ *
+ * 和 `text.patch` / `image.patch` 一样单独开一条命令，而不是扩张通用的 `node.patch`：
+ * `geometry` 只对矢量节点有意义。而且改锚点会改变整条路径的包围盒，所以这条命令
+ * 允许**同时**带上新的 `layout`——「几何变了、盒子必须跟着变」是这条命令的语义的一部分，
+ * 拆成两条命令会让文档在两条命令之间处于「盒子不含图形」的非法中间态。
+ *
+ * 路径坐标是归一化的（在曲线上的点落在 [0,1]），因此调用方必须先算好新盒子再归一化；
+ * 运行时用 `isValidVectorPath` 兜底，写进来的路径一定可渲染。
+ */
+export interface PatchVectorCommand {
+  type: "vector.patch";
+  payload: { id: NodeId; patch: { geometry: VectorGeometry; layout?: LayoutSpec } };
 }
 
 /**
@@ -192,6 +210,7 @@ export type DesignCommand =
   | ReparentNodeCommand
   | UpsertAssetCommand
   | PatchImageCommand
+  | PatchVectorCommand
   | DeleteAssetCommand
   | UpsertTokenCommand
   | DeleteTokenCommand

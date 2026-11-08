@@ -3,10 +3,12 @@ import {
   resolveRadius,
   resolveStroke,
   tokenColor,
+  vectorPathCommands,
   type CornerRadii,
   type DesignDocument,
   type DesignNode,
   type NodeId,
+  type PathCommand,
 } from "@ufira/design-schema";
 
 /**
@@ -56,8 +58,12 @@ export interface SceneNode {
   radius: number;
   /** 四角互不相同的圆角；省略时四角都等于 `radius`。 */
   radii?: CornerRadii;
-  /** 矢量节点的归一化路径数据（坐标在 [0,1]，相对 box）。 */
-  path?: string;
+  /** 矢量节点的路径命令（归一化坐标，相对 box）。 */
+  path?: PathCommand[];
+  /** 这个节点是蒙版：不绘制自身，只裁剪同父级里排在它上面的兄弟。 */
+  mask?: boolean;
+  /** 裁剪这个节点的蒙版（按兄弟顺序累积）。 */
+  maskedBy?: SceneNode[];
   text?: SceneText;
   image?: SceneImage;
   children: SceneNode[];
@@ -72,9 +78,24 @@ export interface SceneNode {
 export function buildScene(document: DesignDocument, pageId: string, boxes: Record<string, SceneBox | undefined>): SceneNode[] {
   const page = document.pages[pageId];
   if (!page) return [];
-  return page.childIds
+  return applySiblingMasks(page.childIds
     .map(id => buildNode(document, document.nodes[id], boxes))
-    .filter((node): node is SceneNode => Boolean(node));
+    .filter((node): node is SceneNode => Boolean(node)));
+}
+
+/**
+ * 按兄弟顺序挂遮罩：蒙版裁剪排在它**上面**的兄弟（Figma 语义），蒙版自身不被遮罩。
+ *
+ * 页面直属节点和容器子节点用的是同一套规则，所以这里抽出来两边共用——否则页面级的
+ * 蒙版会静默失效。
+ */
+function applySiblingMasks(children: SceneNode[]): SceneNode[] {
+  const masks: SceneNode[] = [];
+  for (const child of children) {
+    if (masks.length) child.maskedBy = [...masks];
+    if (child.mask) masks.push(child);
+  }
+  return children;
 }
 
 export function buildNode(document: DesignDocument, node: DesignNode | undefined, boxes: Record<string, SceneBox | undefined>): SceneNode | undefined {
@@ -85,6 +106,9 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
   const radii = resolveCornerRadii(document, node);
   // 只有真正四角不同才带 `radii`：四角相同的文档继续走单值分支，导出产物不变。
   const perCorner = radii && radii.some(value => value !== radii[0]) ? radii : undefined;
+  const children = applySiblingMasks(node.childIds
+    .map(childId => buildNode(document, document.nodes[childId], boxes))
+    .filter((child): child is SceneNode => Boolean(child)));
   const scene: SceneNode = {
     id: node.id,
     type: node.type,
@@ -97,10 +121,9 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     strokeWidth: stroke ? (node.appearance.strokeWidth ?? 1) : 0,
     radius: resolveRadius(document, node) ?? 0,
     ...(perCorner ? { radii: perCorner } : {}),
-    ...(node.type === "vector" && node.geometry ? { path: node.geometry.d } : {}),
-    children: node.childIds
-      .map(childId => buildNode(document, document.nodes[childId], boxes))
-      .filter((child): child is SceneNode => Boolean(child)),
+    ...(node.type === "vector" && node.geometry ? { path: vectorPathCommands(node.geometry.d) } : {}),
+    ...(node.mask ? { mask: true } : {}),
+    children,
   };
 
   if (node.type === "text") {

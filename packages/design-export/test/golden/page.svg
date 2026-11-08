@@ -20,6 +20,5 @@
   <g data-node-id="instance:badge" style="opacity:1;fill:#eef2ff;">  <rect x="680" y="90" width="120" height="32" rx="999" />
     <text data-node-id="instance:badge--text:badge-label" style="opacity:1;fill:none;font-family:Inter;font-size:12;stroke:none;" x="740" y="90" dominant-baseline="hanging" text-anchor="middle">v0.2</text>
   </g>
-  
   <g data-node-id="vector:logo" style="opacity:1;fill:none;">  <rect x="400" y="340" width="80" height="80" /></g>
 </svg>

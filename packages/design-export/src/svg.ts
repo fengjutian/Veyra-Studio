@@ -20,9 +20,9 @@ export function exportPageToSvg(documentInput: DesignDocument, options: SvgExpor
   const tokenVariables = createTokenVariables(document);
   const boxes = resolveBoxes(document, options, diagnostics);
   const keep = options.nodeIds ? exportNodeSet(document, options.nodeIds) : undefined;
-  const body = exportRootIds(document, options.pageId, keep)
-    .map(id => renderNode(document, id, boxes, options, tokenVariables, diagnostics, keep))
-    .join("\n");
+  // 蒙版要生成 <clipPath>，先收集再在文档末尾统一输出（SVG 允许 defs 出现在任意位置）。
+  const state: MaskState = { defs: [], nextId: 1 };
+  const body = renderSiblingList(document, exportRootIds(document, options.pageId, keep), boxes, options, tokenVariables, diagnostics, keep, state);
   const title = escapeXml(options.title ?? `${document.meta.name} — ${page.name}`);
 
   const svg = [
@@ -30,6 +30,7 @@ export function exportPageToSvg(documentInput: DesignDocument, options: SvgExpor
     `  <title>${title}</title>`,
     renderTokenStyles(document, tokenVariables),
     body ? indent(body, 2) : "",
+    state.defs.length ? `  <defs>\n${indent(state.defs.join("\n"), 4)}\n  </defs>` : "",
     "</svg>",
   ]
     .filter(line => line !== "")
@@ -80,7 +81,8 @@ function renderNode(
   options: SvgExportOptions,
   tokenVariables: Record<string, string>,
   diagnostics: ExportDiagnostic[],
-  keep?: Set<string>,
+  keep: Set<string> | undefined,
+  state: MaskState,
 ): string {
   const node = document.nodes[nodeId];
   if (!node) return "";
@@ -88,6 +90,8 @@ function renderNode(
     diagnostics.push({ nodeId, feature: "hidden-node", support: "exact", message: `Hidden node ${nodeId} was skipped` });
     return "";
   }
+  // 蒙版节点自身不渲染；父级在 renderChildren 里把它转成 <clipPath>。
+  if (node.mask) return "";
 
   // 布局引擎给出的坐标是页面绝对坐标，所以导出原点对所有节点统一平移。
   const raw = boxes[nodeId] ?? { x: node.layout.x, y: node.layout.y, width: node.layout.width, height: node.layout.height };
@@ -124,7 +128,7 @@ function renderNode(
       // 路径坐标是归一化的，先换算成导出坐标系里的绝对坐标再写 d，
       // 这样导出结果与画布/命中用的是同一套几何，不依赖 `<g>` 的 transform。
       const d = pathDataFromCommands(absolutePath(commands, box));
-      const vectorChildren = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep);
+      const vectorChildren = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep, state);
       return `<g ${common}><path d="${escapeXml(d)}" />${vectorChildren ? `\n${indent(vectorChildren, 2)}\n` : ""}</g>`;
     }
   }
@@ -136,7 +140,7 @@ function renderNode(
     }
   }
 
-  const children = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep);
+  const children = renderChildren(document, node, boxes, options, tokenVariables, diagnostics, keep, state);
   const radii = resolveCornerRadii(document, node);
   const perCorner = radii && radii.some(value => value !== radii[0]);
 
@@ -185,13 +189,82 @@ function renderChildren(
   options: SvgExportOptions,
   tokenVariables: Record<string, string>,
   diagnostics: ExportDiagnostic[],
-  keep?: Set<string>,
+  keep: Set<string> | undefined,
+  state: MaskState,
 ): string {
-  return node.childIds
-    .filter(id => !keep || keep.has(id))
-    .map(childId => renderNode(document, childId, boxes, options, tokenVariables, diagnostics, keep))
-    .filter(Boolean)
-    .join("\n");
+  return renderSiblingList(document, node.childIds, boxes, options, tokenVariables, diagnostics, keep, state);
+}
+
+/**
+ * 渲染一组同级节点，并把蒙版翻译成 `<clipPath>`。
+ *
+ * 页面直属节点和容器子节点共用这一条路径——否则页面级的蒙版会静默失效
+ * （渲染与导出的蒙版语义必须一致）。
+ */
+function renderSiblingList(
+  document: DesignDocument,
+  ids: readonly string[],
+  boxes: Record<string, ComputedBox>,
+  options: SvgExportOptions,
+  tokenVariables: Record<string, string>,
+  diagnostics: ExportDiagnostic[],
+  keep: Set<string> | undefined,
+  state: MaskState,
+): string {
+  const parts: string[] = [];
+  const masks: DesignNode[] = [];
+  for (const childId of ids) {
+    if (keep && !keep.has(childId)) continue;
+    const childNode = document.nodes[childId];
+    if (!childNode) continue;
+    // 蒙版自身不渲染，只作为后面兄弟的 <clipPath>。
+    if (childNode.mask) { masks.push(childNode); continue; }
+    const rendered = renderNode(document, childId, boxes, options, tokenVariables, diagnostics, keep, state);
+    if (!rendered) continue;
+    if (!masks.length) { parts.push(rendered); continue; }
+    // 多层蒙版：每层包一个 <g>，嵌套即叠加。
+    let wrapped = rendered;
+    for (const mask of masks) {
+      const id = registerMaskClip(document, mask, boxes, options, state);
+      wrapped = `<g clip-path="url(#${id})">\n${indent(wrapped, 2)}\n</g>`;
+    }
+    parts.push(wrapped);
+  }
+  return parts.join("\n");
+}
+
+interface MaskState {
+  defs: string[];
+  nextId: number;
+}
+
+/** 把蒙版几何写成 <clipPath> 并返回 id；同一个蒙版只登记一次。 */
+function registerMaskClip(document: DesignDocument, mask: DesignNode, boxes: Record<string, ComputedBox>, options: SvgExportOptions, state: MaskState): string {
+  const id = `mask-${state.nextId++}`;
+  const raw = boxes[mask.id] ?? { x: mask.layout.x, y: mask.layout.y, width: mask.layout.width, height: mask.layout.height };
+  const box = shiftBox(raw, options.origin);
+  const shape = maskShape(document, mask, box);
+  state.defs.push(`<clipPath id="${id}" clipPathUnits="userSpaceOnUse">${shape}</clipPath>`);
+  return id;
+}
+
+/** 蒙版几何：只取轮廓，不带填充/描边样式。 */
+function maskShape(document: DesignDocument, mask: DesignNode, box: ComputedBox): string {
+  if (mask.type === "ellipse") {
+    return `<ellipse cx="${num(box.x + box.width / 2)}" cy="${num(box.y + box.height / 2)}" rx="${num(box.width / 2)}" ry="${num(box.height / 2)}" />`;
+  }
+  if (mask.type === "vector" && mask.geometry) {
+    return `<path d="${escapeXml(pathDataFromCommands(absolutePath(vectorPathCommands(mask.geometry.d), box)))}" />`;
+  }
+  if (mask.type === "vector") {
+    // 没有几何的旧 vector 当蒙版：按空容器处理，裁剪掉全部内容，与画布一致。
+    return "";
+  }
+  const radii = resolveCornerRadii(document, mask);
+  const perCorner = radii && radii.some(value => value !== radii[0]);
+  if (perCorner) return `<path d="${escapeXml(roundedRectPathData(box, radii))}" />`;
+  const radius = radii ? radii[0]! : 0;
+  return `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""} />`;
 }
 
 /** 把页面绝对坐标平移到导出视口的坐标系。 */

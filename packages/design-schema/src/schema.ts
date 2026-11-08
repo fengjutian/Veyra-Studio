@@ -62,6 +62,7 @@ const baseNodeShape = {
   }).optional(),
   externalRefs: z.array(z.object({ provider: z.string().min(1), id })).optional(),
   slot: z.boolean().optional(),
+  mask: z.boolean().optional(),
 };
 
 const genericNodeShape = { ...baseNodeShape };

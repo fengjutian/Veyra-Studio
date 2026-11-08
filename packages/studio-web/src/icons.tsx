@@ -28,12 +28,15 @@ import {
   ChevronRight,
   Circle as CircleIcon,
   ClipboardPaste,
+  Combine,
   Component as ComponentIcon,
   Copy,
   CopyPlus,
+  Diff,
   FileCode,
   FileImage,
   FilePlus,
+  Focus,
   Frame as FrameIcon,
   Group,
   Hand,
@@ -55,6 +58,7 @@ import {
   Scan,
   Search,
   Shapes,
+  Shuffle,
   Slash,
   Spline,
   Square as SquareIcon,
@@ -65,6 +69,7 @@ import {
   Ungroup,
   Unlink,
   Upload,
+  VenetianMask,
   WandSparkles,
   X,
   ZoomIn,
@@ -143,9 +148,11 @@ export const ICONS = {
   lock: Lock,
   unlock: LockOpen,
 
+  // 蒙版
+  mask: VenetianMask,
+
   // 对齐与分布
-  alignLeft: AlignStartHorizontal,
-  alignCenterX: AlignCenterHorizontal,
+  alignLeft: AlignStartHorizontal,  alignCenterX: AlignCenterHorizontal,
   alignRight: AlignEndHorizontal,
   alignTop: AlignStartVertical,
   alignCenterY: AlignCenterVertical,
@@ -153,6 +160,12 @@ export const ICONS = {
   distributeX: AlignHorizontalSpaceAround,
   distributeY: AlignVerticalSpaceAround,
   alignGroup: AlignCenterHorizontal,
+
+  // 布尔运算
+  booleanUnion: Combine,
+  booleanSubtract: Diff,
+  booleanIntersect: Focus,
+  booleanExclude: Shuffle,
 
   // 颜色 Token
   tokenAdd: Plus,

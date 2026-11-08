@@ -4,7 +4,7 @@ import type { ProjectRepository } from "@ufira/design-persistence";
 import { loadAssetUrl } from "../asset-url";
 import { buildScene, type SceneBox, type SceneNode } from "./scene";
 import { cullScene, type CullViewport } from "./culling";
-import { paintDrawPreview, paintMarquee, paintPathAnchors, paintPathPreview, paintSelectionOverlay, paintSnapGuides } from "./selection-overlay";
+import { paintDrawPreview, paintMarquee, paintPathAnchors, paintPathEdit, paintPathPreview, paintSelectionOverlay, paintSnapGuides } from "./selection-overlay";
 import type { SnapGuide } from "./snapping";
 import { selectedBoxes, selectionBounds, type Rect } from "./selection";
 import { applyBoxOverrides } from "./selection-drag";
@@ -41,11 +41,17 @@ export interface CanvasSurfaceProps {
   penAnchors?: Array<{ x: number; y: number }>;
   /** 指针停在起点上，提示「点击会闭合」。 */
   penClosing?: boolean;
+  /** 路径编辑中的实时几何：覆盖某个节点的路径，不写文档。 */
+  pathOverride?: { id: string; commands: PathCommand[] };
+  /** 路径编辑的锚点、手柄与当前选中项（绝对场景坐标）。 */
+  editAnchors?: Array<{ x: number; y: number }>;
+  editHandles?: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>;
+  editSelected?: number | null;
   /** 拖动时的对齐辅助线。 */
   guides?: SnapGuide[];
 }
 
-export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, guides }: CanvasSurfaceProps) {
+export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, pathOverride, editAnchors, editHandles, editSelected, guides }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
@@ -53,7 +59,10 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
     () => cullScene(buildScene(document, pageId, boxes), viewport),
     [document, pageId, boxes, viewport],
   );
-  const paintedScene = useMemo(() => applyBoxOverrides(scene, previewBoxes ?? {}), [scene, previewBoxes]);
+  const paintedScene = useMemo(
+    () => applyPathOverride(applyBoxOverrides(scene, previewBoxes ?? {}), pathOverride),
+    [scene, previewBoxes, pathOverride],
+  );
   const assetIds = useMemo(() => collectAssetIds(scene), [scene]);
 
   useEffect(() => {
@@ -98,13 +107,15 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
         if (drawRect) paintDrawPreview(context, drawRect, { zoom, shape: drawShape });
         if (penPath?.length) paintPathPreview(context, penPath, { zoom });
         if (penAnchors?.length) paintPathAnchors(context, penAnchors, { zoom, closing: penClosing });
-        if (!selection?.length) return;
-        const bounds = selectionBounds(selectedBoxes(paintedScene, selection));
-        if (bounds) paintSelectionOverlay(context, bounds, { zoom });
+        if (selection?.length) {
+          const bounds = selectionBounds(selectedBoxes(paintedScene, selection));
+          if (bounds) paintSelectionOverlay(context, bounds, { zoom });
+        }
+        if (editAnchors?.length) paintPathEdit(context, { anchors: editAnchors, handles: editHandles ?? [], selected: editSelected ?? null }, { zoom });
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
       },
     });
-  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, guides]);
+  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, editAnchors, editHandles, editSelected, guides]);
 
   return <canvas ref={canvasRef} className="canvas-surface" aria-hidden="true" />;
 }
@@ -120,4 +131,15 @@ export function collectAssetIds(scene: SceneNode[]): string[] {
   };
   walk(scene);
   return [...ids];
+}
+
+/** 把一个节点的路径替换成编辑中的实时路径（只改绘制用的副本，不动文档）。 */
+function applyPathOverride(nodes: SceneNode[], override?: { id: string; commands: PathCommand[] }): SceneNode[] {
+  if (!override) return nodes;
+  const walk = (list: SceneNode[]): SceneNode[] => list.map(node => {
+    const children = node.children.length ? walk(node.children) : node.children;
+    if (node.id !== override.id) return children === node.children ? node : { ...node, children };
+    return { ...node, path: override.commands, children };
+  });
+  return walk(nodes);
 }

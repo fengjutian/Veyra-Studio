@@ -139,3 +139,16 @@ test("a uniform cornerRadii keeps the single-value border-radius", () => {
   assert.match(result.html, /border-radius:8px/);
   assert.doesNotMatch(result.html, /border-radius:8px 8px/);
 });
+test("exports a mask as a css clip-path wrapper", () => {
+  const mask: DesignNode = {
+    ...frame("mask"),
+    type: "ellipse",
+    layout: { ...defaultLayout(), x: 0, y: 0, width: 100, height: 100 },
+    mask: true,
+  };
+  const photo: DesignNode = { ...frame("photo"), type: "rectangle", layout: { ...defaultLayout(), x: 0, y: 0, width: 200, height: 100 } };
+  const result = exportPageToHtml(documentWith([mask, photo]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.html, /clip-path:path\('M /);
+  // 蒙版自身不渲染。
+  assert.doesNotMatch(result.html, /data-node-id="mask"/);
+});

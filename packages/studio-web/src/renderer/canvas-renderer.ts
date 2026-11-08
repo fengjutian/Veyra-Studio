@@ -1,4 +1,4 @@
-import { absolutePath, vectorPathCommands, type CornerRadii } from "@ufira/design-schema";
+import { absolutePath, type CornerRadii, type PathCommand } from "@ufira/design-schema";
 import type { SceneBox, SceneNode } from "./scene";
 
 /**
@@ -74,7 +74,23 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
       roundRectPath(context, node.box.x, node.box.y, node.box.width, node.box.height, nodeRadii(node));
       context.clip();
     }
-    for (const child of node.children) drawNode(context, child, options, opacity);
+    for (const child of node.children) {
+      // 蒙版自身不绘制；它只裁剪同父级里排在它上面的兄弟。
+      if (child.mask) continue;
+      const masks = child.maskedBy;
+      if (masks?.length) {
+        // 多层蒙版叠加：每个 save 里依次 clip，画完 restore 掉这一层。
+        context.save();
+        for (const mask of masks) {
+          shapePath(context, mask);
+          context.clip();
+        }
+        drawNode(context, child, options, opacity);
+        context.restore();
+        continue;
+      }
+      drawNode(context, child, options, opacity);
+    }
   }
 
   context.restore();
@@ -98,12 +114,8 @@ function drawShape(context: CanvasRenderingContext2D, node: SceneNode): void {
 function shapePath(context: CanvasRenderingContext2D, node: SceneNode): void {
   const { x, y, width, height } = node.box;
   if (node.path) {
-    const commands = vectorPathCommands(node.path);
-    if (commands.length) {
-      tracePath(context, commands, node.box);
-      return;
-    }
-    // 路径坏了不能让整页空白：退回框，至少还能看见"这里有个对象"。
+    tracePath(context, node.path, node.box);
+    return;
   }
   if (node.type === "ellipse") {
     context.beginPath();
@@ -119,7 +131,7 @@ function shapePath(context: CanvasRenderingContext2D, node: SceneNode): void {
  * 坐标在发出 `moveTo`/`lineTo`/`bezierCurveTo` 之前就换算成绝对坐标，而不是用
  * `ctx.scale()`：缩放上下文会把描边也拉粗，非等比缩放时竖线比横线粗，看起来像渲染 bug。
  */
-function tracePath(context: CanvasRenderingContext2D, commands: ReturnType<typeof vectorPathCommands>, box: SceneBox): void {
+function tracePath(context: CanvasRenderingContext2D, commands: PathCommand[], box: SceneBox): void {
   context.beginPath();
   for (const command of absolutePath(commands, box)) {
     if (command.command === "Z") context.closePath();

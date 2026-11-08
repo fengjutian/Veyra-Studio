@@ -4,6 +4,7 @@ import {
   absolutePath,
   closedPolygonPath,
   flattenPath,
+  flattenRings,
   hitTestVectorPath,
   isClosedPath,
   isValidVectorPath,
@@ -174,4 +175,18 @@ test("hits inside a region bounded by a curve", () => {
   const shape = parseVectorPath("M 0 0 C 0 0.6 1 0.6 1 0 L 1 1 L 0 1 Z")!;
   assert.equal(hitTestVectorPath(shape, BOX, { x: 200, y: 100 }), true);
   assert.equal(hitTestVectorPath(shape, BOX, { x: 200, y: 40 }), false);
+});
+test("splits a multi-subpath path into rings", () => {
+  const donut = parseVectorPath("M 0 0 L 1 0 L 1 1 L 0 1 Z M 0.4 0.4 L 0.4 0.6 L 0.6 0.6 L 0.6 0.4 Z")!;
+  const rings = flattenRings(donut);
+  assert.equal(rings.length, 2);
+  // 每个环都以起点闭合。
+  for (const ring of rings) assert.deepEqual(ring[0], ring[ring.length - 1]);
+});
+
+test("a hole in a path is not clickable", () => {
+  // 外环绕一圈，内环反向，命中用非零环绕数：洞里的点环绕数为 0。
+  const donut = parseVectorPath("M 0 0 L 1 0 L 1 1 L 0 1 Z M 0.4 0.4 L 0.4 0.6 L 0.6 0.6 L 0.6 0.4 Z")!;
+  assert.equal(hitTestVectorPath(donut, BOX, { x: 200, y: 100 }), false);
+  assert.equal(hitTestVectorPath(donut, BOX, { x: 120, y: 100 }), true);
 });

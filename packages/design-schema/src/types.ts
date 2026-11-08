@@ -89,6 +89,13 @@ export interface BaseNode {
   externalRefs?: ExternalReference[];
   /** 作为组件插槽的 frame：实例可以往这里填充自己的内容。 */
   slot?: boolean;
+  /**
+   * 蒙版：这个形状不直接绘制，而是裁剪同一父级里排在它上面的兄弟层。
+   *
+   * 做成属性而不是新的节点类型——「这块形状只用来裁剪」本来就是属性语义，
+   * 新类型会牵动判别联合、导出、组件和 AI 计划解析的每一处。
+   */
+  mask?: boolean;
 }
 
 /** 文本在自身盒内的水平对齐方式。 */

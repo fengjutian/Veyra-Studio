@@ -6,7 +6,7 @@ import { opacityToPercent, percentToOpacity, resolvePadding, switchLayoutMode, t
 export interface PropertyPanelProps {
   node: DesignNode;
   disabled?: boolean;
-  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance">>): void;
+  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask">>): void;
   onPatchText(patch: TextPatch): void;
   onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
   /** 换一张图：只改节点引用的资源，节点本身不重建。 */
@@ -136,6 +136,11 @@ export function PropertyPanel({ node, disabled, onPatch, onPatchText, onPatchIma
           </>
         )}
         <NumberField label="透明度" value={opacityToPercent(node.appearance.opacity)} disabled={disabled} onCommit={percent => onPatch({ appearance: { ...node.appearance, opacity: percentToOpacity(percent) } })} />
+        {MASKABLE_TYPES.has(node.type) && (
+          <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ mask: node.mask ? undefined : true })}>
+            {node.mask ? "取消蒙版" : "用作蒙版（裁剪上方兄弟层）"}
+          </button>
+        )}
       </Section>
 
       {node.type === "image" && (
@@ -330,3 +335,5 @@ function uniformRadii(radius: number): CornerRadii {
 function maxRadius(radii: CornerRadii): number {
   return Math.max(...radii);
 }
+/** 只有形状能当蒙版：文本/图片/容器的「轮廓」没有明确语义。 */
+const MASKABLE_TYPES = new Set(["vector", "rectangle", "ellipse"]);

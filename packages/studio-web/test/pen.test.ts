@@ -25,10 +25,21 @@ test("an anchor with an out handle produces a cubic segment", () => {
   });
 });
 
-test("closing adds the last segment and Z", () => {
+test("closing appends Z without duplicating the start anchor", () => {
   const commands = penCommands([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }], true);
   assert.deepEqual(commands.at(-1), { command: "Z" });
-  assert.deepEqual(commands.at(-2), { command: "L", point: { x: 0, y: 0 } });
+  // 直线闭合交给 Z：不再显式写回起点，否则读回来会多一个重合锚点。
+  assert.deepEqual(commands.at(-2), { command: "L", point: { x: 100, y: 100 } });
+});
+
+test("a curved closing edge is written explicitly", () => {
+  const commands = penCommands([
+    { x: 0, y: 0, handleIn: { x: -10, y: 0 } },
+    { x: 100, y: 0 },
+    { x: 100, y: 100, handleOut: { x: 50, y: 100 } },
+  ], true);
+  assert.equal(commands.at(-1)?.command, "Z");
+  assert.equal(commands.at(-2)?.command, "C");
 });
 
 test("the cursor adds a rubber-band segment but no Z", () => {

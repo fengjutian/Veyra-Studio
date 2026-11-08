@@ -160,3 +160,17 @@ test("a uniform cornerRadii keeps the rect output", () => {
   assert.match(result.svg, /<rect[^>]*rx="8"/);
   assert.doesNotMatch(result.svg, /<path/);
 });
+test("exports a mask as a clipPath and hides the mask shape itself", () => {
+  const mask: DesignNode = {
+    ...frame("mask"),
+    type: "ellipse",
+    layout: { ...defaultLayout(), x: 0, y: 0, width: 100, height: 100 },
+    mask: true,
+  };
+  const photo: DesignNode = { ...frame("photo"), type: "rectangle", layout: { ...defaultLayout(), x: 0, y: 0, width: 200, height: 100 } };
+  const result = exportPageToSvg(documentWith([mask, photo]), { pageId: "page:1", viewport: { width: 800, height: 600 } });
+  assert.match(result.svg, /<clipPath id="mask-1" clipPathUnits="userSpaceOnUse">/);
+  assert.match(result.svg, /<g clip-path="url\(#mask-1\)">/);
+  // 蒙版自身不渲染成图形。
+  assert.doesNotMatch(result.svg, /data-node-id="mask"/);
+});

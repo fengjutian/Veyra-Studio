@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { defaultAppearance, defaultLayout, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch } from "@ufira/design-schema";
+import { absolutePath, defaultAppearance, defaultLayout, normalizePath, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -41,9 +41,10 @@ import { buildScene } from "./renderer/scene";
 import { hitTest, pointFromEvent, type HitPoint } from "./renderer/hit-test";
 import { useCanvasDrag } from "./renderer/use-canvas-drag";
 import { usePenTool, type PenCommit } from "./renderer/use-pen-tool";
+import { usePathEdit, type PathEditTarget } from "./renderer/use-path-edit";
 import { TOOLS, clampRect, defaultRectFor, isDrawTool, isVectorTool, nextToolAfterDraw, shortcutTool, toolSpec, type DrawToolId, type ToolId, type VectorToolId } from "./tools";
 import { buildVectorShape, type VectorShape } from "./shapes";
-import type { VectorGeometry } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, applyBoolean, booleanOperands, type BooleanOperation } from "./boolean";
 import type { Rect } from "./renderer/selection";
 import { TextEditOverlay } from "./renderer/text-edit-overlay";
 import { CanvasA11yLayer } from "./renderer/a11y-layer";
@@ -101,6 +102,8 @@ function App() {
   // 当前画布工具。和缩放一样只是视图状态：切工具不改文档，也不进快照。
   const [tool, setTool] = useState<ToolId>("select");
   const panMode = tool === "hand";
+  // 路径编辑态：正在编辑哪个矢量节点的锚点。纯视图状态，不进文档、不涨 revision。
+  const [pathEditId, setPathEditId] = useState<string | null>(null);
   const [canvasEditingId, setCanvasEditingId] = useState<string | null>(null);
   // 可视区域（场景坐标）：滚动 + 缩放变化时更新，Canvas 只画相交的根节点。
   const [canvasViewport, setCanvasViewport] = useState({ x: 0, y: 0, width: 0, height: 0 });
@@ -266,7 +269,9 @@ function App() {
       if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (event.key === "Escape") {
-        if (tool !== "select") setTool("select");
+        // 编辑路径时 Esc 只退出编辑态，不连带清空选中。
+        if (pathEditId) setPathEditId(null);
+        else if (tool !== "select") setTool("select");
         else setSelectedIds([]);
         return;
       }
@@ -277,7 +282,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [project, tool]);
+  }, [project, tool, pathEditId]);
   // Ctrl/Cmd + 滚轮缩放画布。React 的 onWheel 是被动监听，拦不住默认行为，所以这里用原生监听。
   useEffect(() => {
     if (!scroller) return;
@@ -303,6 +308,14 @@ function App() {
     () => (document && activePageId) ? buildScene(document, activePageId, canvasLayout.boxes) : [],
     [document, activePageId, canvasLayout.boxes],
   );
+  // 路径编辑的目标：命令换成绝对场景坐标，编辑期的一切计算都在这个坐标系里做。
+  const pathEditTarget = useMemo<PathEditTarget | undefined>(() => {
+    if (!document || !pathEditId) return undefined;
+    const node = document.nodes[pathEditId];
+    const box = canvasLayout.boxes[pathEditId];
+    if (!node || node.type !== "vector" || !node.geometry || !box) return undefined;
+    return { id: node.id, commands: absolutePath(vectorPathCommands(node.geometry.d), box), box };
+  }, [document, pathEditId, canvasLayout.boxes]);
   // 导出范围：整页用画布尺寸；选区用选中节点的包围盒，并只导出与选中节点相关的分支。
   const exportTarget = useMemo(() => {
     if (exportScope === "selection") {
@@ -361,6 +374,39 @@ function App() {
     pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
     onCommit: result => commitPenPath(result),
   });
+
+  // 路径编辑只在选中单个矢量节点、且该节点有几何时生效。
+  const pathEdit = usePathEdit({
+    target: pathEditTarget,
+    zoom,
+    busy,
+    pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
+    onCommit: change => commitPathEdit(change),
+    onExit: () => setPathEditId(null),
+  });
+
+  // 退出编辑态：选中对象换了、或者切了工具。编辑态是视图状态，不能挂在已失效的节点上。
+  useEffect(() => {
+    if (pathEditId && !selectedIds.includes(pathEditId)) setPathEditId(null);
+  }, [pathEditId, selectedIds]);
+  useEffect(() => {
+    if (pathEditId && tool !== "select") setPathEditId(null);
+  }, [pathEditId, tool]);
+  // Enter 进入路径编辑（对标 Figma 的 Edit Object）。
+  useEffect(() => {
+    if (!project || !document) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable=true]")) return;
+      if (event.key !== "Enter" || pathEditId || tool !== "select" || selectedIds.length !== 1) return;
+      const node = document.nodes[selectedIds[0]!];
+      if (node?.type !== "vector" || !node.geometry) return;
+      event.preventDefault();
+      setPathEditId(node.id);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [project, document, pathEditId, tool, selectedIds]);
 
   if (!project || !document) return <main className="loading">{message}</main>;
   const page = document.pages[activePageId!]!;
@@ -584,6 +630,49 @@ function App() {
     });
   };
   /**
+   * 路径编辑的提交。
+   *
+   * 几何和布局必须落在同一条命令里：锚点拖动会改变整条路径的包围盒，如果先提交几何
+   * 再提交布局，中间那一刻盒子是不包含图形的。归一化已经在 `penGeometry` 里做完，
+   * 这里只负责把盒子对齐成整数。
+   */
+  const commitPathEdit = (change: { id: string; geometry: VectorGeometry; box: Rect }) => {
+    const node = document.nodes[change.id];
+    if (!node) return;
+    const layout = {
+      ...node.layout,
+      x: Math.round(change.box.x),
+      y: Math.round(change.box.y),
+      width: Math.max(1, Math.round(change.box.width)),
+      height: Math.max(1, Math.round(change.box.height)),
+    };
+    void run(() => execute([{ type: "vector.patch", payload: { id: change.id, patch: { geometry: change.geometry, layout } } }]));
+  };
+  /**
+   * 布尔运算：把选区烘焙成一条路径，用结果替换掉操作数。
+   *
+   * 一个事务里同时「创建结果」和「删除操作数」，所以一次撤销就回到运算前；结果插在
+   * 基准层原来的位置，视觉上是原地替换而不是跳到最上层。
+   */
+  const applyBooleanToSelection = (operation: BooleanOperation, ids: string[]) => {
+    const operands = booleanOperands(ids, document, canvasLayout.boxes);
+    if (!operands) { setMessage("布尔运算需要至少两个同级的形状或路径"); return; }
+    const result = applyBoolean(operands, operation);
+    if (!result) { setMessage("布尔运算结果为空"); return; }
+    const base = operands[0]!;
+    const parent = document.pages[base.node.parentId] ?? document.nodes[base.node.parentId];
+    const index = Math.max(0, parent?.childIds.indexOf(base.node.id) ?? 0);
+    const node = makeBooleanNode(base.node, result, operation);
+    void run(async () => {
+      await execute([
+        { type: "node.create", payload: { node, index } },
+        ...operands.map(operand => ({ type: "node.delete" as const, payload: { id: operand.node.id } })),
+      ]);
+      setSelectedIds([node.id]);
+      setMessage(`已${BOOLEAN_OPERATIONS.find(spec => spec.id === operation)?.label ?? "运算"} · ${node.layout.width}×${node.layout.height}`);
+    });
+  };
+  /**
    * 插入图片。
    *
    * 三步必须一起成立：字节落进仓库、文档登记资源元数据、创建引用它的节点。
@@ -684,21 +773,37 @@ function App() {
     await execute([{ type: "page.delete", payload: { id: page.id } }]);
     switchPage(nextPageId);
   });
-  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
+  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
-  /** 单击选中完全由 Canvas 命中决定；只有选择工具才改变选中态。 */
+  /**
+   * 单击选中完全由 Canvas 命中决定；只有选择工具才改变选中态。
+   *
+   * 路径编辑期间直接忽略：编辑态下点手柄可能落在图形包围盒之外，让它顺带跑一遍选中
+   * 逻辑会把「编辑中」的节点取消选中，从而意外退出编辑。退出编辑由编辑 hook 决定。
+   */
   const selectFromCanvas = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (tool !== "select" || canvasDrag.consumedClick()) return;
+    if (pathEditId || tool !== "select" || canvasDrag.consumedClick()) return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
     if (!hit) setSelectedIds([]);
     else setSelectedIds(current => event.shiftKey ? toggleId(current, hit) : [hit]);
   };
-  /** 双击文本节点打开覆盖层编辑（图元工具下双击不进入编辑，避免画到一半跳进文本框）。 */
-  const editTextAtCanvasPoint = (event: React.MouseEvent<HTMLDivElement>) => {
+  /**
+   * 双击：矢量路径进入节点编辑，文本进入行内编辑。
+   *
+   * 图元工具下双击不进入编辑，避免画到一半跳进文本框或锚点编辑。
+   */
+  const handleCanvasDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (tool !== "select") return;
     const hit = hitTest(hitTestScene, canvasPointOf(event));
-    if (hit && document?.nodes[hit]?.type === "text") {
+    if (!hit) return;
+    const node = document?.nodes[hit];
+    if (node?.type === "vector" && node.geometry) {
+      setSelectedIds([hit]);
+      setPathEditId(hit);
+      return;
+    }
+    if (node?.type === "text") {
       setCanvasEditingId(hit);
       setSelectedIds([hit]);
     }
@@ -1303,8 +1408,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } editTextAtCanvasPoint(event); }}>
-                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : pathEditId ? pathEdit.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } handleCanvasDoubleClick(event); }}>
+                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={canvasDrag.previewBoxes} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay node={document.nodes[canvasEditingId]!} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
               {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
                 <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>
@@ -1342,6 +1447,17 @@ function App() {
               <ContextMenuSeparator />
               <ContextMenuItem icon="distributeX" disabled={busy || contextIds.length < 3} onSelect={() => arrangeSelection("distributeX")}>水平等距分布</ContextMenuItem>
               <ContextMenuItem icon="distributeY" disabled={busy || contextIds.length < 3} onSelect={() => arrangeSelection("distributeY")}>垂直等距分布</ContextMenuItem>
+            </ContextMenuSub>}{contextIds.length === 1 && selected && ["vector", "rectangle", "ellipse"].includes(selected.type) && <ContextMenuItem icon="mask" disabled={busy} onSelect={() => patchNode(selected.id, { mask: selected.mask ? undefined : true })}>{selected.mask ? "取消蒙版" : "用作蒙版"}</ContextMenuItem>}{contextIds.length > 1 && <ContextMenuSub label="布尔运算" icon="booleanUnion">
+              {BOOLEAN_OPERATIONS.map(spec => (
+                <ContextMenuItem
+                  key={spec.id}
+                  icon={spec.icon}
+                  disabled={busy || !booleanOperands(contextIds, document, canvasLayout.boxes)}
+                  onSelect={() => applyBooleanToSelection(spec.id, contextIds)}
+                >
+                  {spec.label}
+                </ContextMenuItem>
+              ))}
             </ContextMenuSub>}<ContextMenuItem icon="nodeComponent" disabled={busy || !selectionSameParent} onSelect={groupSelection}>编组</ContextMenuItem>{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}{contextIds.length === 1 && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={ungroupSelection}>取消编组</ContextMenuItem>}{contextIds.length === 1 && selected?.type === "instance" && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={detachComponent}>脱离组件</ContextMenuItem>}</> : <>
             <ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem>
             <ContextMenuSeparator />
@@ -1617,6 +1733,33 @@ function makePenNode(parentId: string, box: { x: number; y: number; width: numbe
     layout: { ...defaultLayout(), ...box },
     appearance,
     geometry,
+  };
+}
+
+/**
+ * 布尔运算的结果节点：外观取基准层，几何是烘焙好的路径。
+ *
+ * 结果命名与操作一致（合并/减去/交集/排除），方便在图层树里认出来这是一次运算的产物。
+ */
+function makeBooleanNode(base: DesignNode, result: { box: Rect; geometry: VectorGeometry }, operation: BooleanOperation): DesignNode {
+  const spec = BOOLEAN_OPERATIONS.find(item => item.id === operation);
+  return {
+    id: `vector:${crypto.randomUUID().slice(0, 8)}`,
+    type: "vector",
+    name: spec?.label ?? "布尔运算",
+    parentId: base.parentId,
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: {
+      ...defaultLayout(),
+      x: Math.round(result.box.x),
+      y: Math.round(result.box.y),
+      width: Math.max(1, Math.round(result.box.width)),
+      height: Math.max(1, Math.round(result.box.height)),
+    },
+    appearance: structuredClone(base.appearance),
+    geometry: result.geometry,
   };
 }
 

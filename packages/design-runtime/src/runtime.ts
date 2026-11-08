@@ -1,4 +1,4 @@
-import { findOwningComponentId, overridableFields, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
+import { findOwningComponentId, isValidVectorPath, overridableFields, validateDocument, wouldCreateComponentCycle, type DesignDocument, type DesignNode, type InstanceNode, type NodeId } from "@ufira/design-schema";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
 export class RevisionConflictError extends Error {
@@ -133,6 +133,13 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "node.patch": {
       const node = requireNode(document, command.payload.id);
       if (command.payload.patch.slot !== undefined && typeof command.payload.patch.slot !== "boolean") throw new CommandError("Slot flag must be a boolean");
+      if (command.payload.patch.mask !== undefined) {
+        if (typeof command.payload.patch.mask !== "boolean") throw new CommandError("Mask flag must be a boolean");
+        // 只有形状能当蒙版：文本/图片/容器的「轮廓」没有明确语义，放进来只会让裁剪结果不可解释。
+        if (command.payload.patch.mask && node.type !== "vector" && node.type !== "rectangle" && node.type !== "ellipse") {
+          throw new CommandError(`Node ${node.id} of type ${node.type} cannot be used as a mask`);
+        }
+      }
       Object.assign(node, structuredClone(command.payload.patch));
       return;
     }
@@ -171,6 +178,18 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       if (fit !== undefined && fit !== "cover" && fit !== "contain" && fit !== "fill") throw new CommandError("Image fit must be cover, contain or fill");
       if (assetId !== undefined && !document.assets[assetId]) throw new CommandError(`Asset ${assetId} does not exist`);
       Object.assign(node, structuredClone(command.payload.patch));
+      return;
+    }
+    case "vector.patch": {
+      const node = requireNode(document, command.payload.id);
+      if (node.type !== "vector") throw new CommandError(`Node ${node.id} is not a vector node`);
+      const { geometry, layout } = command.payload.patch;
+      if (!geometry || geometry.kind !== "path") throw new CommandError("Vector patch requires a path geometry");
+      // 兜底校验：写进来的路径必须能被解析，否则画布会静默画空。
+      if (!isValidVectorPath(geometry.d)) throw new CommandError(`Vector path for ${node.id} is invalid`);
+      node.geometry = structuredClone(geometry);
+      // 几何变了盒子的尺寸也必须跟着变，所以允许同一条命令里一起改。
+      if (layout) node.layout = structuredClone(layout);
       return;
     }
     case "asset.delete": return deleteAsset(document, command.payload.id);

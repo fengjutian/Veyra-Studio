@@ -33,6 +33,7 @@ const COMMAND_LABELS: Record<string, string> = {
   "asset.upsert": "登记图片",
   "asset.delete": "清理图片",
   "image.patch": "修改图片",
+  "vector.patch": "修改路径",
   "token.upsert": "修改 Token",
   "token.delete": "删除 Token",
   "page.create": "新建页面",

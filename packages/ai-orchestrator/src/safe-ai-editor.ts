@@ -172,6 +172,7 @@ function collectAffectedNodeIds(commands: DesignCommand[]): NodeId[] {
         break;
       case "node.patch":
       case "node.delete":
+      case "vector.patch":
         ids.add(command.payload.id);
         break;
       case "node.reparent":

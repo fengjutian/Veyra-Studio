@@ -30,6 +30,7 @@
     "@vitejs/plugin-react": "latest",
     "dexie": "^4.4.7",
     "lucide-react": "^1.69.0",
+    "polygon-clipping": "^0.15.7",
     "react": "latest",
     "react-dom": "latest",
     "vite": "latest"
