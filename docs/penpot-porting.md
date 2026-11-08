@@ -45,6 +45,7 @@ Penpot 的几何与布局核心在 `common/src/app/common/geom/`，渲染在 `re
 | --- | --- | --- | --- | --- |
 | `svg/path/arc_to_bezier.js` | 177 | SVG 椭圆弧 → 三次贝塞尔近似 | `design-schema/src/arc-to-bezier.ts` | ✅ **已搬运**（MIT，保留声明） |
 | `svg/path/parser.js` | 828 | SVG path 解析（M/L/C/Q/A/H/V/S/T + 相对 + 隐式命令） | `design-schema/src/svg-path.ts` | ✅ **已重写**（语义对齐） |
+| `svg/path/Parser.java` | — | 另一套路径解析实现（后端用） | — | ❌ 不搬（Java，后端不碰） |
 | `geom/shapes/transforms.cljc` | 484 | 形状变换矩阵（平移/翻转/绕中心） | `studio-web/src/renderer/rotation.ts` | ✅ 已有等价实现 |
 | `geom/shapes/constraints.cljc` | 283 | 约束求解 | `design-runtime` 的 `constraints` | ✅ 已有等价实现 |
 | `geom/shapes/flex_layout/positions.cljc` | 233 | 自动布局位置求解 | `design-layout` stack 布局 | ⚠️ 部分等价，缺 grid |
@@ -115,6 +116,27 @@ Penpot 的几何与布局核心在 `common/src/app/common/geom/`，渲染在 `re
 - **关键语义（Penpot 明确注释过的坑）**：切换事件或动作类型时**旧字段不删除**，
   以便用户切回来时能恢复。所以读取必须走 `hasDelay()` / `hasDestination()` 这类判定函数，
   不能直接读字段。本项目照搬这个语义，并把它写进 API 设计。
+- **动画随动作类型重新判定**：切换动作类型后，不再被允许的动画（`slide` / `push`
+  只对 `navigate` 有效）必须清掉。Penpot 的 `set-action-type` 同样有这一步——
+  否则一条 overlay 交互会带着一条永远不会被执行的 slide 动画。
+
+### 5.4 本轮搬动中改掉的两个真实缺陷
+
+搬运过程本身暴露了两个问题，都已修掉并有回归测试：
+
+1. **非法命令字母被当成隐式命令**（`design-schema/src/svg-path.ts`）。
+   最初实现里，`readCommand` 对「不认识的字母」和「数字开头」都返回 `undefined`，
+   于是 `M 0 0 X 10 10` 里的 `X` 被当成隐式坐标重复，解析成 `M 0 0 L 10 10`——
+   **画出来的东西和原意完全不同**，而且不报错。
+   现在区分三种情况：合法命令 / 数字开头（隐式命令）/ 字母但不合法（整条作废）。
+
+2. **相对坐标被二次缩放**（同上）。
+   相对量应当只缩放、不平移（平移已经体现在基准点里）；
+   最初实现对相对量也调了「缩放 + 平移」的换算，导致 `M 10 10 l 5 5` 在 `scale=2` 时
+   走到 (30,30) 而不是 (20,20)。
+
+另外补了一条 Penpot 有、本项目最初漏掉的约束：**第一条命令必须是 `M`/`m`**——
+没有起点就无法确定后续命令相对谁。
 
 ## 6. 来源
 
@@ -127,7 +149,30 @@ Penpot 的几何与布局核心在 `common/src/app/common/geom/`，渲染在 `re
 
 ## 7. 后续可搬清单（按本项目缺口优先级）
 
-1. **Grid 布局**（Penpot `geom/shapes/grid_layout.cljc`）——本项目只有 absolute/stack。
+1. **Grid 布局**（Penpot `geom/shapes/grid_layout.cljc` + `render/grid_layout.rs`）
+   ——本项目只有 absolute/stack。
 2. **组件变体**（Penpot `logic/variants.cljc`）——本项目有组件但无 variant。
-3. **原型运行时**——本轮只落数据模型，还需要预览模式与交互状态机。
+3. **原型运行时**——本轮只落数据模型，还需要预览模式、交互状态机、
+   跳转执行与 overlay 渲染。
 4. **混合模式 / 椭圆渐变**——Penpot 的 `render/fills.rs` 有对应实现可对标语义。
+5. **约束的几何完备性**（Penpot `geom/shapes/constraints.cljc` 的 `right-vector` /
+   `left-vector` 等）——本项目已有等价实现，但可拿 Penpot 的边界用例对拍。
+
+## 8. 验证方式
+
+```bash
+npm run build:studio-core     # 核心包构建
+npm run test:studio-core      # 核心包测试（含 design-schema 的三个新测试文件）
+npm run build:studio-web      # 工作台构建
+npx tsx --test test/*.test.ts # studio-web 全部测试（在 packages/studio-web 下）
+```
+
+新增测试文件：
+
+- `packages/design-schema/test/arc-parity.test.ts`
+  ——弧线算法与上游**逐字节对拍**（上游原始算法抄写在本文件里作为对照），
+  将来若有人改动移植版会立刻被指出；
+- `packages/design-schema/test/svg-import.test.ts`
+  ——SVG 解析与导入转换层；
+- `packages/design-schema/test/interactions.test.ts`
+  ——交互模型，重点覆盖「切换类型时旧字段不删除」这条语义。

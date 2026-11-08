@@ -21,8 +21,56 @@ export interface DesignPage {
 
 export type SizeMode = "fixed" | "fill" | "hug";
 
+/**
+ * Grid 轨道。
+ *
+ * 五种类型对应 CSS Grid 的 `grid-template-columns/rows` 里的五种轨道尺寸：
+ * - `fixed` — 固定像素；
+ * - `fraction` — 比例权重（`1fr` / `2fr`），按剩余空间分配；
+ * - `auto` — 按内容撑开（既不是最小也不是最大，取内容的固有尺寸）；
+ * - `min-content` — 按内容最小尺寸；
+ * - `max-content` — 按内容最大尺寸。
+ *
+ * 语义对齐 Penpot 的 grid-track，见 `docs/figma-gap-roadmap.md`。
+ */
+export type GridTrack =
+  | { type: "fixed"; size: number }
+  | { type: "fraction"; weight: number }
+  | { type: "auto" }
+  | { type: "min-content" }
+  | { type: "max-content" };
+
+/** 子节点在 Grid 容器里占据的单元格区间（行列均从 1 开始计数）。 */
+export interface GridCell {
+  /** 起始行（1-based）。 */
+  row: number;
+  /** 起始列（1-based）。 */
+  column: number;
+  /** 跨几行；缺省 1。 */
+  rowSpan?: number;
+  /** 跨几列；缺省 1。 */
+  columnSpan?: number;
+}
+
+/**
+ * Grid 容器配置。
+ *
+ * `cells` 按**子节点 id** 索引：子节点占哪一格是它自己的属性，
+ * 放在容器里是为了让布局求解一次读全，不必每个子节点回头查父级。
+ */
+export interface GridSpec {
+  columns: GridTrack[];
+  rows: GridTrack[];
+  columnGap: number;
+  rowGap: number;
+  /** 子节点 → 单元格区间。缺省的子节点按顺序依次填格子。 */
+  cells?: Record<NodeId, GridCell>;
+  /** 子节点在格子内的对齐；缺省 `start`。 */
+  align?: "start" | "center" | "end" | "stretch";
+}
+
 export interface LayoutSpec {
-  mode: "absolute" | "stack";
+  mode: "absolute" | "stack" | "grid";
   direction?: "horizontal" | "vertical";
   x: number;
   y: number;
@@ -41,6 +89,13 @@ export interface LayoutSpec {
    * 绘制与命中，和 Figma 的行为一致。
    */
   rotation?: number;
+  /**
+   * Grid 容器配置；只在 `mode: "grid"` 时有意义。
+   *
+   * 做成可选字段而不是新节点类型——「这个容器用网格排版」是布局属性，
+   * 与 `mode` 的其它取值是同一层语义。
+   */
+  grid?: GridSpec;
 }
 
 /**
@@ -258,7 +313,7 @@ export interface MigrationRecord {
 }
 
 export interface DesignDocument {
-  schemaVersion: 3;
+  schemaVersion: 4;
   id: DocumentId;
   revision: number;
   meta: DocumentMeta;

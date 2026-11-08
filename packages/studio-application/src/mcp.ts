@@ -54,6 +54,7 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "component.resetOverride": true,
   "component.resetOverrides": true,
   "slot.fill": true,
+  "interaction.patch": true,
   "history.restore": true,
 };
 

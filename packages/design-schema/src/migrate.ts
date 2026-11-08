@@ -8,7 +8,7 @@ import type { DesignDocument, MigrationRecord } from "./types";
  * {@link MIGRATIONS} 里补上 `旧版本 → 新版本` 的那一步。读取旧文档的入口
  * （仓库恢复、JSON 导入）必须先跑 {@link migrateDocument}，再交给校验器。
  */
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 export interface MigrationContext {
   /** 迁移发生的时间；测试可以注入固定值以保证可重复。 */
@@ -28,6 +28,7 @@ export type MigrationStep = (document: Record<string, unknown>, context: Migrati
  *
  * v1 → v2：文档格式版本升到 2，并把这次迁移写进文档自带的 `migrations` 历史。
  * v2 → v3：填充从单值 `appearance.fill: string` 改成填充层 `appearance.fills: Paint[]`。
+ * v3 → v4：布局模式新增 `grid`，并给 Grid 容器补上缺省的轨道配置。
  */
 export const MIGRATIONS: Record<number, MigrationStep> = {
   1: (document, { now }) => {
@@ -47,7 +48,40 @@ export const MIGRATIONS: Record<number, MigrationStep> = {
       : [];
     return { ...document, schemaVersion: 3, nodes: migrated, migrations: [...history, { from: 2, to: 3, at: now }] };
   },
+  3: (document, { now }) => {
+    // Grid 容器必须带轨道配置，否则校验会拒绝。
+    // 旧版本不可能产出 `mode: "grid"`（枚举里没有这个值），所以这一步实际上
+    // 只处理「文档被人为改过」的极端情况：补上缺省轨道，让它仍然可打开。
+    const nodes = isRecord(document.nodes) ? document.nodes : {};
+    const migrated: Record<string, unknown> = {};
+    for (const [id, value] of Object.entries(nodes)) {
+      migrated[id] = migrateNodeGrid(value);
+    }
+    const history = Array.isArray(document.migrations)
+      ? document.migrations.filter(entry => isMigrationRecord(entry))
+      : [];
+    return { ...document, schemaVersion: 4, nodes: migrated, migrations: [...history, { from: 3, to: 4, at: now }] };
+  },
 };
+
+/**
+ * 单个节点的 Grid 迁移：给 `mode: "grid"` 但缺 `grid` 配置的节点补上缺省轨道。
+ *
+ * 缺省给一条 `auto` 轨道——子节点按顺序填进去，至少不会因为「配置缺失」
+ * 而让整份文档打不开。
+ */
+function migrateNodeGrid(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.layout)) return value;
+  const layout = value.layout as Record<string, unknown>;
+  if (layout.mode !== "grid" || isRecord(layout.grid)) return value;
+  return {
+    ...value,
+    layout: {
+      ...layout,
+      grid: { columns: [{ type: "auto" }], rows: [{ type: "auto" }], columnGap: 0, rowGap: 0 },
+    },
+  };
+}
 
 /**
  * 单个节点的填充迁移：`fill: "#fff"` → `fills: [{ type: "solid", color: "#fff" }]`。

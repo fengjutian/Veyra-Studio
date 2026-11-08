@@ -58,3 +58,43 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+---
+
+## Penpot — `penpot/penpot`
+
+- **用途**：`packages/design-schema/src/arc-to-bezier.ts` 的 SVG 椭圆弧 → 三次贝塞尔算法，
+  搬运自 Penpot 的 `common/src/app/common/svg/path/arc_to_bezier.js`（上游快照 `904cdd9`）。
+- **来源**：<https://github.com/penpot/penpot>
+- **许可**：该文件本身声明为 **MIT**（原始实现参考 fontello/svgpath 的 `a2c.js`）。
+- **改动**：移除 Closure Compiler 的 `goog.provide` / `goog.scope` 包装，改为 TypeScript 导出；
+  其余算法逐字节保留，并由 `packages/design-schema/test/arc-parity.test.ts` 与上游对拍锁定。
+
+Penpot 仓库整体为 MPL-2.0（前端）/ AGPL-3.0（后端）双许可。本仓库**只搬运上述 MIT 文件**；
+`packages/design-schema/src/svg-path.ts` 与 `packages/design-schema/src/interactions.ts`
+是**语义对齐的重写**（借鉴公开算法与交互语义，不复制其数据结构表达与代码），
+不构成 Penpot 源码的复制品。迁移纪律详见 [docs/penpot-porting.md](./docs/penpot-porting.md)。
+
+```
+MIT License
+
+Copyright (c) KALEIDOS SUBSIDIARY SL
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

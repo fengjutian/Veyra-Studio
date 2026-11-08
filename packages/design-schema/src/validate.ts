@@ -145,7 +145,7 @@ function detectComponentCycles(document: DesignDocument, issues: string[]): void
 export function createDocument(id: string, name: string, pageId = "page:1"): DesignDocument {
   const now = new Date().toISOString();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     id,
     revision: 0,
     meta: { name, createdAt: now, updatedAt: now },

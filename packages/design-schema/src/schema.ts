@@ -53,8 +53,33 @@ const interactionSchema = z.object({
   ]).optional(),
 });
 
+const gridTrackSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("fixed"), size: nonNegative }),
+  // 权重必须为正：0 权重的 fraction 轨道永远分不到空间，等于把这条轨道废了。
+  z.object({ type: z.literal("fraction"), weight: z.number().finite().positive() }),
+  z.object({ type: z.literal("auto") }),
+  z.object({ type: z.literal("min-content") }),
+  z.object({ type: z.literal("max-content") }),
+]);
+
+const gridCellSchema = z.object({
+  row: z.number().int().positive(),
+  column: z.number().int().positive(),
+  rowSpan: z.number().int().positive().optional(),
+  columnSpan: z.number().int().positive().optional(),
+});
+
+const gridSpecSchema = z.object({
+  columns: z.array(gridTrackSchema),
+  rows: z.array(gridTrackSchema),
+  columnGap: nonNegative,
+  rowGap: nonNegative,
+  cells: z.record(id, gridCellSchema).optional(),
+  align: z.enum(["start", "center", "end", "stretch"]).optional(),
+});
+
 export const layoutSchema = z.object({
-  mode: z.enum(["absolute", "stack"]),
+  mode: z.enum(["absolute", "stack", "grid"]),
   direction: z.enum(["horizontal", "vertical"]).optional(),
   x: z.number().finite(),
   y: z.number().finite(),
@@ -66,9 +91,18 @@ export const layoutSchema = z.object({
   padding: z.object({ top: nonNegative, right: nonNegative, bottom: nonNegative, left: nonNegative }).optional(),
   align: z.enum(["start", "center", "end", "stretch"]).optional(),
   rotation: z.number().finite().optional(),
+  grid: gridSpecSchema.optional(),
 }).superRefine((layout, ctx) => {
   if (layout.mode === "stack" && !layout.direction) {
     ctx.addIssue({ code: "custom", message: "Stack layout requires a direction", path: ["direction"] });
+  }
+  // Grid 容器必须给出轨道配置：没有轨道就没有格子，子节点无处可放。
+  if (layout.mode === "grid" && !layout.grid) {
+    ctx.addIssue({ code: "custom", message: "Grid layout requires a grid configuration", path: ["grid"] });
+  }
+  // 非 grid 容器不该带 grid 配置——留着会让「这个容器到底怎么排版」变得含糊。
+  if (layout.mode !== "grid" && layout.grid) {
+    ctx.addIssue({ code: "custom", message: "Grid configuration is only allowed on grid layouts", path: ["grid"] });
   }
 });
 
@@ -196,7 +230,7 @@ export const designNodeSchema = z.discriminatedUnion("type", [
 ]);
 
 export const designDocumentSchema = z.object({
-  schemaVersion: z.literal(3),
+  schemaVersion: z.literal(4),
   id,
   revision: z.number().int().nonnegative(),
   meta: z.object({ name: z.string().min(1), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime() }),

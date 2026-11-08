@@ -1,6 +1,7 @@
-import { resolveGap, validateDocument, type DesignDocument, type DesignNode, type NodeId } from "@ufira/design-schema";
+import { resolveGap, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
+import { assignCellsByOrder, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
 
 const ZERO_PADDING = { top: 0, right: 0, bottom: 0, left: 0 };
 
@@ -57,6 +58,17 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
         ? { width: padding.left + main + padding.right, height: padding.top + cross + padding.bottom }
         : { width: padding.left + cross + padding.right, height: padding.top + main + padding.bottom };
     }
+    if (node.layout.mode === "grid") {
+      // Grid 容器的 hug 尺寸 = 轨道总尺寸 + gap + padding。
+      // 轨道本身的尺寸依赖子节点内容，所以要先测内容再定轨道。
+      const grid = node.layout.grid;
+      if (!grid) return { width: padding.left + padding.right, height: padding.top + padding.bottom };
+      const intrinsicSize = intrinsicGrid(node, grid.columns, grid.rows, grid.columnGap, grid.rowGap, children);
+      return {
+        width: padding.left + intrinsicSize.width + padding.right,
+        height: padding.top + intrinsicSize.height + padding.bottom,
+      };
+    }
     const width = children.reduce((max, child) => Math.max(max, child.node.layout.x + child.size.width), 0);
     const height = children.reduce((max, child) => Math.max(max, child.node.layout.y + child.size.height), 0);
     return { width: padding.left + width + padding.right, height: padding.top + height + padding.bottom };
@@ -67,6 +79,119 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     if (mode === "fill") return Math.max(0, available);
     if (mode === "hug") return intrinsic(node.id)[axis];
     return node.layout[axis];
+  };
+
+  /**
+   * 收集落在每条轨道上的子节点内容尺寸。
+   *
+   * 只有 `auto` / `min-content` / `max-content` 轨道用得上这些尺寸；
+   * `fixed` 与 `fraction` 不看内容。
+   */
+  const trackContentSizes = (
+    cells: GridCellInput[],
+    tracks: GridTrack[],
+    axis: "columns" | "rows",
+  ): Map<number, { width: number; height: number }[]> => {
+    const map = new Map<number, { width: number; height: number }[]>();
+    tracks.forEach((_, index) => map.set(index, []));
+    for (const cell of cells) {
+      const trackIndex = axis === "columns" ? cell.column - 1 : cell.row - 1;
+      if (trackIndex < 0) continue;
+      const bucket = map.get(trackIndex);
+      if (!bucket) continue;
+      bucket.push({ width: cell.width, height: cell.height });
+    }
+    return map;
+  };
+
+  /**
+   * Grid 容器的固有尺寸（hug 时的尺寸）。
+   *
+   * 轨道尺寸依赖子节点内容，所以这里先按内容尺寸把 `auto` 轨道的尺寸算出来，
+   * 再加上固定轨道与 gap。
+   */
+  const intrinsicGrid = (
+    node: DesignNode,
+    columns: GridTrack[],
+    rows: GridTrack[],
+    columnGap: number,
+    rowGap: number,
+    children: { node: DesignNode; size: Size }[],
+  ): Size => {
+    const cells = gridCells(node, children);
+    const columnContents = trackContentSizes(cells, columns, "columns");
+    const rowContents = trackContentSizes(cells, rows, "rows");
+
+    const toInput = (tracks: GridTrack[], contents: Map<number, { width: number; height: number }[]>): GridTrackInput[] =>
+      tracks.map((track, index) => ({
+        type: track.type,
+        size: track.type === "fixed" ? track.size : undefined,
+        weight: track.type === "fraction" ? track.weight : undefined,
+        contentSizes: contents.get(index),
+      }));
+
+    const columnInput = toInput(columns, columnContents);
+    const rowInput = toInput(rows, rowContents);
+
+    // 用「无限可用空间」求解：fraction 轨道此时分不到空间（remainder 为 0），
+    // 这正是 hug 容器想要的——只按内容与固定轨道定尺寸。
+    const solved = solveGrid({
+      columns: columnInput,
+      rows: rowInput,
+      columnGap,
+      rowGap,
+      availableWidth: 0,
+      availableHeight: 0,
+      cells,
+      align: node.layout.grid?.align ?? "start",
+    });
+
+    return { width: solved.totalWidth, height: solved.totalHeight };
+  };
+
+  /**
+   * 解析 Grid 容器的子节点单元格。
+   *
+   * 有显式 `cells` 用显式的；没有就按顺序填格子。
+   */
+  const gridCells = (node: DesignNode, children: { node: DesignNode; size: Size }[]): GridCellInput[] => {
+    const grid = node.layout.grid;
+    const explicit = grid?.cells;
+    const columnCount = grid?.columns.length ?? 1;
+    const rowCount = grid?.rows.length ?? 1;
+
+    if (!explicit || !Object.keys(explicit).length) {
+      const ordered = assignCellsByOrder(
+        children.map(child => child.node.id),
+        columnCount,
+        rowCount,
+      );
+      return ordered.map(cell => {
+        const child = children.find(item => item.node.id === cell.nodeId);
+        return {
+          ...cell,
+          width: child?.size.width ?? 0,
+          height: child?.size.height ?? 0,
+        };
+      });
+    }
+
+    // 显式 cells 的子节点按容器 childIds 的顺序处理，保证输出稳定。
+    const result: GridCellInput[] = [];
+    for (const child of children) {
+      const cell: GridCell | undefined = explicit[child.node.id];
+      if (!cell) continue;
+      result.push({
+        nodeId: child.node.id,
+        row: cell.row,
+        column: cell.column,
+        rowSpan: cell.rowSpan ?? 1,
+        columnSpan: cell.columnSpan ?? 1,
+        width: child.size.width,
+        height: child.size.height,
+      });
+    }
+    return result;
   };
 
   const layoutNode = (nodeId: NodeId, x: number, y: number, availableWidth: number, availableHeight: number, forced?: Partial<Size>): void => {
@@ -100,6 +225,48 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
       for (const childId of node.childIds) {
         const child = document.nodes[childId];
         layoutNode(childId, contentX + child.layout.x, contentY + child.layout.y, contentWidth, contentHeight);
+      }
+      return;
+    }
+
+    if (node.layout.mode === "grid") {
+      const grid = node.layout.grid;
+      if (!grid) return;
+      const gridChildren = node.childIds.map(id => ({ node: document.nodes[id]!, size: intrinsic(id) }));
+      const cells = gridCells(node, gridChildren);
+      const columnContents = trackContentSizes(cells, grid.columns, "columns");
+      const rowContents = trackContentSizes(cells, grid.rows, "rows");
+      const toInput = (tracks: GridTrack[], contents: Map<number, { width: number; height: number }[]>): GridTrackInput[] =>
+        tracks.map((track, index) => ({
+          type: track.type,
+          size: track.type === "fixed" ? track.size : undefined,
+          weight: track.type === "fraction" ? track.weight : undefined,
+          contentSizes: contents.get(index),
+        }));
+
+      const solved = solveGrid({
+        columns: toInput(grid.columns, columnContents),
+        rows: toInput(grid.rows, rowContents),
+        columnGap: grid.columnGap,
+        rowGap: grid.rowGap,
+        availableWidth: contentWidth,
+        availableHeight: contentHeight,
+        cells,
+        align: grid.align ?? "start",
+      });
+
+      if (solved.overflowWidth > 0.5) {
+        warnings.push({ nodeId: node.id, code: "overflow", message: `Grid columns exceed ${node.id}'s width by ${Math.round(solved.overflowWidth)}px` });
+      }
+      if (solved.overflowHeight > 0.5) {
+        warnings.push({ nodeId: node.id, code: "overflow", message: `Grid rows exceed ${node.id}'s height by ${Math.round(solved.overflowHeight)}px` });
+      }
+
+      for (const child of solved.children) {
+        layoutNode(child.nodeId, contentX + child.x, contentY + child.y, child.width, child.height, {
+          width: child.width,
+          height: child.height,
+        });
       }
       return;
     }

@@ -10,40 +10,13 @@ import {
 } from "../../studio-web/src/svg-import";
 
 /**
- * 这些用例覆盖从 Penpot 搬来的弧线算法与按 Penpot 语义重写的 SVG 解析器。
+ * 这些用例覆盖按 Penpot 语义重写的 SVG 解析器与导入转换层。
+ * 弧线算法本身的保真度对拍在 `arc-parity.test.ts`（与上游逐字节比对）。
  * 上游参考见 `docs/penpot-porting.md`。
  */
 
-test("arc: a半圆半径为0时按SVG规范退化成直线", () => {
-  // 半径为 0 的弧，SVG 规范规定当作直线处理——解析器层负责（arc-to-bezier 返回空）。
-  assert.deepEqual(calculateArcBeziers(0, 0, 10, 0, 0, 1, 0, 0, 0), []);
-});
-
 test("arc: 起点终点重合时不产生曲线", () => {
   assert.deepEqual(calculateArcBeziers(5, 5, 5, 5, 0, 1, 10, 10, 0), []);
-});
-
-test("arc: 90度弧拆成一段，控制点落在正确象限", () => {
-  const curves = calculateArcBeziers(0, 0, 10, 10, 0, 1, 10, 10, 0);
-  assert.equal(curves.length, 1);
-  const [c1x, c1y, c2x, c2y, x, y] = curves[0]!;
-  // 终点必须精确落在目标点。
-  assert.ok(Math.abs(x - 10) < 1e-9, `end x ${x}`);
-  assert.ok(Math.abs(y - 10) < 1e-9, `end y ${y}`);
-  // 控制点应在弧的外侧（远离圆心 (0,10)）。
-  assert.ok(c1y > 0 && c2x > 0, `controls ${c1x},${c1y} ${c2x},${c2y}`);
-});
-
-test("arc: 超过90度的弧被拆成多段", () => {
-  const curves = calculateArcBeziers(0, 0, 0, 20, 0, 1, 10, 10, 0);
-  // 180 度至少拆成 2 段。
-  assert.ok(curves.length >= 2, `segments ${curves.length}`);
-});
-
-test("arc: 相同参数总是得到相同结果（可重复、可缓存）", () => {
-  const a = calculateArcBeziers(0, 0, 10, 10, 0, 1, 10, 10, 0);
-  const b = calculateArcBeziers(0, 0, 10, 10, 0, 1, 10, 10, 0);
-  assert.deepEqual(a, b);
 });
 
 test("svg: 解析基本命令", () => {

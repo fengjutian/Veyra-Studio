@@ -207,6 +207,10 @@ export function parseSvgPath(d: string, options: SvgPathParseOptions = {}): Path
       continue;
     }
 
+    // 第一条命令必须是 M/m（Penpot 的解析器同样如此）：
+    // 没有起点就无法确定后续命令相对谁，一条以 L 开头的路径是残缺的。
+    if (upper !== "M" && !commands.length) return undefined;
+
     if (upper === "L") {
       const x = readNumber(cursor);
       if (x === undefined) return undefined;

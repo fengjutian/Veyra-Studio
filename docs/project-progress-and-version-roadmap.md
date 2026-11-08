@@ -253,6 +253,15 @@ AI 原型：
   `gradientLine()` 让画布、HTML、SVG 共用同一套渐变几何；多层填充已接通（画布逐层、
   HTML 倒序 background-image、SVG 逐层图元），面板可增删与切换层；径向渐变
   （`{ type: "radial", cx, cy, r, stops }`）与线性共享色标与几何入口；
+- SVG 路径导入（对标 Penpot）：`design-schema/src/svg-path.ts` 按 Penpot 的解析语义
+  支持 `M/L/C/Q/A/H/V/S/T/Z` 及小写相对形式与隐式命令，`A`（椭圆弧）用搬来的 MIT
+  算法转成贝塞尔；导入产物统一归一化成 `[0,1]` 相对路径，`vector.geometry` 的
+  「改宽高即缩放图形」不变式因此继续成立。非法输入让**整条路径作废**，
+  不做部分解析；弧线算法与上游逐字节对拍。迁移纪律见 `penpot-porting.md`；
+- 原型交互（**仅数据层**）：`design-schema/src/interactions.ts` 按 Penpot 的
+  interactions 语义定义事件、动作、动画与 overlay 定位，节点上以可选
+  `interactions` 数组承载，运行时新增 `interaction.patch` 命令（校验语义自洽与
+  跳转目标存在性）。**尚未实现**：预览模式、交互状态机、跳转执行、overlay 渲染；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 
 ### `0.4.0`：布局、文本与视觉一致性

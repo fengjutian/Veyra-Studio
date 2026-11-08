@@ -154,27 +154,29 @@ export function defaultInteraction(): Interaction {
 
 /** 该事件类型是否需要延迟字段。 */
 export function hasDelay(interaction: Interaction): boolean {
-  return interaction.eventType === "after-delay";
+  return interaction?.eventType === "after-delay";
 }
 
 /** 该动作类型是否可以有跳转目标。 */
 export function hasDestination(interaction: Interaction): boolean {
+  const actionType = interaction?.actionType;
   return (
-    interaction.actionType === "navigate" ||
-    interaction.actionType === "open-overlay" ||
-    interaction.actionType === "toggle-overlay" ||
-    interaction.actionType === "close-overlay"
+    actionType === "navigate" ||
+    actionType === "open-overlay" ||
+    actionType === "toggle-overlay" ||
+    actionType === "close-overlay"
   );
 }
 
 /** 该动作类型是否可以设置 overlay 定位。 */
 export function hasOverlayPosition(interaction: Interaction): boolean {
-  return interaction.actionType === "open-overlay" || interaction.actionType === "toggle-overlay";
+  const actionType = interaction?.actionType;
+  return actionType === "open-overlay" || actionType === "toggle-overlay";
 }
 
 /** 该动作类型是否可以设置外部链接。 */
 export function hasUrl(interaction: Interaction): boolean {
-  return interaction.actionType === "open-url";
+  return interaction?.actionType === "open-url";
 }
 
 /**
@@ -210,32 +212,46 @@ export function withEventType(interaction: Interaction, eventType: InteractionEv
  *
  * 同样保留其余字段，让用户切回来时能恢复原值。
  * 切到 `open-url` 时补上缺省空串（URL 是必填字段）。
+ *
+ * **动画会被重新判定**：新动作类型不允许的动画必须被清掉
+ * （`slide`/`push` 只对 `navigate` 有意义）。Penpot 的 `set-action-type`
+ * 同样会在这一步清掉不再适用的动画——否则一条 overlay 交互会带着
+ * 一条永远不会被执行的 slide 动画。
  */
 export function withActionType(interaction: Interaction, actionType: InteractionActionType): Interaction {
   if (interaction.actionType === actionType) return interaction;
-  switch (actionType) {
-    case "navigate":
-      return {
-        ...interaction,
-        actionType,
-        destination: interaction.destination ?? null,
-        preserveScroll: interaction.preserveScroll ?? false,
-      };
-    case "open-overlay":
-    case "toggle-overlay":
-      return {
-        ...interaction,
-        actionType,
-        overlayPositionType: interaction.overlayPositionType ?? "center",
-        overlayPosition: interaction.overlayPosition ?? { x: 0, y: 0 },
-      };
-    case "close-overlay":
-      return { ...interaction, actionType, destination: interaction.destination ?? null };
-    case "prev-screen":
-      return { ...interaction, actionType };
-    case "open-url":
-      return { ...interaction, actionType, url: interaction.url ?? "" };
+
+  const next: Interaction = (() => {
+    switch (actionType) {
+      case "navigate":
+        return {
+          ...interaction,
+          actionType,
+          destination: interaction.destination ?? null,
+          preserveScroll: interaction.preserveScroll ?? false,
+        };
+      case "open-overlay":
+      case "toggle-overlay":
+        return {
+          ...interaction,
+          actionType,
+          overlayPositionType: interaction.overlayPositionType ?? "center",
+          overlayPosition: interaction.overlayPosition ?? { x: 0, y: 0 },
+        };
+      case "close-overlay":
+        return { ...interaction, actionType, destination: interaction.destination ?? null };
+      case "prev-screen":
+        return { ...interaction, actionType };
+      case "open-url":
+        return { ...interaction, actionType, url: interaction.url ?? "" };
+    }
+  })();
+
+  if (next.animation && !isAnimationAllowedForAction(actionType, next.animation.type)) {
+    const { animation: _removed, ...rest } = next;
+    return rest;
   }
+  return next;
 }
 
 /**
@@ -276,9 +292,29 @@ export function withDelay(interaction: Interaction, delay: number): Interaction 
  * 校验一条交互是否自洽。
  *
  * 返回问题描述列表，空数组表示通过。
+ *
+ * **这个函数在运行时命令分发路径上**（`interaction.patch` → `applyCommand`），
+ * 所以它必须对畸形输入**只返回问题、不抛异常**——抛出的异常会以
+ * `TypeError` 的形式冒出命令层，调用方分不清是「交互不合法」还是「代码坏了」。
+ * 因此所有读取都先做类型守卫。
  */
 export function validateInteraction(interaction: Interaction, nodeType?: string): string[] {
   const problems: string[] = [];
+
+  if (!interaction || typeof interaction !== "object") {
+    problems.push("interaction must be an object");
+    return problems;
+  }
+
+  // 事件与动作是必填的：没有它们这条交互什么都不会发生。
+  // 缺字段时各个 `has*` 判定都会返回 false，问题列表会是空的——
+  // 那样「校验通过」会被误读成「这条交互有效」。
+  if (!interaction.eventType) {
+    problems.push("interaction requires an eventType");
+  }
+  if (!interaction.actionType) {
+    problems.push("interaction requires an actionType");
+  }
 
   if (nodeType !== undefined && !isEventTypeAllowedForNode(interaction.eventType, nodeType)) {
     problems.push(`event type "${interaction.eventType}" is not allowed for node type "${nodeType}"`);
