@@ -11,8 +11,8 @@ export interface PropertyPanelProps {
   disabled?: boolean;
   onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints">>): void;
   onPatchText(patch: TextPatch): void;
-  /** 改段落样式（列表类型 / 缩进）；走独立命令，不经过 TextPatch。 */
-  onSetParagraphStyle?(payload: { from: number; to: number; style: { listType?: ListType | "none"; indentDelta?: number } }): void;
+  /** 改段落样式（列表类型 / 缩进 / 段落缩进 / 悬挂 / 列表间距）；走独立命令，不经过 TextPatch。 */
+  onSetParagraphStyle?(payload: { from: number; to: number; style: { listType?: ListType | "none"; indentDelta?: number; paragraphIndent?: number; hanging?: boolean; listSpacing?: number } }): void;
   onPatchImage(patch: { fit?: ImageNode["fit"] }): void;
 /** 布尔组的运算类型切换与解除。 */
   onSetBooleanOperation?(operation: BooleanOperation): void;
@@ -91,7 +91,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
       ? { from: Math.max(0, textSelection.from), to: Math.min(node.text.length, textSelection.to) }
       : { from: 0, to: node.text.length })
     : { from: 0, to: 0 };
-  const setParagraphStyle = (style: { listType?: ListType | "none"; indentDelta?: number }) => {
+  const setParagraphStyle = (style: { listType?: ListType | "none"; indentDelta?: number; paragraphIndent?: number; hanging?: boolean; listSpacing?: number }) => {
     if (node.type !== "text") return;
     onSetParagraphStyle?.({ ...paragraphRange, style });
   };
@@ -488,7 +488,31 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
               </button>
             </div>
           </div>
-          <p className="field-hint">列表作用于选区覆盖的段落；没有选区时作用于整段文本。</p>
+          <NumberField
+            label="段落缩进"
+            value={paragraphState?.paragraphIndent ?? 0}
+            min={0}
+            disabled={disabled || !onSetParagraphStyle}
+            onCommit={paragraphIndent => setParagraphStyle({ paragraphIndent })}
+          />
+          <Segmented
+            label="悬挂"
+            value={paragraphState?.hanging ? "hanging" : "none"}
+            disabled={disabled || !onSetParagraphStyle || !paragraphState?.listType}
+            options={[
+              { value: "none", label: "不悬挂" },
+              { value: "hanging", label: "悬挂" },
+            ]}
+            onChange={value => setParagraphStyle({ hanging: value === "hanging" })}
+          />
+          <NumberField
+            label="列表间距"
+            value={paragraphState?.listSpacing ?? 0}
+            min={0}
+            disabled={disabled || !onSetParagraphStyle}
+            onCommit={listSpacing => setParagraphStyle({ listSpacing })}
+          />
+          <p className="field-hint">列表作用于选区覆盖的段落；没有选区时作用于整段文本。悬挂只对列表段落有效（标记会画到文本框外）。</p>
         </Section>
       )}
     </>
@@ -505,13 +529,19 @@ function currentParagraphState(
   text: string,
   paragraphStyles: TextNode["paragraphStyles"],
   offset: number,
-): { listType?: ListType; indent: number } | undefined {
+): { listType?: ListType; indent: number; paragraphIndent: number; hanging: boolean; listSpacing: number } | undefined {
   if (!text.length) return undefined;
   const index = paragraphIndexAt(text, Math.max(0, Math.min(offset, text.length - 1)));
   const range = paragraphRanges(text)[index];
   if (!range) return undefined;
   const style = paragraphStyleAt(paragraphStyles, range.start, range.end);
-  return { listType: style?.listType, indent: style?.indent ?? 0 };
+  return {
+    listType: style?.listType,
+    indent: style?.indent ?? 0,
+    paragraphIndent: style?.paragraphIndent ?? 0,
+    hanging: style?.hanging === true,
+    listSpacing: style?.listSpacing ?? 0,
+  };
 }
 
 const booleanOperationOptions = [  { value: "union", label: "合并" },

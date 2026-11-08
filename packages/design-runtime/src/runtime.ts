@@ -204,8 +204,24 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       if (style.indentDelta !== undefined && (!Number.isInteger(style.indentDelta) || style.indentDelta < -MAX_LIST_INDENT || style.indentDelta > MAX_LIST_INDENT)) {
         throw new CommandError(`Paragraph indent delta must be an integer between -${MAX_LIST_INDENT} and ${MAX_LIST_INDENT}`);
       }
-      if (style.listType === undefined && style.indent === undefined && style.indentDelta === undefined) {
-        throw new CommandError("Paragraph style must set listType, indent or indentDelta");
+      if (style.paragraphIndent !== undefined && (!Number.isFinite(style.paragraphIndent) || style.paragraphIndent < 0)) {
+        throw new CommandError("Paragraph indent must be a non-negative number");
+      }
+      if (style.listSpacing !== undefined && (!Number.isFinite(style.listSpacing) || style.listSpacing < 0)) {
+        throw new CommandError("Paragraph list spacing must be a non-negative number");
+      }
+      if (style.hanging !== undefined && typeof style.hanging !== "boolean") {
+        throw new CommandError("Paragraph hanging must be a boolean");
+      }
+      if (
+        style.listType === undefined
+        && style.indent === undefined
+        && style.indentDelta === undefined
+        && style.paragraphIndent === undefined
+        && style.hanging === undefined
+        && style.listSpacing === undefined
+      ) {
+        throw new CommandError("Paragraph style must set listType, indent, indentDelta, paragraphIndent, hanging or listSpacing");
       }
       const next = setParagraphStyle(node.text, node.paragraphStyles, from, to, style);
       if (next.length) node.paragraphStyles = next;

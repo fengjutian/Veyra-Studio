@@ -88,6 +88,7 @@ function measureWithCanvas(
       fontSize: request.fontSize,
       lineHeight: request.lineHeight,
       letterSpacing: request.letterSpacing,
+      align: request.align,
       availableWidth: request.availableWidth,
       measure: (value: string, style: RichTextStyle) => {
         context.font = fontFor(request, style.fontSize, style.fontWeight, style.fontStyle);

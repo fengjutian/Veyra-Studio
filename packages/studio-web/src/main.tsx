@@ -927,8 +927,9 @@ function App() {
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
   const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
   // 段落样式走独立命令：它是带区间语义的结构，不能混进 text.patch。
-  const setParagraphStyleOf = (id: string, payload: { from: number; to: number; style: { listType?: "bullet" | "ordered" | "none"; indentDelta?: number } }) => void run(() => execute([{ type: "text.paragraph.set", payload: { id, ...payload } }]));
-  const setParagraphStyle = (payload: { from: number; to: number; style: { listType?: "bullet" | "ordered" | "none"; indentDelta?: number } }) => selected?.type === "text" && setParagraphStyleOf(selected.id, payload);
+  type ParagraphStyleCommand = { listType?: "bullet" | "ordered" | "none"; indentDelta?: number; paragraphIndent?: number; hanging?: boolean; listSpacing?: number };
+  const setParagraphStyleOf = (id: string, payload: { from: number; to: number; style: ParagraphStyleCommand }) => void run(() => execute([{ type: "text.paragraph.set", payload: { id, ...payload } }]));
+  const setParagraphStyle = (payload: { from: number; to: number; style: ParagraphStyleCommand }) => selected?.type === "text" && setParagraphStyleOf(selected.id, payload);
   // 图片的 fit 单独走 image.patch，和文字一样不扩张通用节点 patch。
   const patchImageOf = (id: string, patchValue: { fit?: ImageNode["fit"] }) => void run(() => execute([{ type: "image.patch", payload: { id, patch: patchValue } }]));
   // 批量改动：每个节点用自己原有的外观/布局合并后再发一条 patch，避免整块替换丢掉别的字段。

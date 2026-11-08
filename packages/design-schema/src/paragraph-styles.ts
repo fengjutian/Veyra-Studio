@@ -283,7 +283,14 @@ export function setParagraphStyle(
   runs: readonly ParagraphStyleRun[] | undefined,
   from: number,
   to: number,
-  style: { listType?: ListType | "none"; indent?: number; indentDelta?: number },
+  style: {
+    listType?: ListType | "none";
+    indent?: number;
+    indentDelta?: number;
+    paragraphIndent?: number;
+    hanging?: boolean;
+    listSpacing?: number;
+  },
 ): ParagraphStyleRun[] {
   const snapped = snapRangeToParagraphs(text, from, to);
   const ranges = paragraphRanges(text);
@@ -313,10 +320,26 @@ export function setParagraphStyle(
     if (style.listType === "none") {
       delete merged.listType;
       delete merged.indent;
+      delete merged.hanging;
+      delete merged.paragraphIndent;
+      delete merged.listSpacing;
     } else if (style.listType !== undefined) {
       merged.listType = style.listType;
     }
     if (style.indent !== undefined) merged.indent = style.indent;
+    // 归零/关掉就删掉字段：留着 `0` 或 `false` 会让「样式为空」的判断失真。
+    if (style.paragraphIndent !== undefined) {
+      if (style.paragraphIndent > 0) merged.paragraphIndent = style.paragraphIndent;
+      else delete merged.paragraphIndent;
+    }
+    if (style.hanging !== undefined) {
+      if (style.hanging) merged.hanging = true;
+      else delete merged.hanging;
+    }
+    if (style.listSpacing !== undefined) {
+      if (style.listSpacing > 0) merged.listSpacing = style.listSpacing;
+      else delete merged.listSpacing;
+    }
     if (style.indentDelta !== undefined && merged.listType) {
       // 相对缩进按每段自己的级别加减；非列表段落没有级别可加，保持原样。
       merged.indent = Math.max(0, Math.min(MAX_LIST_INDENT, (merged.indent ?? 0) + style.indentDelta));
@@ -523,6 +546,12 @@ export interface ResolvedParagraph {
   marker?: string;
   /** 编号的数值形式（1、2、3…）；bullet 与普通段落为 undefined。 */
   ordinal?: number;
+  /** 段落缩进（px）；居中/右对齐时布局会把它扣掉。 */
+  paragraphIndent: number;
+  /** 这一段之后的列表间距（px）。 */
+  spaceAfter: number;
+  /** 悬挂列表：标记不占正文宽度，画在文本框外。 */
+  hanging: boolean;
 }
 
 /**
@@ -555,7 +584,11 @@ export function resolveParagraphs(
       if (listType === "bullet") marker = BULLET_MARKER;
     }
     const listIndent = level * LIST_INDENT_STEP;
-    const markerWidth = listType ? LIST_MARKER_WIDTH : 0;
+    const hanging = style.hanging === true && Boolean(listType);
+    // 悬挂列表的标记不占正文宽度：文字从框的左边缘开始，标记悬在框外。
+    const markerWidth = listType && !hanging ? LIST_MARKER_WIDTH : 0;
+    const paragraphIndent = style.paragraphIndent ?? 0;
+    const spaceAfter = style.listSpacing ?? 0;
     return {
       index: range.index,
       start: range.start,
@@ -564,7 +597,10 @@ export function resolveParagraphs(
       style,
       listIndent,
       markerWidth,
-      left: listIndent + markerWidth,
+      paragraphIndent,
+      spaceAfter,
+      hanging,
+      left: listIndent + markerWidth + paragraphIndent,
       ...(marker ? { marker } : {}),
       ...(ordinal !== undefined ? { ordinal } : {}),
     };

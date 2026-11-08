@@ -156,7 +156,7 @@ test("rejects an empty style payload", () => {
   const runtime = textRuntime("a");
   assert.throws(() => runtime.execute(envelope(1, [
     { type: "text.paragraph.set", payload: { id: "label", from: 0, to: 1, style: {} } },
-  ])), /must set listType, indent or indentDelta/);
+  ])), /must set listType, indent, indentDelta, paragraphIndent, hanging or listSpacing/);
 });
 
 test("undoes the paragraph style change", () => {

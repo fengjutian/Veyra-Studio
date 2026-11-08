@@ -493,10 +493,19 @@ function paragraphBlocksHtml(node: TextNode): string {
   const paragraphs = resolveParagraphs(node.text, node.paragraphStyles);
   const blocks: string[] = [];
   let index = 0;
+  // 段落缩进只对左对齐生效（与 Figma 一致）：居中/右对齐时画布会把它扣掉，
+  // HTML 里就不能再补 padding，否则居中的文字会被推歪。
+  const indentApplies = (node.textAlign ?? "left") === "left";
   while (index < paragraphs.length) {
     const paragraph = paragraphs[index]!;
     if (!paragraph.style.listType) {
-      blocks.push(`<p class="design-paragraph">${textRangeHtml(node, paragraph.start, paragraph.end)}</p>`);
+      const declarations: string[] = [];
+      if (indentApplies && paragraph.paragraphIndent > 0) {
+        declarations.push(`padding-left:${px(paragraph.paragraphIndent)}`);
+      }
+      if (paragraph.spaceAfter > 0) declarations.push(`margin-bottom:${px(paragraph.spaceAfter)}`);
+      const style = declarations.length ? ` style="${escapeAttribute(declarations.join(";"))}"` : "";
+      blocks.push(`<p class="design-paragraph"${style}>${textRangeHtml(node, paragraph.start, paragraph.end)}</p>`);
       index += 1;
       continue;
     }
@@ -505,11 +514,14 @@ function paragraphBlocksHtml(node: TextNode): string {
     while (index < paragraphs.length && paragraphs[index]!.style.listType === listType) {
       const item = paragraphs[index]!;
       const indent = item.style.indent ?? 0;
-      // 缩进：标记区宽度 + 级别缩进，与画布的几何一致。
-      const declarations = [`padding-left:${px(indent * LIST_INDENT_STEP + LIST_MARKER_WIDTH)}`];
+      // 缩进：标记区宽度 + 级别缩进 + 段落缩进，与画布的几何一致。
+      // 悬挂列表的标记不占正文宽度：它画在列表框之外，所以标记区宽度为 0。
+      const markerWidth = item.hanging ? 0 : LIST_MARKER_WIDTH;
+      const declarations = [`padding-left:${px(indent * LIST_INDENT_STEP + markerWidth + item.paragraphIndent)}`];
       if (listType === "ordered") {
         declarations.push(`list-style-type:${orderedListStyle(indent)}`);
       }
+      if (item.spaceAfter > 0) declarations.push(`margin-bottom:${px(item.spaceAfter)}`);
       const value = listType === "ordered" && item.ordinal !== undefined ? ` value="${item.ordinal}"` : "";
       items.push(`<li${value} style="${escapeAttribute(declarations.join(";"))}">${textRangeHtml(node, item.start, item.end)}</li>`);
       index += 1;

@@ -511,9 +511,6 @@ function drawImage(context: CanvasRenderingContext2D, node: SceneNode, options: 
 function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: number): void {
   const text = node.text!;
   const { x, y, width, height } = node.box;
-  context.beginPath();
-  context.rect(x, y, width, height);
-  context.clip();
   context.fillStyle = text.color;
   context.globalAlpha = opacity;
   context.textBaseline = "top";
@@ -532,12 +529,25 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
       fontSize: text.fontSize,
       lineHeight: text.lineHeight,
       letterSpacing: text.letterSpacing,
+      align: text.align,
       availableWidth: width,
       measure: (value, style) => {
         context.font = richFont(text, style);
         return context.measureText(value).width;
       },
     });
+    // 悬挂列表的标记画在文本框**外**：裁剪区必须往左让出标记的宽度，
+    // 否则标记会被裁掉（文本本身仍然从框的左边缘开始，不会溢出）。
+    let hangingOutside = 0;
+    context.font = richFont(text, { fontWeight: text.fontWeight, fontStyle: text.fontStyle, fontSize: text.fontSize });
+    for (const line of lines) {
+      if (line.hanging && line.marker) {
+        hangingOutside = Math.max(hangingOutside, context.measureText(line.marker).width + LIST_MARKER_GAP);
+      }
+    }
+    context.beginPath();
+    context.rect(x - hangingOutside, y, width + hangingOutside, height);
+    context.clip();
     // 逐行累加高度：段内大字号会把这一行撑高，不能按固定行高排。
     let lineY = y;
     for (const line of lines) {
@@ -551,7 +561,9 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
         context.font = richFont(text, { fontWeight: text.fontWeight, fontStyle: text.fontStyle, fontSize: text.fontSize });
         context.fillStyle = text.color;
         context.textAlign = "right";
-        context.fillText(line.marker, x + line.left - LIST_MARKER_GAP, lineY);
+        // 悬挂列表：标记悬在框外（框的左边界之外）；普通列表：标记在正文左侧的标记区里。
+        const markerX = line.hanging ? x - LIST_MARKER_GAP : x + line.left - LIST_MARKER_GAP;
+        context.fillText(line.marker, markerX, lineY);
         context.textAlign = "left";
       }
       for (const segment of line.segments) {
@@ -574,6 +586,9 @@ function drawText(context: CanvasRenderingContext2D, node: SceneNode, opacity: n
     return;
   }
 
+  context.beginPath();
+  context.rect(x, y, width, height);
+  context.clip();
   context.textAlign = text.align === "center" ? "center" : text.align === "right" ? "right" : "left";
   context.font = `${text.fontStyle} ${text.fontWeight} ${text.fontSize}px ${quoteFamily(text.fontFamily)}`;
   setLetterSpacing(context, text.letterSpacing);

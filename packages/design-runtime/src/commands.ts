@@ -79,7 +79,10 @@ export interface PatchTextCommand {
  *
  * `style` 是增量：没写的字段沿用该段自己的原值；
  * `listType: "none"` 表示取消列表（缩进级别同时归零）；
- * `indentDelta` 是相对缩进（每一段按自己的级别加减），对应 Tab / Shift+Tab。
+ * `indentDelta` 是相对缩进（每一段按自己的级别加减），对应 Tab / Shift+Tab；
+ * `paragraphIndent` 是段落整体右推的像素数（只对左对齐生效）；
+ * `hanging` 让列表标记悬在文本框外（标记不再占正文宽度）；
+ * `listSpacing` 是这一段之后的额外垂直间距。
  */
 export interface SetParagraphStyleCommand {
   type: "text.paragraph.set";
@@ -87,7 +90,14 @@ export interface SetParagraphStyleCommand {
     id: NodeId;
     from: number;
     to: number;
-    style: { listType?: ListType | "none"; indent?: number; indentDelta?: number };
+    style: {
+      listType?: ListType | "none";
+      indent?: number;
+      indentDelta?: number;
+      paragraphIndent?: number;
+      hanging?: boolean;
+      listSpacing?: number;
+    };
   };
 }
 

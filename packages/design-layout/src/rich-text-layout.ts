@@ -30,6 +30,11 @@ export interface RichTextLine {
   marker?: string;
   /** 标记区宽度（px）；非列表段落为 0。 */
   markerWidth: number;
+  /**
+   * 悬挂列表：标记不占正文宽度，画在文本框**外**（框左侧）。
+   * 渲染器据此把标记画到框外，而不是画进正文里。
+   */
+  hanging?: boolean;
 }
 
 export interface RichTextLayoutInput {
@@ -44,6 +49,13 @@ export interface RichTextLayoutInput {
   fontSize: number;
   lineHeight: number;
   letterSpacing: number;
+  /**
+   * 盒内对齐。
+   *
+   * 段落缩进（px）只对左对齐生效（与 Figma 一致），所以居中/右对齐时
+   * 要把它从左偏移里扣掉。
+   */
+  align?: "left" | "center" | "right";
   /** 不给宽度就不换行（只按显式 `\n` 断行）。 */
   availableWidth?: number;
   /** 量一段**同一样式**的文字宽度。字距由本模块按字符数补，回调里不要重复加。 */
@@ -98,7 +110,7 @@ function trimTrailingSpaces(chars: StyledChar[], from: number, to: number): numb
 }
 
 /** 把段落里的 [from, to) 组装成一行：相邻同样式合并，x 偏移按累计宽度算。 */
-function buildLine(input: RichTextLayoutInput, chars: StyledChar[], from: number, to: number): Omit<RichTextLine, "paragraphIndex" | "left" | "marker" | "markerWidth"> {
+function buildLine(input: RichTextLayoutInput, chars: StyledChar[], from: number, to: number): Omit<RichTextLine, "paragraphIndex" | "left" | "marker" | "markerWidth" | "hanging"> {
   const segments: RichTextSegment[] = [];
   let x = 0;
   let index = from;
@@ -138,7 +150,9 @@ export function layoutRichText(input: RichTextLayoutInput): RichTextLine[] {
 
   paragraphs.forEach((chars, paragraphIndex) => {
     const info = resolved[paragraphIndex];
-    const left = info?.left ?? 0;
+    // 段落缩进只对左对齐生效：居中/右对齐时把它从左偏移里扣掉。
+    const paragraphIndent = info?.paragraphIndent ?? 0;
+    const left = (info?.left ?? 0) - (input.align && input.align !== "left" ? paragraphIndent : 0);
     const marker = info?.marker;
     const markerWidth = info?.markerWidth ?? 0;
     // 缩进吃掉一部分可用宽度：文字不能越过文本框右边界。
@@ -147,48 +161,53 @@ export function layoutRichText(input: RichTextLayoutInput): RichTextLine[] {
       : undefined;
     // 标记只画在段落的首行；折行后的行与首行文字左对齐（与 CSS 的列表一致）。
     let firstLine = true;
-    const push = (line: Omit<RichTextLine, "paragraphIndex" | "left" | "marker" | "markerWidth">) => {
+    const push = (line: Omit<RichTextLine, "paragraphIndex" | "left" | "marker" | "markerWidth" | "hanging">) => {
       lines.push({
         ...line,
         paragraphIndex,
         left,
         markerWidth,
         ...(marker && firstLine ? { marker } : {}),
+        ...(info?.hanging ? { hanging: true } : {}),
       });
       firstLine = false;
     };
 
     if (!chars.length) {
       push({ segments: [], width: 0, height: Math.max(1, input.lineHeight) });
-      return;
-    }
-    if (!available) {
+    } else if (!available) {
       push(buildLine(input, chars, 0, chars.length));
-      return;
+    } else {
+      let start = 0;
+      while (start < chars.length) {
+        let width = 0;
+        let lastSpace = -1;
+        let end = start;
+        while (end < chars.length) {
+          const next = charWidth(input, chars[end]!);
+          if (width + next > available && end > start) break;
+          width += next;
+          if (chars[end]!.value === " ") lastSpace = end;
+          end += 1;
+        }
+        if (end >= chars.length) {
+          push(buildLine(input, chars, start, trimTrailingSpaces(chars, start, chars.length)));
+          break;
+        }
+        // 断行点：优先上一处空格，并且把断点处的空格留在行尾之外（CSS 也不会画出行尾空格）；
+        // 没有空格（或空格就是行首）就硬断在溢出字符之前。
+        const breakAt = lastSpace > start ? lastSpace : end;
+        push(buildLine(input, chars, start, Math.max(start + 1, breakAt)));
+        start = lastSpace > start ? lastSpace + 1 : end;
+        while (start < chars.length && chars[start]!.value === " ") start += 1;
+      }
     }
-
-    let start = 0;
-    while (start < chars.length) {
-      let width = 0;
-      let lastSpace = -1;
-      let end = start;
-      while (end < chars.length) {
-        const next = charWidth(input, chars[end]!);
-        if (width + next > available && end > start) break;
-        width += next;
-        if (chars[end]!.value === " ") lastSpace = end;
-        end += 1;
-      }
-      if (end >= chars.length) {
-        push(buildLine(input, chars, start, trimTrailingSpaces(chars, start, chars.length)));
-        break;
-      }
-      // 断行点：优先上一处空格，并且把断点处的空格留在行尾之外（CSS 也不会画出行尾空格）；
-      // 没有空格（或空格就是行首）就硬断在溢出字符之前。
-      const breakAt = lastSpace > start ? lastSpace : end;
-      push(buildLine(input, chars, start, Math.max(start + 1, breakAt)));
-      start = lastSpace > start ? lastSpace + 1 : end;
-      while (start < chars.length && chars[start]!.value === " ") start += 1;
+    // 段末的列表间距：加到本段最后一行的行高上——后续行因此整体下移，
+    // 而这一行自己的文字位置不变。
+    const spaceAfter = info?.spaceAfter ?? 0;
+    if (spaceAfter > 0 && lines.length) {
+      const last = lines[lines.length - 1]!;
+      last.height += spaceAfter;
     }
   });
   return lines;

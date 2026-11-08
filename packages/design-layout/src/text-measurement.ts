@@ -115,6 +115,7 @@ export function createEstimateTextMeasurer(): TextMeasurer {
           fontSize: node.fontSize,
           lineHeight: node.lineHeight,
           letterSpacing,
+          align: node.textAlign,
           availableWidth,
           measure: (value, style) => estimateWidth(value, style),
         });
@@ -160,6 +161,7 @@ export function createHostTextMeasurer(
         letterSpacing: node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing,
         ...(node.runs?.length ? { runs: node.runs } : {}),
         ...(node.paragraphStyles?.length ? { paragraphStyles: node.paragraphStyles } : {}),
+        ...(node.textAlign ? { align: node.textAlign } : {}),
         availableWidth,
       });
       return {

@@ -22,6 +22,8 @@ export interface TextMeasurementRequest {
   runs?: readonly TextRun[];
   /** 段落样式区间；缩进会吃掉可用宽度，宿主测量器必须一起算。 */
   paragraphStyles?: readonly ParagraphStyleRun[];
+  /** 盒内对齐：段落缩进只对左对齐生效，居中/右对齐时要把它扣掉。 */
+  align?: "left" | "center" | "right";
   availableWidth?: number;
 }
 

@@ -27,12 +27,27 @@ Figma 的对应能力（已实查 Figma 帮助文档）：
 - ✅ 列表缩进级别：0–4（对齐 Figma 的 5 级上限）；
 - ✅ 编号随缩进级别切换数字 / 字母 / 罗马数字；
 - ✅ 相对缩进（`indentDelta`）：每一段按**自己**的级别加减，对应 Tab / Shift+Tab；
-- ❌ 段落缩进（px，Figma 的 Paragraph indent）——**本轮砍掉**：它与列表缩进在几何上
-  都是「把文字往右推」，两套缩进叠在一起会让「这一段到底缩进多少」说不清；
-  等列表这套跑稳了再单独加（届时是另一个字段，不与 `indent` 混用）；
-- ❌ 悬挂列表（hanging list，标记画到文本框外）——画布上无法表达「画到框外」；
-- ❌ 列表间距（list spacing）——节点级行距已能表达大部分诉求；
+- ✅ 段落缩进（`paragraphIndent`，px）：Figma 的 Paragraph indent，与列表缩进**并存**——
+  列表缩进是「列表结构」，段落缩进是「这一段整体往右推多少像素」，两者叠加；
+- ✅ 悬挂列表（`hanging`）：标记**不占正文宽度**，画在文本框左边界之外；
+- ✅ 列表间距（`listSpacing`，px）：这一段**之后**额外留出的垂直空间；
 - ❌ 混合列表类型嵌套（有序里嵌无序）——本轮一个文本节点只有一种列表类型。
+
+### 1.1 三项新能力的取舍记录
+
+- **段落缩进为什么单独一个字段**：它与列表缩进在几何上都是「把文字往右推」，
+  但语义不同——`indent` 说的是「这是几级列表」，`paragraphIndent` 说的是
+  「这一段整体右移多少像素」。混成一个字段会让「这一段到底缩进多少」说不清，
+  也无法表达「非列表段落也要缩进」。两者叠加，顺序固定：
+  `left = indent * LIST_INDENT_STEP + markerWidth + paragraphIndent`。
+- **段落缩进只对左对齐生效**（与 Figma 一致）：居中 / 右对齐时画布会把它从左偏移里扣掉，
+  否则「居中 + 缩进」在 Figma 里没有意义。测量链路必须知道对齐方式，
+  所以 `TextMeasurementRequest` 增加了 `align`，文本缓存键也要带上它。
+- **悬挂列表为什么画布能表达**：上一轮判断「画布无法表达画到框外」是错的——
+  画布的裁剪区可以往左让出标记的宽度，标记画在框外。正文从框的左边缘开始，
+  标记右边缘停在框左边界之前 `LIST_MARKER_GAP`。
+- **列表间距为什么不是节点级行距**：行距是「所有行之间」，列表间距是「这一段之后」，
+  两者作用点不同（行距会把段落内部也拉开）。
 
 ## 2. 数据模型
 
@@ -76,6 +91,12 @@ export interface ParagraphStyle {
   listType?: ListType;
   /** 列表缩进级别，0–4（对齐 Figma 的 5 级上限）。 */
   indent?: number;
+  /** 段落缩进（px）：这一段整体往右推多少像素；只对左对齐生效。 */
+  paragraphIndent?: number;
+  /** 悬挂列表：标记不占正文宽度，画在文本框外。 */
+  hanging?: boolean;
+  /** 列表间距（px）：这一段之后额外留出的垂直空间。 */
+  listSpacing?: number;
 }
 
 /** 段落样式区间：from/to 是 UTF-16 下标，指向整段（含首尾换行符的归属见下）。 */
@@ -171,10 +192,21 @@ export const MAX_LIST_INDENT = 4;
 
 一个段落里**所有行**的左侧都要让出：
 
-`indent * LIST_INDENT_STEP + (listType ? LIST_MARKER_WIDTH : 0)`
+`indent * LIST_INDENT_STEP + (listType ? LIST_MARKER_WIDTH : 0) + paragraphIndent`
 
 - `indent * LIST_INDENT_STEP`：列表缩进级别；
-- `LIST_MARKER_WIDTH`：列表标记区（bullet / 编号画在这里）。
+- `LIST_MARKER_WIDTH`：列表标记区（bullet / 编号画在这里）；
+- `paragraphIndent`：段落缩进（px）。
+
+三个例外：
+
+- **悬挂列表**（`hanging`）：标记区宽度为 **0**——标记不占正文宽度，正文从文本框的
+  左边缘开始；标记画在框外（框左边界之外 `LIST_MARKER_GAP` 处）。
+  级别缩进仍然保留（`indent * LIST_INDENT_STEP`），只有标记区宽度被去掉。
+- **非左对齐**：居中 / 右对齐时 `paragraphIndent` 被扣掉（§1.1），
+  于是左偏移回到「列表缩进 + 标记区」。
+- **列表间距**（`listSpacing`）：不改变水平偏移，而是加到该段**最后一行**的行高上，
+  于是后续行（下一段）整体下移，而这一行自己的文字位置不变。
 
 **标记只画在段落的首行**；折行后的行不再画标记，但正文仍然与首行正文左对齐
 （都在同一个 `left` 偏移上）。这与 CSS 的列表一致：列表项的续行与首行文字对齐，
@@ -219,9 +251,9 @@ bullet 标记固定为 `•`，**各级别一致**（Figma 明确如此）。
 
 | 端 | 实现 |
 | --- | --- |
-| 画布 | `canvas-renderer` 在段落首行左侧画标记（`•` 或编号，右对齐在 `x + left - LIST_MARKER_GAP`），正文按 §3.2 的偏移右移；折行后的行只让出缩进，不再画标记 |
-| HTML | 节点包一个 `<div>`，内部每段一个块：列表段落用 `<ul>/<ol>`（标记由 CSS `list-style` 提供，缩进用 `padding-left`），普通段落用 `<p>` |
-| SVG | 标记与正文分属两个 `<text>`：标记一个（`text-anchor="end"`），正文一个（SVG 的 `<text>` 不自动换行，位置靠 `x`）；多段包在一个 `<g>` 里 |
+| 画布 | `canvas-renderer` 在段落首行左侧画标记（`•` 或编号，普通列表右对齐在 `x + left - LIST_MARKER_GAP`，悬挂列表右对齐在 `x - LIST_MARKER_GAP` 即框外），正文按 §3.2 的偏移右移；折行后的行只让出缩进，不再画标记。悬挂列表的裁剪区往左让出「标记宽度 + 间隙」，否则框外的标记会被裁掉 |
+| HTML | 节点包一个 `<div>`，内部每段一个块：列表段落用 `<ul>/<ol>`（标记由 CSS `list-style` 提供，缩进用 `padding-left`），普通段落用 `<p>`。段落缩进并入 `padding-left`；悬挂列表的 `padding-left` 不含标记区宽度（配合 `list-style-position:outside`，标记落在列表框外）；列表间距用 `margin-bottom` |
+| SVG | 标记与正文分属两个 `<text>`：标记一个（`text-anchor="end"`），正文一个（SVG 的 `<text>` 不自动换行，位置靠 `x`）；多段包在一个 `<g>` 里。段落缩进改正文的 `x`，列表间距累加到后续段的 `y` |
 | PNG | 由 SVG 光栅化，自动继承 |
 
 HTML 用**真正的 `<ul>/<ol>`** 而不是「段落 + 手写标记」：这样浏览器负责标记渲染，
@@ -242,7 +274,7 @@ HTML 用**真正的 `<ul>/<ol>`** 而不是「段落 + 手写标记」：这样�
 
 ```
 text.paragraph.set
-  payload: { id, from, to, style: { listType?, indent?, indentDelta? } }
+  payload: { id, from, to, style: { listType?, indent?, indentDelta?, paragraphIndent?, hanging?, listSpacing? } }
 ```
 
 `from` / `to` 是 **UTF-16 下标**（与 `runs` 同口径），指向**要施加样式的段落范围**。
@@ -255,6 +287,12 @@ text.paragraph.set
 - `indentDelta` 是**相对**缩进（−4…+4）：每一段按**自己**的级别加减，
   对应 Tab / Shift+Tab。选区里既有 0 级又有 2 级时，加一级后分别是 1 级和 3 级，
   不会被统一设成同一个值。
+- `paragraphIndent` 是**绝对**像素数（≥ 0）：这一段整体右移多少。
+- `hanging` 是布尔：只有列表段落才有意义（没有标记就谈不上悬挂）；
+  没有 `listType` 的段落设 `hanging` 会被文档校验拒绝。
+- `listSpacing` 是**绝对**像素数（≥ 0）：这一段之后的额外垂直空间。
+- 三个新字段与 `listType: "none"` 一样遵循「归零 / 关掉 = 删字段」：
+  写 `paragraphIndent: 0` 等于没有段落缩进，不会留下一条 `0`。
 
 **选区右端是开区间**：`to` 是选区的结束位置，不属于选区。所以 `to` 恰好落在
 某一段的起点时，那一段**不算**被选中（`"a\nb\nc"` 里选 `[0,4)` 只覆盖 `"a"` 和 `"b"`）。
@@ -268,6 +306,9 @@ text.paragraph.set
 
 - **列表类型**：分段控件（无 / 项目符号 / 编号），作用于选区覆盖的段落；无选区时作用于全节点。
 - **列表缩进**：`−` / `+` 步进器，0–4 级（按相对缩进加减）。
+- **段落缩进**：数字输入（px，≥ 0）。
+- **悬挂**：分段控件（不悬挂 / 悬挂），只在列表段落上可用。
+- **列表间距**：数字输入（px，≥ 0）。
 
 选区语义复用现有的 `textSelection`（UTF-16 选区）。
 段落样式作用于「与选区相交的所有段落」——这与 Figma 一致（在列表项中间选一个字，
@@ -275,11 +316,11 @@ text.paragraph.set
 
 ## 6. 已知限制
 
-- **悬挂列表**（hanging list）不做：标记画到文本框外，画布无法表达；
-- **列表间距**不做：节点级 `lineHeight` 已能表达大部分诉求；
 - **一个文本节点只有一种列表类型**：不能「有序列表里嵌一段无序」；
-- **段落缩进（px）本轮不做**（Figma 的 Paragraph indent）：与列表缩进在几何上重叠，
-  两套缩进并存会让「缩进了多少」说不清；等列表这套稳定后单独加；
+- **悬挂列表的标记画在文本框外**：画布能画，但标记会被父级的 `clip` 裁掉
+  （节点自身开了裁切时）；
+- **段落缩进只对左对齐生效**：居中 / 右对齐时会被扣掉（与 Figma 一致，不是缺陷）；
+- **列表间距只加在段落之后**，不能表达「段前间距」；
 - **段落样式不进 `TextPatch`**：只能通过 `text.paragraph.set` 改；
 - **组件实例的文本覆盖不同步段落样式**：`component.override` 只同步 `text`；
 - **SVG 不换行**（既有行为），段落样式只解决缩进与标记，不解决折行。
@@ -289,10 +330,15 @@ text.paragraph.set
 | 文件 | 覆盖 |
 | --- | --- |
 | `design-schema/test/paragraph-styles.test.ts` | 校验、区间对齐、合并、remap、编号格式 |
+| `design-schema/test/paragraph-indent.test.ts` | 段落缩进 / 悬挂 / 间距的解析与合并语义、非法值拒绝 |
 | `design-layout/test/paragraph-layout.test.ts` | 行偏移、标记区、编号递增与重置、hug 高度 |
+| `design-layout/test/paragraph-indent-layout.test.ts` | 段落缩进与对齐的关系、悬挂的标记宽度、列表间距的行高 |
 | `design-runtime/test/paragraph-styles.test.ts` | 命令层：区间吸附、增量语义、取消列表 |
+| `design-runtime/test/paragraph-indent.test.ts` | 三个新字段的命令校验与文档级校验 |
 | `design-export/test/paragraph-styles.test.ts` | HTML 的 `<ul>/<ol>` 分组与缩进、SVG 的标记文本 |
+| `design-export/test/paragraph-indent-export.test.ts` | HTML 的段落缩进 / 悬挂 / 间距表达、旧产物不变 |
 | `studio-web/test/renderer-paragraph-styles.test.ts` | 画布画标记、正文右移、折行后不再让出标记区 |
+| `studio-web/test/renderer-paragraph-hanging.test.ts` | 框外的悬挂标记、裁剪区让位、段落缩进与列表间距的落笔位置 |
 
 ## 8. 参照来源
 

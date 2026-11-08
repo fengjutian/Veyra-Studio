@@ -248,7 +248,14 @@ const paragraphStyleRunSchema = z.object({
   style: z.object({
     listType: z.enum(["bullet", "ordered"]).optional(),
     indent: z.number().int().min(0).max(4).optional(),
-  }).refine(style => style.listType !== undefined || style.indent !== undefined, {
+    paragraphIndent: z.number().finite().nonnegative().optional(),
+    hanging: z.boolean().optional(),
+    listSpacing: z.number().finite().nonnegative().optional(),
+  }).refine(style => style.listType !== undefined
+    || style.indent !== undefined
+    || style.paragraphIndent !== undefined
+    || style.hanging !== undefined
+    || style.listSpacing !== undefined, {
     message: "Paragraph style must set at least one field",
   }),
 });

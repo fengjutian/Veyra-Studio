@@ -18,6 +18,8 @@ export function textMeasurementKey(node: TextNode, availableWidth?: number): str
     node.fontWeight ?? TEXT_DEFAULTS.fontWeight,
     node.fontStyle ?? TEXT_DEFAULTS.fontStyle,
     node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing,
+    // 对齐也会改变可用宽度（居中/右对齐要扣掉段落缩进），不同对齐不能共用缓存。
+    node.textAlign ?? "",
     availableWidth ?? "",
     node.text,
     // 段内样式必须进键：同一段文字改成局部加粗后宽度不同，共用缓存会拿到旧尺寸。
