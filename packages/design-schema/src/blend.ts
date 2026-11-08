@@ -1,10 +1,17 @@
 /**
  * 混合模式在 Canvas / CSS / SVG 三处的名字映射。
  *
- * 取值集合与 CSS `mix-blend-mode` 对齐，所以 HTML 与 SVG 导出**不需要翻译**——
- * 同一套名字直接写进 CSS 与 SVG 样式。Canvas 2D 的
- * `globalCompositeOperation` 是另一套语义（Porter-Duff 合成），
- * 只有一部分取值能对上，对不上的必须**显式退化**而不是猜。
+ * 取值集合与 CSS `mix-blend-mode` 对齐，Canvas 的 `globalCompositeOperation`
+ * 里也有同名的一整套混合模式——**名字相同，语义也相同**。
+ *
+ * 这不是查文档得出的，是实测的：`packages/studio-web/visual/blend-probe.ts`
+ * 让浏览器在同一张图里用 CSS 和 Canvas 各画一遍，逐像素比对，16/16 一致
+ * （包括 `hue` / `saturation` / `color` / `luminosity` 这四种颜色类混合）。
+ * 初版曾断言「Canvas 没有颜色类混合」，是错的，已按实测改正。
+ *
+ * 真正的差别不在名字，而在**作用域**：Canvas 的合成操作是「就地」的，
+ * 它把正在画的内容与画布上已有内容混合，没有「把一个图层组整体混合」的概念。
+ * 图层级语义要靠离屏合成实现，那是渲染层的事，不在本文件的范围内。
  */
 
 import type { BlendMode } from "./types";
@@ -27,7 +34,11 @@ export type CanvasCompositeOperation =
   | "hard-light"
   | "soft-light"
   | "difference"
-  | "exclusion";
+  | "exclusion"
+  | "hue"
+  | "saturation"
+  | "color"
+  | "luminosity";
 
 /** 全部混合模式（与 CSS `mix-blend-mode` 一致）。 */
 export const BLEND_MODES: BlendMode[] = [
@@ -50,17 +61,12 @@ export const BLEND_MODES: BlendMode[] = [
 ];
 
 /**
- * Canvas 2D 的 `globalCompositeOperation` 对应的混合模式。
+ * 混合模式 → Canvas 的合成操作。
  *
- * **只有 12 种**能对上——`hue` / `saturation` / `color` / `luminosity`
- * 在 Canvas 里没有等价物（Canvas 只有 Porter-Duff 与分离式混合的前 12 种，
- * 颜色类混合需要 HSL 空间运算，Canvas 不提供）。
- *
- * `overlay` / `darken` / `lighten` / `color-dodge` / `color-burn` /
- * `hard-light` / `soft-light` 在 Canvas 里的名字与 CSS **不同**，
- * 这里做一次翻译。
+ * Canvas 的合成操作名与 CSS 的混合模式名**逐字相同**，所以这张表只是
+ * 「类型 + 缺省值」两件事：名字一一对应，`normal` 对应 `source-over`。
  */
-const CANVAS_COMPOSITE: Partial<Record<BlendMode, CanvasCompositeOperation>> = {
+const CANVAS_COMPOSITE: Record<BlendMode, CanvasCompositeOperation> = {
   normal: "source-over",
   multiply: "multiply",
   screen: "screen",
@@ -73,21 +79,29 @@ const CANVAS_COMPOSITE: Partial<Record<BlendMode, CanvasCompositeOperation>> = {
   "soft-light": "soft-light",
   difference: "difference",
   exclusion: "exclusion",
+  hue: "hue",
+  saturation: "saturation",
+  color: "color",
+  luminosity: "luminosity",
 };
 
 /**
  * 混合模式 → Canvas 的合成操作。
  *
- * 没有对应值时返回 `undefined`——调用方应当**退回 normal 并给出警告**，
- * 不能随便挑一个近似的：画出一个「看起来差不多但其实错」的结果，
- * 比明确地说「这个模式画布上不支持」糟糕得多。
+ * `normal`（以及没设混合模式）返回 `undefined`——那是缺省行为，
+ * 调用方不需要动 `globalCompositeOperation`。
  */
 export function canvasCompositeFor(blendMode: BlendMode | undefined): CanvasCompositeOperation | undefined {
   if (!blendMode || blendMode === "normal") return undefined;
   return CANVAS_COMPOSITE[blendMode];
 }
 
-/** 混合模式是否能在 Canvas 2D 上表达。 */
+/**
+ * 混合模式是否能在 Canvas 2D 上表达。
+ *
+ * 16 种全部可以（见文件头的实测结论）。保留这个函数是为了让调用方
+ * 仍然有一处显式的判据，而不是各自 `switch` 一遍。
+ */
 export function isBlendModeSupportedOnCanvas(blendMode: BlendMode | undefined): boolean {
   if (!blendMode || blendMode === "normal") return true;
   return CANVAS_COMPOSITE[blendMode] !== undefined;

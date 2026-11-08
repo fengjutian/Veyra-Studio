@@ -54,9 +54,11 @@ export interface CanvasSurfaceProps {
   editSelected?: number | null;
   /** 拖动时的对齐辅助线。 */
   guides?: SnapGuide[];
+  /** 画布降级提示（无法合成、被跨域资源污染等）。 */
+  onWarning?(message: string): void;
 }
 
-export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, rotationOverride, showRotateHandle, pathOverride, editAnchors, editHandles, editSelected, guides }: CanvasSurfaceProps) {
+export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, rotationOverride, showRotateHandle, pathOverride, editAnchors, editHandles, editSelected, guides, onWarning }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
@@ -105,6 +107,7 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
       zoom,
       devicePixelRatio: window.devicePixelRatio || 1,
       images,
+      onWarning,
       onAfterPaint: context => {
         // 框选与绘制预览跟选区无关：从空白处开始框选时选区本来就是空的，
         // 之前把两者都放在 `selection` 判空之后，导致选框一直画不出来。
@@ -124,7 +127,7 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
       },
     });
-  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, editAnchors, editHandles, editSelected, guides]);
+  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, editAnchors, editHandles, editSelected, guides, onWarning]);
 
   return <canvas ref={canvasRef} className="canvas-surface" aria-hidden="true" />;
 }

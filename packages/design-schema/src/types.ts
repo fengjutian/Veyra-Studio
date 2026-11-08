@@ -176,8 +176,10 @@ export type Paint =
    *
    * 与 `radial` 的区别就是「圆」与「椭圆」——Figma 的径向渐变默认是正圆，
    * 拉宽盒子就得到椭圆；这里显式给出两个半轴，避免依赖盒子长宽比。
+   *
+   * `angle` 是旋转角（度，顺时针，缺省 0 = 不旋转）：椭圆长轴的方向。
    */
-  | { type: "elliptical"; cx: number; cy: number; rx: number; ry: number; stops: PaintStop[] };
+  | { type: "elliptical"; cx: number; cy: number; rx: number; ry: number; angle?: number; stops: PaintStop[] };
 
 export interface AppearanceSpec {
   opacity: number;

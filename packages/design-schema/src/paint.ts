@@ -79,3 +79,26 @@ export function ellipticalGeometry(
     ry: Math.max(paint.ry, 1e-6) * box.height,
   };
 }
+
+/**
+ * 椭圆渐变的 SVG `gradientTransform` 矩阵（`a b c d e f`）。
+ *
+ * 矩阵是「平移 × 旋转 × 缩放」的复合：
+ * `T(cx,cy) · R(angle) · S(rx,ry)`——先按半轴把单位圆拉成椭圆，再绕中心旋转，
+ * 最后把中心挪到椭圆的几何中心。
+ *
+ * 角度为 0 时退化成 `matrix(rx 0 0 ry cx cy)`，与不旋转的写法逐字一致。
+ */
+export function ellipticalGradientMatrix(geometry: EllipticalGeometry, angle = 0): [number, number, number, number, number, number] {
+  const radians = (angle * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return [
+    cos * geometry.rx,
+    sin * geometry.rx,
+    -sin * geometry.ry,
+    cos * geometry.ry,
+    geometry.cx,
+    geometry.cy,
+  ];
+}

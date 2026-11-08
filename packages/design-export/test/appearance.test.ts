@@ -111,3 +111,36 @@ test("背景模糊是第一个兄弟时没有可模糊的背景，不产生空�
   const result = svg([glass]);
   assert.doesNotMatch(result.svg, /bgblur-clip/);
 });
+
+test("椭圆渐变的旋转角在 SVG 里写进 gradientTransform", () => {
+  const node = frame("card");
+  node.appearance.fills = [{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.25, angle: 90, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }];
+  const result = svg([node]);
+  // 盒子 200×100：中心 (100,50)，半轴 (100,25)；旋转 90° 后长轴转到竖直方向。
+  const matrix = result.svg.match(/gradientTransform="matrix\(([^)]+)\)"/)?.[1] ?? "";
+  const values = matrix.split(" ").map(Number);
+  assert.equal(values.length, 6);
+  assert.ok(Math.abs(values[0]!) < 1e-9, "a 应为 0");
+  assert.ok(Math.abs(values[1]! - 100) < 1e-9, "b 应为 rx");
+  assert.ok(Math.abs(values[2]! + 25) < 1e-9, "c 应为 -ry");
+  assert.ok(Math.abs(values[3]!) < 1e-9, "d 应为 0");
+  assert.equal(values[4], 100);
+  assert.equal(values[5], 50);
+});
+
+test("HTML 不支持旋转的径向渐变：丢掉旋转并给出诊断", () => {
+  const node = frame("card");
+  node.appearance.fills = [{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.25, angle: 90, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }];
+  const result = html([node]);
+  assert.match(result.html, /radial-gradient\(ellipse 100px 25px at 50% 50%/);
+  const diagnostic = result.diagnostics.find(item => item.feature === "gradient-rotation");
+  assert.ok(diagnostic, "应给出旋转降级诊断");
+  assert.equal(diagnostic.support, "approximated");
+});
+
+test("没有旋转角时 HTML 不产生旋转诊断", () => {
+  const node = frame("card");
+  node.appearance.fills = [{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.25, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }];
+  const result = html([node]);
+  assert.equal(result.diagnostics.find(item => item.feature === "gradient-rotation"), undefined);
+});

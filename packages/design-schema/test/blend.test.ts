@@ -5,6 +5,7 @@ import {
   canvasCompositeFor,
   cssBlendMode,
   ellipticalGeometry,
+  ellipticalGradientMatrix,
   isBlendModeSupportedOnCanvas,
   radialGeometry,
 } from "../src/index";
@@ -26,15 +27,22 @@ test("Canvas 能表达的混合模式直接给出合成操作", () => {
   assert.equal(canvasCompositeFor(undefined), undefined);
 });
 
-test("Canvas 没有的颜色类混合模式显式退化，而不是挑一个近似的", () => {
-  // hue / saturation / color / luminosity 在 Canvas 里没有等价物。
-  for (const mode of ["hue", "saturation", "color", "luminosity"] as const) {
-    assert.equal(canvasCompositeFor(mode), undefined, mode);
-    assert.equal(isBlendModeSupportedOnCanvas(mode), false, mode);
+test("16 种混合模式在画布上全部可用（与 CSS 逐像素一致，见 visual/blend-probe.ts）", () => {
+  // 初版断言「Canvas 没有颜色类混合」，实测证明是错的：Canvas 的
+  // globalCompositeOperation 里有 hue / saturation / color / luminosity，
+  // 且与 CSS 的 mix-blend-mode 逐像素一致。
+  for (const mode of BLEND_MODES) {
+    assert.equal(isBlendModeSupportedOnCanvas(mode), true, mode);
   }
-  assert.equal(isBlendModeSupportedOnCanvas("multiply"), true);
-  assert.equal(isBlendModeSupportedOnCanvas("normal"), true);
-  assert.equal(isBlendModeSupportedOnCanvas(undefined), true);
+  assert.equal(canvasCompositeFor("hue"), "hue");
+  assert.equal(canvasCompositeFor("saturation"), "saturation");
+  assert.equal(canvasCompositeFor("color"), "color");
+  assert.equal(canvasCompositeFor("luminosity"), "luminosity");
+  // 名字逐字相同，不需要翻译表。
+  for (const mode of BLEND_MODES) {
+    if (mode === "normal") continue;
+    assert.equal(canvasCompositeFor(mode), mode, mode);
+  }
 });
 
 test("CSS 侧不需要翻译：名字与 mix-blend-mode 相同", () => {
@@ -66,4 +74,18 @@ test("径向渐变的半径基准是长边，椭圆渐变的半轴基准是各�
   const ellipse = ellipticalGeometry(box, { cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.5 });
   assert.equal(ellipse.rx, 50);
   assert.equal(ellipse.ry, 25);
+});
+
+test("椭圆渐变的 SVG 矩阵：平移 × 旋转 × 缩放", () => {
+  const geometry = { cx: 100, cy: 50, rx: 40, ry: 20 };
+  // 不旋转时就是「缩放 + 平移」。
+  assert.deepEqual(ellipticalGradientMatrix(geometry, 0), [40, 0, 0, 20, 100, 50]);
+  // 旋转 90°：长轴转到竖直方向。
+  const [a, b, c, d, e, f] = ellipticalGradientMatrix(geometry, 90);
+  assert.ok(Math.abs(a) < 1e-9);
+  assert.ok(Math.abs(b - 40) < 1e-9);
+  assert.ok(Math.abs(c + 20) < 1e-9);
+  assert.ok(Math.abs(d) < 1e-9);
+  assert.equal(e, 100);
+  assert.equal(f, 50);
 });

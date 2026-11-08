@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -497,10 +497,12 @@ function paintValue(document: DesignDocument, node: DesignNode, paint: Paint, bo
     const radial = radialGeometry(box, paint);
     state.defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="${num(radial.cx)}" cy="${num(radial.cy)}" r="${num(radial.r)}">${stops}</radialGradient>`);
   } else {
-    // 椭圆渐变：SVG 没有原生的椭圆径向渐变，用「单位圆 + gradientTransform 缩放」表达。
-    // 矩阵把以原点为中心、半径 1 的圆映射成以 (cx,cy) 为心、半轴 (rx,ry) 的椭圆。
+    // 椭圆渐变：SVG 没有原生的椭圆径向渐变，用「单位圆 + gradientTransform」表达。
+    // 矩阵把以原点为中心、半径 1 的圆映射成以 (cx,cy) 为心、半轴 (rx,ry) 的椭圆，
+    // 有旋转角时再多绕中心转一次。
     const ellipse = ellipticalGeometry(box, paint);
-    state.defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="matrix(${num(ellipse.rx)} 0 0 ${num(ellipse.ry)} ${num(ellipse.cx)} ${num(ellipse.cy)})">${stops}</radialGradient>`);
+    const matrix = ellipticalGradientMatrix(ellipse, paint.angle ?? 0);
+    state.defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="matrix(${matrix.map(num).join(" ")})">${stops}</radialGradient>`);
   }
   return `url(#${id})`;
 }

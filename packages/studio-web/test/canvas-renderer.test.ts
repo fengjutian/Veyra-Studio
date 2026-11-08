@@ -9,7 +9,7 @@ interface Call { name: string; args: unknown[] }
 function fakeContext() {
   const calls: Call[] = [];
   const stack: Array<{ alpha: number; fillStyle: string; font: string; textAlign: string }> = [];
-  const state = { alpha: 1, fillStyle: "#000", strokeStyle: "#000", lineWidth: 1, font: "", textAlign: "left", textBaseline: "alphabetic", letterSpacing: "", composite: "source-over" };
+  const state = { alpha: 1, fillStyle: "#000", strokeStyle: "#000", lineWidth: 1, font: "", textAlign: "left", textBaseline: "alphabetic", letterSpacing: "", composite: "source-over", filter: "none" };
   const record = (name: string) => (...args: unknown[]) => { calls.push({ name, args }); };
   const context = {
     calls,
@@ -36,6 +36,12 @@ function fakeContext() {
       if (previous) { state.alpha = previous.alpha; state.fillStyle = previous.fillStyle; state.font = previous.font; state.textAlign = previous.textAlign; }
       calls.push({ name: "restore", args: [] });
     },
+    translate: record("translate"),
+    rotate: record("rotate"),
+    scale: record("scale"),
+    ellipse: record("ellipse"),
+    // 背景模糊要从主画布快照，渲染器读的是 context.canvas。
+    canvas: { width: 0, height: 0 },
     get globalAlpha() { return state.alpha; },
     set globalAlpha(value: number) { state.alpha = value; calls.push({ name: "globalAlpha", args: [value] }); },
     get fillStyle() { return state.fillStyle; },
@@ -52,17 +58,30 @@ function fakeContext() {
     set textBaseline(value: string) { state.textBaseline = value; },
     get letterSpacing() { return state.letterSpacing; },
     set letterSpacing(value: string) { state.letterSpacing = value; },
+    // 滤镜要能被断言「模糊半径是多少」，所以走 setter 记录调用。
+    get filter() { return state.filter; },
+    set filter(value: string) { state.filter = value; calls.push({ name: "filter", args: [value] }); },
     // 混合模式落到 Canvas 的 globalCompositeOperation。
     get globalCompositeOperation() { return state.composite; },
     set globalCompositeOperation(value: string) { state.composite = value; calls.push({ name: "globalCompositeOperation", args: [value] }); },
-    // 渲染器用 `"filter" in context` 判断浏览器是否支持 canvas filter。
-    filter: "none",
+    // 渲染器用 `"filter" in context` 判断浏览器是否支持 canvas filter；
+    // filter 用上面的 getter/setter 记录调用。
   };
   return context;
 }
 
 function fakeCanvas(context: ReturnType<typeof fakeContext>) {
   return { width: 0, height: 0, style: {} as Record<string, string>, getContext: () => context } as unknown as HTMLCanvasElement;
+}
+
+/** 离屏画布工厂：把离屏层的绘制记录到给定的假上下文里。 */
+function fakeSurface(context: ReturnType<typeof fakeContext>) {
+  return (width: number, height: number) => ({
+    canvas: { width, height } as CanvasImageSource,
+    context: context as unknown as CanvasRenderingContext2D,
+    width,
+    height,
+  });
 }
 
 function sceneNode(overrides: Partial<SceneNode> = {}): SceneNode {
@@ -229,48 +248,97 @@ test("paints a radial gradient from the box centre", () => {
   assert.deepEqual(radial.args, [60, 45, 0, 60, 45, 50]);
 });
 
-test("混合模式落到 Canvas 的合成操作上", () => {
+test("混合模式按图层组离屏合成：节点与整棵子树一起参与混合", () => {
   const context = fakeContext();
+  const layer = fakeContext();
   const renderer = createCanvas2DRenderer(fakeCanvas(context));
-  renderer.paint([sceneNode({ fill: "#000000", blendMode: "multiply" })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
+  renderer.paint([
+    sceneNode({
+      fill: "#ff0000",
+      blendMode: "multiply",
+      children: [sceneNode({ id: "child", box: { x: 12, y: 22, width: 20, height: 10 }, fill: "#00ff00", clip: false })],
+    }),
+  ], { width: 200, height: 100, zoom: 1, devicePixelRatio: 1, images: new Map(), surface: fakeSurface(layer) });
+
+  // 节点自己的填充与子树都画在离屏层上——主画布不直接画它们。
+  assert.ok(layer.calls.some(call => call.name === "fillStyle" && call.args[0] === "#ff0000"));
+  assert.ok(layer.calls.some(call => call.name === "fillStyle" && call.args[0] === "#00ff00"));
+  assert.ok(!context.calls.some(call => call.name === "fillStyle" && call.args[0] === "#00ff00"));
+  // 主画布只把整张离屏层贴一次，并且用混合模式合成。
+  const draws = context.calls.filter(call => call.name === "drawImage");
+  assert.equal(draws.length, 1);
+  // 包围盒就是节点盒子（子树在盒子内）：(10,20) 起点、100×50。
+  assert.deepEqual(draws[0]?.args.slice(1), [10, 20, 100, 50]);
   assert.equal(context.globalCompositeOperation, "multiply");
 });
 
-test("Canvas 不支持的混合模式退回 normal 并给出警告，而不是画错", () => {
+test("颜色类混合模式在画布上直接生效，不再退回 normal", () => {
+  const context = fakeContext();
+  const layer = fakeContext();
+  const warnings: string[] = [];
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([sceneNode({ fill: "#000000", blendMode: "hue" })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), surface: fakeSurface(layer), onWarning: message => warnings.push(message) });
+  assert.equal(context.globalCompositeOperation, "hue");
+  assert.deepEqual(warnings, []);
+});
+
+test("没有离屏画布时混合模式退化为就地混合，并明确给出警告", () => {
   const context = fakeContext();
   const warnings: string[] = [];
   const renderer = createCanvas2DRenderer(fakeCanvas(context));
-  renderer.paint([sceneNode({ fill: "#000000", blendMode: "hue" })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), onWarning: message => warnings.push(message) });
-  assert.equal(context.globalCompositeOperation, "source-over");
+  renderer.paint([sceneNode({ fill: "#000000", blendMode: "multiply" })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), onWarning: message => warnings.push(message) });
+  assert.equal(context.globalCompositeOperation, "multiply");
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0]!, /混合模式 hue/);
+  assert.match(warnings[0]!, /离屏画布/);
 });
 
-test("背景模糊在画布上只给警告，不假装画出来了", () => {
+test("背景模糊：把节点后面的内容快照、模糊，再按形状裁剪贴回", () => {
   const context = fakeContext();
-  const warnings: string[] = [];
+  const layer = fakeContext();
   const renderer = createCanvas2DRenderer(fakeCanvas(context));
-  renderer.paint([sceneNode({ fill: "#000000", backgroundBlur: 6 })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), onWarning: message => warnings.push(message) });
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0]!, /背景模糊/);
+  renderer.paint([sceneNode({ fill: "#000000", backgroundBlur: 6 })], { width: 200, height: 100, zoom: 1, devicePixelRatio: 1, images: new Map(), surface: fakeSurface(layer) });
+  // 离屏层上先挂上模糊滤镜，再从主画布取快照。
+  assert.ok(layer.calls.some(call => call.name === "filter" && call.args[0] === "blur(6px)"), "离屏层应先设置模糊滤镜");
+  const snapshots = layer.calls.filter(call => call.name === "drawImage");
+  assert.equal(snapshots.length, 1);
+  // 快照区域是节点盒子外扩模糊半径的余量：(10-12, 20-12) 起，124×74。
+  assert.deepEqual(snapshots[0]?.args.slice(1, 5), [-2, 8, 124, 74]);
+  // 贴回主画布时要按节点形状裁剪，形状之外保持清晰。
+  assert.ok(context.calls.some(call => call.name === "clip"));
+  const draws = context.calls.filter(call => call.name === "drawImage");
+  assert.equal(draws.length, 1);
+  assert.deepEqual(draws[0]?.args.slice(1), [-2, 8, 124, 74]);
 });
 
-test("椭圆渐变用离屏画布贴回外接矩形，并按形状裁剪", () => {
+test("椭圆渐变用离屏画布贴回，并按形状裁剪", () => {
   const context = fakeContext();
-  const image = { width: 512, height: 512 } as CanvasImageSource;
+  const layer = fakeContext();
   const renderer = createCanvas2DRenderer(fakeCanvas(context));
   renderer.paint([
     sceneNode({ paints: [{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.25, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }] }),
-  ], {
-    width: 120, height: 40, zoom: 1, devicePixelRatio: 1, images: new Map(),
-    gradientSurface: () => ({ image }),
-  });
+  ], { width: 120, height: 40, zoom: 1, devicePixelRatio: 1, images: new Map(), surface: fakeSurface(layer) });
   const draws = context.calls.filter(call => call.name === "drawImage");
   assert.equal(draws.length, 1);
-  // 盒子 100×50 位于 (10,20)：中心 (60,45)，半轴 (50,12.5) → 外接矩形 (10,32.5,100,25)。
-  assert.deepEqual(draws[0]?.args.slice(1), [10, 32.5, 100, 25]);
+  // 离屏是正方形（512×512），贴回时按椭圆的两个半轴非等比缩放。
+  assert.deepEqual(draws[0]?.args.slice(1), [-256, -256, 512, 512]);
+  const scales = context.calls.filter(call => call.name === "scale");
+  assert.equal(scales.length, 1);
+  // 半轴 (50, 12.5)，离屏半径 256 → 缩放比。
+  assert.deepEqual(scales[0]?.args, [50 / 256, 12.5 / 256]);
   // 渐变必须被裁到形状里，否则会糊到形状外面。
   assert.ok(context.calls.some(call => call.name === "clip"));
+});
+
+test("椭圆渐变带旋转角时绕中心旋转", () => {
+  const context = fakeContext();
+  const layer = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  renderer.paint([
+    sceneNode({ paints: [{ type: "elliptical", cx: 0.5, cy: 0.5, rx: 0.5, ry: 0.25, angle: 90, stops: [{ offset: 0, color: "#ffffff" }, { offset: 1, color: "#000000" }] }] }),
+  ], { width: 120, height: 40, zoom: 1, devicePixelRatio: 1, images: new Map(), surface: fakeSurface(layer) });
+  const rotations = context.calls.filter(call => call.name === "rotate");
+  assert.equal(rotations.length, 1);
+  assert.ok(Math.abs(Number(rotations[0]?.args[0]) - Math.PI / 2) < 1e-9);
 });
 
 test("椭圆渐变缺少离屏画布时退化成圆形渐变并给出警告", () => {

@@ -23,33 +23,34 @@ export interface PaintOptions {
   background?: string;
   /** 场景绘制完成后的回调，用于选择框等覆盖层；坐标系与场景一致。 */
   onAfterPaint?(context: CanvasRenderingContext2D): void;
-  /** 画布表达不了的能力（不支持的混合模式、背景模糊）在这里提示。 */
+  /** 画布表达不了或降级了的能力在这里提示。 */
   onWarning?(message: string): void;
-  /** 椭圆渐变的离屏画布工厂；缺省用 OffscreenCanvas / document.createElement。 */
-  gradientSurface?: GradientSurfaceFactory;
+  /** 离屏画布工厂：分组混合、背景模糊、椭圆渐变都要用。 */
+  surface?: SurfaceFactory;
+  /** 椭圆渐变的离屏底图（已经画好圆形渐变）；由渲染器按 `surface` 生成。 */
+  gradientSurface?(paint: Extract<Paint, { type: "elliptical" }>, size: number): Surface | undefined;
   /** 椭圆渐变离屏画布的边长（px）。 */
   gradientSize?: number;
 }
 
 /**
- * 椭圆渐变用的离屏画布。
+ * 离屏画布。
  *
- * Canvas 2D 的 `createRadialGradient` 只能画正圆，画不出椭圆。
- * 变通办法：先在离屏画布上画一个正圆渐变，再把它按椭圆的外接矩形贴回去——
- * 圆形被非等比缩放后就是椭圆，而被填充的形状本身一点没变形。
+ * 三件事都要用它：混合模式的**分组合成**（整个图层组先画在离屏上再整体混合）、
+ * 背景模糊的**背景快照**、椭圆渐变的**圆形渐变底图**。
  */
-export interface GradientSurface {
+export interface Surface {
   /** 贴回主画布的位图。 */
-  image: CanvasImageSource;
+  canvas: CanvasImageSource;
+  /** 在这张离屏画布上继续画。 */
+  context: CanvasRenderingContext2D;
+  /** 离屏画布的像素尺寸。 */
+  width: number;
+  height: number;
 }
 
-/**
- * 离屏画布工厂：返回一个**已经画好这条渐变**的画布。
- *
- * 契约是「给我一张画好渐变的图」，而不是「给我一张空图」——
- * 这样缓存键（色标）由调用方决定，工厂只管把图画好。
- */
-export type GradientSurfaceFactory = (paint: Extract<Paint, { type: "elliptical" }>, size: number) => GradientSurface | undefined;
+/** 离屏画布工厂：按**设备像素**尺寸建一张空白画布。 */
+export type SurfaceFactory = (width: number, height: number) => Surface | undefined;
 
 export interface SceneRenderer {
   paint(scene: SceneNode[], options: PaintOptions): void;
@@ -63,8 +64,8 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): SceneRenderer
   if (!context) throw new Error("当前浏览器不支持 Canvas 2D");
   // 同一条提示只报一次：画布每帧都会重绘，不去重的话控制台会被刷屏。
   const warned = new Set<string>();
-  // 离屏画布按色标缓存：同一个渐变不需要每帧重画一遍。
-  const surfaces = new Map<string, GradientSurface>();
+  // 椭圆渐变的离屏底图按色标缓存：同一个渐变不需要每帧重画一遍。
+  const gradients = new Map<string, Surface>();
 
   return {
     paint(scene, options) {
@@ -89,14 +90,21 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): SceneRenderer
           if (options.onWarning) options.onWarning(message);
           else console.warn(message);
         },
+        surface: options.surface ?? defaultSurfaceFactory,
         gradientSurface: (paint, size) => {
           const stops = [...paint.stops].sort((a, b) => a.offset - b.offset);
           const key = `${size}|${stops.map(stop => `${stop.offset}:${stop.color}`).join(",")}`;
-          const cached = surfaces.get(key);
+          const cached = gradients.get(key);
           if (cached) return cached;
-          const factory = options.gradientSurface ?? defaultGradientSurfaceFactory;
-          const surface = factory(paint, size);
-          if (surface) surfaces.set(key, surface);
+          const surface = (options.surface ?? defaultSurfaceFactory)(size, size);
+          if (!surface) return undefined;
+          // Canvas 的径向渐变只能画正圆：先在离屏上画一个正圆，贴回时再非等比缩放成椭圆。
+          const half = size / 2;
+          const gradient = surface.context.createRadialGradient(half, half, 0, half, half, half);
+          for (const stop of stops) gradient.addColorStop(stop.offset, stop.color);
+          surface.context.fillStyle = gradient;
+          surface.context.fillRect(0, 0, size, size);
+          gradients.set(key, surface);
           return surface;
         },
       };
@@ -109,35 +117,177 @@ export function createCanvas2DRenderer(canvas: HTMLCanvasElement): SceneRenderer
 /**
  * 默认的离屏画布工厂：优先用 `OffscreenCanvas`，没有就用 `document.createElement`。
  *
- * 两个都没有时返回 undefined——调用方会退化成圆形渐变并给出警告，而不是画错。
+ * 两个都没有时返回 undefined——调用方会退化并给出警告，而不是画错。
  */
-function defaultGradientSurfaceFactory(paint: Extract<Paint, { type: "elliptical" }>, size: number): GradientSurface | undefined {
+function defaultSurfaceFactory(width: number, height: number): Surface | undefined {
   const scope = globalThis as unknown as {
     OffscreenCanvas?: new (width: number, height: number) => { width: number; height: number; getContext(type: "2d"): CanvasRenderingContext2D | null };
     document?: { createElement(tag: string): HTMLCanvasElement };
   };
   let canvas: { width: number; height: number; getContext(type: "2d"): CanvasRenderingContext2D | null } | undefined;
   if (typeof scope.OffscreenCanvas === "function") {
-    canvas = new scope.OffscreenCanvas(size, size);
+    canvas = new scope.OffscreenCanvas(width, height);
   } else if (scope.document?.createElement) {
     const element = scope.document.createElement("canvas");
-    element.width = size;
-    element.height = size;
+    element.width = width;
+    element.height = height;
     canvas = element;
   }
   if (!canvas) return undefined;
   const context = canvas.getContext("2d");
   if (!context) return undefined;
-  const half = size / 2;
-  const gradient = context.createRadialGradient(half, half, 0, half, half, half);
-  for (const stop of [...paint.stops].sort((a, b) => a.offset - b.offset)) gradient.addColorStop(stop.offset, stop.color);
-  context.fillStyle = gradient;
-  context.fillRect(0, 0, size, size);
-  return { image: canvas as unknown as CanvasImageSource };
+  return { canvas: canvas as unknown as CanvasImageSource, context, width, height };
 }
 
+/** 画布的设备像素缩放：离屏画布的尺寸按它换算。 */
+function paintScale(options: PaintOptions): number {
+  return Math.max(0.01, options.zoom) * Math.max(1, options.devicePixelRatio);
+}
+
+/**
+ * 绘制一个节点。
+ *
+ * 这里只做三件事的**调度**：可见性判断、背景模糊（作用在节点后面的内容上，
+ * 必须先做）、以及混合模式（要把整个图层组离屏合成）。
+ * 真正的绘制在 {@link drawNodeContent}。
+ */
 function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions, inheritedOpacity: number): void {
   if (node.box.width <= 0 || node.box.height <= 0) return;
+  const opacity = clamp(inheritedOpacity * node.opacity, 0, 1);
+  if (opacity <= 0) return;
+
+  // 背景模糊先做：它模糊的是「节点后面的内容」，必须发生在节点自己画上去之前。
+  if (node.backgroundBlur) paintBackgroundBlur(context, node, options);
+
+  const composite = canvasCompositeFor(node.blendMode);
+  if (composite) {
+    // 图层级混合：节点和它的整棵子树作为一个图层组，整体与背景混合。
+    drawBlendedGroup(context, node, options, inheritedOpacity, composite);
+    return;
+  }
+  drawNodeContent(context, node, options, inheritedOpacity);
+}
+
+/**
+ * 图层级混合模式：把整个图层组画进离屏，再作为一个整体混合回主画布。
+ *
+ * Canvas 的 `globalCompositeOperation` 是**就地**的：它把「正在画的内容」与
+ * 「画布上已有内容」混合，没有「一个图层组整体参与混合」的概念。
+ * Figma 的语义要靠离屏合成才能对上：先在离屏上画完整个图层组，
+ * 再用混合模式把这张离屏贴回主画布。
+ *
+ * 嵌套自然成立：子节点有混合模式时，会在父节点的离屏层里再开一层离屏。
+ */
+function drawBlendedGroup(
+  context: CanvasRenderingContext2D,
+  node: SceneNode,
+  options: PaintOptions,
+  inheritedOpacity: number,
+  composite: NonNullable<ReturnType<typeof canvasCompositeFor>>,
+): void {
+  const scale = paintScale(options);
+  const bounds = subtreeBounds(node);
+  const surface = createSurface(options, Math.max(1, Math.ceil(bounds.width * scale)), Math.max(1, Math.ceil(bounds.height * scale)));
+  if (!surface) {
+    // 没有离屏画布：只能退回「就地混合」的近似——父层与子层不再作为整组参与混合。
+    // 这种降级必须说清楚，不能悄悄发生。
+    options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：混合模式退化为就地混合，图层组不再整体参与。`);
+    context.save();
+    context.globalCompositeOperation = composite;
+    drawNodeContent(context, node, options, inheritedOpacity);
+    context.restore();
+    return;
+  }
+  // 离屏层的坐标系与主画布一致（同样的缩放），只是平移到包围盒的原点。
+  surface.context.setTransform(scale, 0, 0, scale, -bounds.x * scale, -bounds.y * scale);
+  drawNodeContent(surface.context, node, options, inheritedOpacity);
+  context.save();
+  context.globalCompositeOperation = composite;
+  context.drawImage(surface.canvas, bounds.x, bounds.y, bounds.width, bounds.height);
+  context.restore();
+}
+
+/** 节点 + 子树的包围盒（含阴影与图层模糊的溢出余量）。 */
+function subtreeBounds(node: SceneNode): SceneBox {
+  let minX = node.box.x;
+  let minY = node.box.y;
+  let maxX = node.box.x + node.box.width;
+  let maxY = node.box.y + node.box.height;
+  for (const child of node.children) {
+    // 蒙版自身不绘制，不占包围盒。
+    if (child.mask) continue;
+    const bounds = subtreeBounds(child);
+    minX = Math.min(minX, bounds.x);
+    minY = Math.min(minY, bounds.y);
+    maxX = Math.max(maxX, bounds.x + bounds.width);
+    maxY = Math.max(maxY, bounds.y + bounds.height);
+  }
+  const padding = effectPadding(node);
+  return { x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 };
+}
+
+/** 阴影与图层模糊会溢出盒子，离屏合成时要多留这些像素。 */
+function effectPadding(node: SceneNode): number {
+  const shadow = node.shadow ? node.shadow.blur + Math.max(Math.abs(node.shadow.x), Math.abs(node.shadow.y)) : 0;
+  const blur = node.blur ? node.blur * 3 : 0;
+  return shadow + blur;
+}
+
+/** 建一张离屏画布；工厂不可用时返回 undefined（调用方负责退化并给出警告）。 */
+function createSurface(options: PaintOptions, width: number, height: number): Surface | undefined {
+  return options.surface?.(width, height);
+}
+
+/**
+ * 背景模糊：把「节点后面已经画好的内容」局部模糊后贴回来。
+ *
+ * Canvas 没有 `backdrop-filter`，但背景模糊本质就是「对已画好的内容做一次
+ * 局部模糊」：
+ * 1. 按节点区域（外扩模糊半径的余量，模糊会把区域外的像素带进来）从主画布快照；
+ * 2. 在离屏画布上用 `filter: blur()` 模糊——离屏的坐标空间就是设备像素，
+ *    半径换算成设备像素后不会随缩放漂移；
+ * 3. 贴回主画布，并按节点自身形状裁剪：形状之外保持清晰，与 Figma 一致。
+ *
+ * 裁剪区域在 `clip()` 调用时就固化成设备空间，所以随后的变换不影响它。
+ */
+function paintBackgroundBlur(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions): void {
+  const radius = node.backgroundBlur ?? 0;
+  if (radius <= 0) return;
+  if (!("filter" in context)) {
+    options.onWarning?.(`画布不支持模糊滤镜（节点 ${node.id}）：背景模糊已跳过。`);
+    return;
+  }
+  const source = context.canvas;
+  if (!source) return;
+  const scale = paintScale(options);
+  const padding = radius * 2;
+  const box = { x: node.box.x - padding, y: node.box.y - padding, width: node.box.width + padding * 2, height: node.box.height + padding * 2 };
+  const width = Math.max(1, Math.ceil(box.width * scale));
+  const height = Math.max(1, Math.ceil(box.height * scale));
+  const surface = createSurface(options, width, height);
+  if (!surface) {
+    options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：背景模糊已跳过。`);
+    return;
+  }
+  try {
+    surface.context.setTransform(1, 0, 0, 1, 0, 0);
+    surface.context.filter = `blur(${radius * scale}px)`;
+    surface.context.drawImage(source, box.x * scale, box.y * scale, box.width * scale, box.height * scale, 0, 0, width, height);
+    surface.context.filter = "none";
+  } catch {
+    // 跨域图片会污染画布，读取像素会抛 SecurityError。
+    options.onWarning?.(`背景模糊失败（节点 ${node.id}）：画布被跨域资源污染，无法读取像素。`);
+    return;
+  }
+  context.save();
+  shapePath(context, node);
+  context.clip();
+  context.drawImage(surface.canvas, box.x, box.y, box.width, box.height);
+  context.restore();
+}
+
+/** 实际绘制一个节点：自身 + 子树。混合模式与背景模糊由 {@link drawNode} 负责调度。 */
+function drawNodeContent(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions, inheritedOpacity: number): void {
   const opacity = clamp(inheritedOpacity * node.opacity, 0, 1);
   if (opacity <= 0) return;
 
@@ -159,20 +309,6 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
   }
   if (node.blur) {
     if ("filter" in context) context.filter = `blur(${node.blur}px)`;
-  }
-  // 混合模式：Canvas 的 globalCompositeOperation 与 CSS 的 mix-blend-mode 不是同一套语义
-  // （前者是 Porter-Duff 合成，后者是可分离混合模式）。能对上的直接用；
-  // 对不上的（hue / saturation / color / luminosity）退回 normal 并给出警告——
-  // 画一个「看起来差不多但其实错」的结果，比说清楚「这里不支持」糟糕得多。
-  if (node.blendMode) {
-    const composite = canvasCompositeFor(node.blendMode);
-    if (composite) context.globalCompositeOperation = composite;
-    else options.onWarning?.(`画布不支持混合模式 ${node.blendMode}（节点 ${node.id}），已退回 normal；导出到 HTML/SVG 才是准确的。`);
-  }
-  // 背景模糊：Canvas 2D 没有 backdrop-filter 的等价物，要做需要离屏合成。
-  // 本轮画布侧只提示，不画一个假的模糊。
-  if (node.backgroundBlur) {
-    options.onWarning?.(`画布暂不支持背景模糊（节点 ${node.id}）：需要离屏合成。导出到 HTML/SVG 才是准确的。`);
   }
 
   // 旋转绕节点中心；子树画在同一个上下文里，因此自动继承父级的旋转。
@@ -250,13 +386,15 @@ function drawShape(context: CanvasRenderingContext2D, node: SceneNode, options: 
 }
 
 /**
- * 椭圆渐变：离屏画一张圆形渐变，按椭圆的外接矩形贴回主画布。
+ * 椭圆渐变：离屏画一张圆形渐变，贴回时非等比缩放成椭圆（可再旋转）。
  *
  * 三步：
  * 1. 先用末位色铺满形状——椭圆之外的区域在真实的椭圆渐变里也是末位色，
  *    而且这一次填充顺带把投影投出去；
- * 2. 把形状裁剪起来，避免渐变糊到形状外面；
- * 3. 把离屏的圆形渐变按外接矩形贴回去，非等比缩放后正好是椭圆。
+ * 2. 把形状裁剪起来，避免渐变糊到形状外面（裁剪区域此时就固化成设备空间，
+ *    随后的旋转与缩放不会影响它）；
+ * 3. 把离屏的圆形渐变按外接矩形贴回去，非等比缩放后正好是椭圆；
+ *    有旋转角时先绕中心旋转。
  */
 function paintEllipticalGradient(
   context: CanvasRenderingContext2D,
@@ -285,10 +423,15 @@ function paintEllipticalGradient(
     return;
   }
 
+  const half = surface.width / 2;
   context.save();
   shapePath(context, node);
   context.clip();
-  context.drawImage(surface.image, geometry.cx - geometry.rx, geometry.cy - geometry.ry, geometry.rx * 2, geometry.ry * 2);
+  context.translate(geometry.cx, geometry.cy);
+  if (paint.angle) context.rotate((paint.angle * Math.PI) / 180);
+  // 圆形渐变按椭圆的两个半轴非等比缩放；离屏是正方形，所以要同时除以半径。
+  context.scale(geometry.rx / half, geometry.ry / half);
+  context.drawImage(surface.canvas, -half, -half, half * 2, half * 2);
   context.restore();
 }
 

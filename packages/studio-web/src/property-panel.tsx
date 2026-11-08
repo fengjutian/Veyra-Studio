@@ -253,10 +253,10 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
             <NumberField label="中心Y%" value={Math.round(paint.cy * 100)} disabled={disabled} onCommit={value => patchPaint({ ...paint, cy: value / 100 })} />
             <NumberField label="横半轴%" value={Math.round(paint.rx * 100)} min={1} disabled={disabled} onCommit={value => patchPaint({ ...paint, rx: Math.max(value, 1) / 100 })} />
             <NumberField label="纵半轴%" value={Math.round(paint.ry * 100)} min={1} disabled={disabled} onCommit={value => patchPaint({ ...paint, ry: Math.max(value, 1) / 100 })} />
+            <NumberField label="旋转" value={paint.angle ?? 0} disabled={disabled} onCommit={angle => patchPaint({ ...paint, angle: angle === 0 ? undefined : angle })} />
             <TextField label="起始色" value={paint.stops[0]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, 0, color))} />
             <TextField label="结束色" value={paint.stops[paint.stops.length - 1]?.color ?? ""} disabled={disabled} onCommit={color => patchPaint(withStop(paint, paint.stops.length - 1, color))} />
-            <p className="field-hint">横/纵半轴是占盒子宽/高的比例：50% / 50% 时椭圆正好内接于盒子。</p>
-            <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint({ type: "solid", color: paint.stops[0]?.color ?? "#8b5cf6" })}>
+            <p className="field-hint">横/纵半轴是占盒子宽/高的比例：50% / 50% 时椭圆正好内接于盒子。</p>            <button type="button" className="link-button" disabled={disabled} onClick={() => patchPaint({ type: "solid", color: paint.stops[0]?.color ?? "#8b5cf6" })}>
               改回纯色
             </button>
           </>
@@ -314,7 +314,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
           onChange={value => onPatch({ appearance: { ...node.appearance, blendMode: value as BlendMode } })}
         />
         <NumberField label="背景模糊" value={node.appearance.backgroundBlur ?? 0} min={0} disabled={disabled} onCommit={value => onPatch({ appearance: { ...node.appearance, backgroundBlur: value > 0 ? value : undefined } })} />
-        <p className="field-hint">背景模糊只影响节点后面的内容；画布暂时画不出来，导出到 HTML/SVG 才生效。</p>
+        <p className="field-hint">背景模糊只影响节点后面的内容；导出到 HTML/SVG 与画布一致。</p>
         {MASKABLE_TYPES.has(node.type) && (
           <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ mask: node.mask ? undefined : true })}>
             {node.mask ? "取消蒙版" : "用作蒙版（裁剪上方兄弟层）"}
@@ -452,8 +452,8 @@ const imageFitOptions = [
 /**
  * 混合模式选项：取值与 CSS `mix-blend-mode` 一致，标签用通行中文名。
  *
- * 画布只支持其中 12 种（Canvas 的 `globalCompositeOperation` 没有颜色类混合），
- * 其余 4 种在画布上会退回 normal 并给出警告；导出到 HTML/SVG 则是准确的。
+ * 画布上 16 种全部可用（Canvas 的 `globalCompositeOperation` 里有同名的一整套，
+ * 实测与 CSS 逐像素一致，见 `visual/blend-probe.ts`）。
  */
 const blendModeOptions = [
   { value: "normal", label: "正常" },

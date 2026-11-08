@@ -138,6 +138,8 @@ const paintSchema = z.discriminatedUnion("type", [
     // 两个半轴都必须是正数：0 或负数的半轴画不出椭圆。
     rx: z.number().finite().positive(),
     ry: z.number().finite().positive(),
+    // 旋转角（度，顺时针）；缺省 0 = 不旋转。
+    angle: z.number().finite().optional(),
     stops: z.array(z.object({ offset: z.number().min(0).max(1), color: z.string().min(1) })).min(2),
   }),
 ]);

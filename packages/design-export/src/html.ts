@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, textRunSegments, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -49,6 +49,11 @@ function renderNode(
   const node = document.nodes[nodeId];
   // 蒙版节点自身不渲染；父级在 children 循环里把它转成裁剪容器。
   if (node.mask) return "";
+  // CSS 的 radial-gradient 没有旋转：带旋转角的椭圆渐变在 HTML 里会丢掉旋转。
+  // 这里明确记一条诊断，而不是悄悄导出一个方向不对的渐变。
+  if (resolveFills(document, node).some(paint => paint.type === "elliptical" && paint.angle)) {
+    diagnostics.push({ nodeId, feature: "gradient-rotation", support: "approximated", message: "CSS 的 radial-gradient 不支持旋转，椭圆渐变的旋转角在 HTML 导出里丢失" });
+  }
   const style = nodeStyle(document, node, parent, tokenVariables, options.origin);
   const common = `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
 
@@ -208,7 +213,8 @@ function renderVectorPath(
       } else {
         // 椭圆渐变：单位圆 + gradientTransform 缩放成椭圆（SVG 没有原生椭圆径向渐变）。
         const ellipse = ellipticalGeometry(local, paint);
-        defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="matrix(${num(ellipse.rx)} 0 0 ${num(ellipse.ry)} ${num(ellipse.cx)} ${num(ellipse.cy)})">${stops}</radialGradient>`);
+        const matrix = ellipticalGradientMatrix(ellipse, paint.angle ?? 0);
+        defs.push(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="matrix(${matrix.map(num).join(" ")})">${stops}</radialGradient>`);
       }
       fill = `url(#${id})`;
     }
