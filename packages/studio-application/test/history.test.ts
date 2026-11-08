@@ -24,7 +24,7 @@ const frame = (id: string): DesignNode => ({
  */
 function buildHistory(steps = 4) {
   const repository = new HistoryRepository();
-  let runtime = new DesignRuntime(createDocument("project:1", "Demo"));
+  const runtime = new DesignRuntime(createDocument("project:1", "Demo"));
   repository.snapshots.set(0, runtime.snapshot());
   for (let index = 1; index <= steps; index += 1) {
     runtime.execute({

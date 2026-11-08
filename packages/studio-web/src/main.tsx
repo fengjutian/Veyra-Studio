@@ -63,6 +63,7 @@ import { ExportPreviewDialog } from "./export-preview-dialog";
 import { fitPreviewSize, previewTitle, svgPreviewDataUrl, type ExportPreview } from "./export-preview";
 import { assetIdForHash, fitImageBox, fontFamilyFromFileName, fontFileError, fontMimeFromFileName, imageFileError, readImageSize, sha256Hex } from "./assets";
 import { assetLabel, formatBytes, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
+import { readFontMetadata } from "./font-metadata";
 import { AssetPanel } from "./asset-panel";
 import { backupRestoreConfirmation, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
 import { historyRows, type HistoryRow } from "./history-rows";
@@ -768,19 +769,22 @@ function App() {
    * 上传字体文件并登记为文档字体。
    *
    * 与图片共用同一套资产管线：字节按内容哈希落库（同文件去重）、元数据进文档、
-   * 字体声明在同一个事务里提交；族名从文件名猜默认值，用户可以在弹窗里改。
+   * 字体声明在同一个事务里提交；族名与字重优先读字体文件里的真实值，
+   * 读不出来才回落文件名猜测，用户可以在弹窗里改。
    */
   const insertFont = (file: File) => void run(async () => {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const mimeType = fontMimeFromFileName(file.name) ?? (file.type.startsWith("font/") ? file.type : undefined);
     const invalid = fontFileError(file, bytes.byteLength, mimeType);
     if (invalid) { setMessage(invalid); return; }
+    // 读字体文件里的真实族名与字重；读不出来就回落文件名猜测。
+    const metadata = await readFontMetadata(bytes, mimeType);
     const values = await askForm({
       title: "登记字体",
       description: "字体文件按内容哈希存进项目，随文档一起备份；同一份文件不会重复占用空间。",
       fields: [
-        { key: "family", label: "字体族名", defaultValue: fontFamilyFromFileName(file.name) },
-        { key: "weight", label: "字重（100–900 的整百值）", defaultValue: "400" },
+        { key: "family", label: "字体族名", defaultValue: metadata?.family ?? fontFamilyFromFileName(file.name) },
+        { key: "weight", label: "字重（100–900 的整百值）", defaultValue: String(metadata?.weight ?? 400) },
       ],
       validate: input => {
         if (!input.family?.trim()) return "字体族名不能为空";
@@ -799,7 +803,7 @@ function App() {
     const asset: AssetMetadata = { id: assetId, hash, mimeType: mimeType!, byteLength: bytes.byteLength, name: file.name };
     await execute([
       { type: "asset.upsert", payload: { asset } },
-      { type: "font.register", payload: { font: { family, assetId, weight } } },
+      { type: "font.register", payload: { font: { family, assetId, weight, ...(metadata?.style === "italic" ? { style: "italic" as const } : {}) } } },
     ]);
     setMessage(`已登记字体「${family}」${weight === 400 ? "" : ` ${weight}`}`);
   });

@@ -29,6 +29,7 @@
     "@ufira/studio-application": "*",
     "@vitejs/plugin-react": "latest",
     "dexie": "^4.4.7",
+    "fonteditor-core": "^2.6.3",
     "lucide-react": "^1.69.0",
     "polygon-clipping": "^0.15.7",
     "react": "latest",

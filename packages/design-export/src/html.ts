@@ -12,7 +12,10 @@ export function exportPageToHtml(documentInput: DesignDocument, options: HtmlExp
 
   const diagnostics: ExportDiagnostic[] = [];
   const tokenVariables = createTokenVariables(document);
-  const css = buildCss(document, options, tokenVariables);
+  // @font-face 放在最前面：字体的声明要先于使用它的规则。
+  const css = [options.fontFaces?.length ? options.fontFaces.join("\n") : "", buildCss(document, options, tokenVariables)]
+    .filter(part => part.length)
+    .join("\n");
   const keep = options.nodeIds ? exportNodeSet(document, options.nodeIds) : undefined;
   const body = renderSiblingList(document, exportRootIds(document, options.pageId, keep), undefined, options, tokenVariables, diagnostics, keep);
   const title = escapeHtml(options.title ?? `${document.meta.name} — ${page.name}`);

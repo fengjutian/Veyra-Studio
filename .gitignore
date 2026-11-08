@@ -23,6 +23,8 @@ packages/design-export/test/golden/page.diff.png
 # 画布像素回归的临时产物（基线 canvas.png 需要提交）
 packages/studio-web/visual/.cache/
 packages/studio-web/visual/canvas.diff.png
+# 视觉 suite 的运行产物（报告与差异图，基线需要提交）
+.artifacts/
 # 本地起 dev server 的日志
 .devserver.log
 # TypeScript incremental build cache（不应进仓库）

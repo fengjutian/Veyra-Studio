@@ -3,3 +3,5 @@ export * from "./selection";
 export * from "./html";
 export * from "./svg";
 export * from "./support";
+export * from "./font-inline";
+export * from "./base64";

@@ -157,13 +157,39 @@ function crc32(buffer: Buffer): number {
 export interface DiffOptions {
   /** 单通道允许的差值；低于等于它视为相同。默认 0。 */
   tolerance?: number;
+  /**
+   * 豁免抗锯齿边缘像素。默认 true。
+   *
+   * 浏览器渲染的斜边文字/圆角在两台机器上可能有 1 个灰阶的舍入差，这类差值不是
+   * 回归。开启后，差值处于"边缘灰阶区间"的像素按豁免处理，只记为 AA 差异。
+   */
+  ignoreAntiAlias?: boolean;
+  /**
+   * 忽略的区域（CSS 像素坐标）。这些区域完全不参与差异统计。
+   *
+   * 用于屏蔽动态内容（时钟、随机头像、光标）——它们每次渲染都不同，比对它们
+   * 只会制造假失败。
+   */
+  ignoreRegions?: IgnoreRegion[];
+}
+
+/** 需要忽略的矩形区域。坐标是 CSS 像素，原点在左上角。 */
+export interface IgnoreRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface PixelDiff {
   width: number;
   height: number;
-  /** 有差异的像素数。 */
+  /** 有差异的像素数（已扣除 AA 豁免与忽略区域）。 */
   differentPixels: number;
+  /** 因抗锯齿而被豁免的像素数。 */
+  antiAliasedPixels: number;
+  /** 因落在忽略区域内而跳过的像素数。 */
+  ignoredPixels: number;
   totalPixels: number;
   /** 差异像素占比（0–1）。 */
   ratio: number;
@@ -173,15 +199,84 @@ export interface PixelDiff {
   image: RgbaImage;
 }
 
+/**
+ * 抗锯齿判定的灰阶上限。
+ *
+ * 一个像素如果夹在前景色和背景色之间（典型的斜边文字），它的灰阶跨度不超过
+ * 这个值时，两张图的差异更可能来自舍入而不是布局。这里取 64（占 255 的 25%），
+ * 与 desigma-diff 的默认抗锯齿豁免保持同一量级。
+ */
+const ANTI_ALIAS_SPAN = 64;
+
+/**
+ * 可以被当作抗锯齿差异豁免的最大通道差。
+ *
+ * 光看"是否在边缘上"不够：孤立的一个亮像素周围全是黑，它同样处于边缘，
+ * 但那是一次真实的内容改动。必须同时限制**差异幅度**——只有幅度也很小
+ * （跨机器渲染的灰阶舍入）才豁免。真实改动（文字位移、颜色变化）的幅度
+ * 通常远大于这个值，仍然会被标红。
+ */
+const ANTI_ALIAS_MAX_DELTA = 64;
+
+/**
+ * 判断像素 (x, y) 是否处于抗锯齿边缘。
+ *
+ * 判据：该像素与 8 邻域中存在"亮度差大于 ANTI_ALIAS_SPAN"的邻居，
+ * 说明它跨越了前景/背景边界。
+ */
+function isAntiAliasedEdge(image: RgbaImage, x: number, y: number): boolean {
+  const width = image.width;
+  const height = image.height;
+  const index = y * width + x;
+  const luminance = (pixelIndex: number): number => {
+    const offset = pixelIndex * 4;
+    return (
+      0.299 * image.data[offset]! +
+      0.587 * image.data[offset + 1]! +
+      0.114 * image.data[offset + 2]!
+    );
+  };
+  const center = luminance(index);
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      if (Math.abs(luminance(ny * width + nx) - center) > ANTI_ALIAS_SPAN) return true;
+    }
+  }
+  return false;
+}
+
+function inIgnoreRegion(x: number, y: number, regions: IgnoreRegion[] | undefined): boolean {
+  if (!regions?.length) return false;
+  for (const region of regions) {
+    if (
+      x >= region.x &&
+      x < region.x + region.width &&
+      y >= region.y &&
+      y < region.y + region.height
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** 比较两张同尺寸图片。尺寸不同直接抛错，避免"拉伸后再比较"掩盖布局问题。 */
 export function diffImages(left: RgbaImage, right: RgbaImage, options: DiffOptions = {}): PixelDiff {
   if (left.width !== right.width || left.height !== right.height) {
     throw new Error(`图片尺寸不一致：${left.width}x${left.height} vs ${right.width}x${right.height}`);
   }
   const tolerance = options.tolerance ?? 0;
+  const ignoreAntiAlias = options.ignoreAntiAlias ?? true;
+  const ignoreRegions = options.ignoreRegions;
   const total = left.width * left.height;
   const image: RgbaImage = { width: left.width, height: left.height, data: new Uint8Array(total * 4) };
   let different = 0;
+  let antiAliased = 0;
+  let ignored = 0;
   let maxDelta = 0;
 
   for (let index = 0; index < total; index += 1) {
@@ -192,7 +287,26 @@ export function diffImages(left: RgbaImage, right: RgbaImage, options: DiffOptio
       Math.abs(left.data[a + 2]! - right.data[a + 2]!),
     );
     maxDelta = Math.max(maxDelta, delta);
+
+    const x = index % left.width;
+    const y = Math.floor(index / left.width);
+    if (inIgnoreRegion(x, y, ignoreRegions)) {
+      ignored += 1;
+      image.data[a] = 200; image.data[a + 1] = 200; image.data[a + 2] = 200; image.data[a + 3] = 255;
+      continue;
+    }
+
     if (delta > tolerance) {
+      // 只有"幅度也小"的边缘差异才降级为 AA 差异：真实内容改动幅度大，仍会标红。
+      if (
+        ignoreAntiAlias &&
+        delta <= ANTI_ALIAS_MAX_DELTA &&
+        (isAntiAliasedEdge(left, x, y) || isAntiAliasedEdge(right, x, y))
+      ) {
+        antiAliased += 1;
+        image.data[a] = 255; image.data[a + 1] = 165; image.data[a + 2] = 0; image.data[a + 3] = 255;
+        continue;
+      }
       different += 1;
       image.data[a] = 255; image.data[a + 1] = 0; image.data[a + 2] = 0; image.data[a + 3] = 255;
     } else {
@@ -201,5 +315,15 @@ export function diffImages(left: RgbaImage, right: RgbaImage, options: DiffOptio
     }
   }
 
-  return { width: left.width, height: left.height, differentPixels: different, totalPixels: total, ratio: different / total, maxChannelDelta: maxDelta, image };
+  return {
+    width: left.width,
+    height: left.height,
+    differentPixels: different,
+    antiAliasedPixels: antiAliased,
+    ignoredPixels: ignored,
+    totalPixels: total,
+    ratio: different / total,
+    maxChannelDelta: maxDelta,
+    image,
+  };
 }

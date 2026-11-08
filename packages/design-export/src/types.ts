@@ -15,6 +15,13 @@ export interface HtmlExportOptions {
   viewport: { width: number; height: number };
   title?: string;
   resolveAsset?: (asset: AssetMetadata) => string | undefined;
+  /**
+   * 要写进 `<style>` 的 `@font-face` 规则。
+   *
+   * 字体准备是异步的（要读资产字节），所以由调用方先准备好再传进来——
+   * 导出器本身保持同步。
+   */
+  fontFaces?: readonly string[];
   /** 只导出包含这些节点的分支；不传则导出整页。 */
   nodeIds?: string[];
   /** 视口原点：导出坐标会减去该偏移，用来把选区裁剪到画布左上角。 */

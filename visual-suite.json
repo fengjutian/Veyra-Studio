@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {
+      "name": "export-page",
+      "html": "packages/design-export/test/golden/page.html",
+      "baseline": "packages/design-export/test/golden/page.png",
+      "diff": "packages/design-export/test/golden/page.diff.png",
+      "width": 960,
+      "height": 680,
+      "threshold": 0.005
+    }
+  ]
+}

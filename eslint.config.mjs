@@ -15,7 +15,10 @@ export default tseslint.config(
       'schema/compiler/generated/**',
       'packages/core/src/tools/generated/**',
       'mcp-server-guide-main/**',
-      'vibma-benchmark/**'
+      'vibma-benchmark/**',
+      // GitNexus 的本地索引与运行器产物，不是仓库源码。
+      '.gitnexus/**',
+      '.artifacts/**'
     ],
   },
   eslint.configs.recommended,

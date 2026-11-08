@@ -1,4 +1,4 @@
-import { exportNodeSet } from "@ufira/design-export";
+import { base64FromBytes, exportNodeSet } from "@ufira/design-export";
 import type { ProjectRepository } from "@ufira/design-persistence";
 import type { AssetMetadata, DesignDocument, NodeId } from "@ufira/design-schema";
 
@@ -10,32 +10,14 @@ import type { AssetMetadata, DesignDocument, NodeId } from "@ufira/design-schema
  * data URL 是同源内容，画布不会因此被污染，PNG 光栅化也能正常读回像素。
  */
 
-const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 /**
- * 纯 JS 的 base64 编码。
- *
- * 不依赖 `btoa` 或 Node 的 `Buffer`：同一个实现要能在浏览器工作台和 node 测试里
- * 得到逐字节一致的结果。
+ * 一份图片资源的 data URL。
  */
-export function base64FromBytes(bytes: Uint8Array): string {
-  let output = "";
-  for (let index = 0; index < bytes.length; index += 3) {
-    const first = bytes[index]!;
-    const second = bytes[index + 1];
-    const third = bytes[index + 2];
-    output += BASE64_ALPHABET[first >> 2];
-    output += BASE64_ALPHABET[((first & 0b11) << 4) | ((second ?? 0) >> 4)];
-    output += second === undefined ? "=" : BASE64_ALPHABET[((second & 0b1111) << 2) | ((third ?? 0) >> 6)];
-    output += third === undefined ? "=" : BASE64_ALPHABET[third & 0b111111];
-  }
-  return output;
-}
-
-/** 一份图片资源的 data URL。 */
 export function assetDataUrl(asset: AssetMetadata, bytes: Uint8Array): string {
   return `data:${asset.mimeType};base64,${base64FromBytes(bytes)}`;
 }
+
+export { base64FromBytes };
 
 /**
  * 本次导出真正会画到的图片资源。

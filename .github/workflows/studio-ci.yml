@@ -20,6 +20,18 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Lint（eslint）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
   core:
     name: 核心包 build + test
     runs-on: ubuntu-latest
@@ -74,3 +86,14 @@ jobs:
       - run: npm ci
       - run: npm run build:studio-core
       - run: npm run check:visual
+      # suite 走 manifest 批量比对多个 fixture，产出 HTML 报告。
+      # 与上面同样是参考信号：Linux runner 上的像素差异来自字体而非代码。
+      - run: npm run visual:suite:check -- --require-browser
+      # 报告即使不阻断也要能看到，否则 CI 失败时还得本地复现一遍。
+      - name: 上传视觉 suite 报告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-suite-report
+          path: .artifacts/visual-suite
+          if-no-files-found: ignore

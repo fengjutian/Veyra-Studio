@@ -475,7 +475,7 @@ function assertVariantUnique(document: DesignDocument, set: ComponentSetDefiniti
   for (const [id, component] of Object.entries(document.components)) {
     if (id === ignore || component.variantSetId !== set.id || !component.variant) continue;
     const other = set.properties.map(property => component.variant?.[property]).join("\u0000");
-    if (other === signature) throw new CommandError(`Variant ${signature.replace(/\u0000/g, ", ")} already exists as ${id}`);
+    if (other === signature) throw new CommandError(`Variant ${signature.split("\u0000").join(", ")} already exists as ${id}`);
   }
 }
 

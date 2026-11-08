@@ -4,6 +4,7 @@ import type { ProjectRepository, ProjectSnapshot } from "@ufira/design-persisten
 import { DesignRuntime, type CommandEnvelope, type CommandResult, type TransactionEntry } from "@ufira/design-runtime";
 import { createDocument, type DesignDocument } from "@ufira/design-schema";
 import { createAssetResolver } from "./assets";
+import { dedupeByFeature, prepareFontFaces } from "./font-faces";
 
 export interface StudioExecuteResult {
   result: CommandResult;
@@ -107,11 +108,18 @@ export class StudioProject {
    *
    * 资源字节在仓库里，导出器却是同步接口，所以这里先异步读一遍、转成 data URL，
    * 再走原来的导出路径。调用方自己传了 `resolveAsset` 时以调用方为准。
+   *
+   * 字体同理：文档声明过的字体会被内联进 `@font-face`，交付物因此自带字体，
+   * 对方机器上没装这个字体也不会走回退字形。
    */
   async exportHtmlWithAssets(options: HtmlExportOptions): Promise<HtmlExportResult> {
     const document = this.runtime.snapshot();
     const resolveAsset = options.resolveAsset ?? await createAssetResolver(this.repository, document, options.pageId, options.nodeIds);
-    return exportPageToHtml(document, { ...options, resolveAsset });
+    const fonts = options.fontFaces
+      ? { css: options.fontFaces.join("\n"), diagnostics: [] }
+      : await prepareFontFaces(this.repository, document, options);
+    const result = exportPageToHtml(document, { ...options, resolveAsset, fontFaces: fonts.css ? [fonts.css] : [] });
+    return { ...result, diagnostics: dedupeByFeature([...result.diagnostics, ...fonts.diagnostics]) };
   }
 
   /** 导出 SVG，资源处理同 {@link exportHtmlWithAssets}。 */
