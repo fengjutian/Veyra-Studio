@@ -280,6 +280,30 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       return;
     }
     case "token.delete": return deleteToken(document, command.payload.name);
+    case "theme.upsert": {
+      const { theme } = command.payload;
+      if (!theme.id.trim()) throw new CommandError("Theme id cannot be empty");
+      if (!theme.name.trim()) throw new CommandError("Theme name cannot be empty");
+      // 主题只能覆盖已有 token：拼错名字时早报，而不是存下一份永远不生效的覆盖。
+      for (const name of Object.keys(theme.tokens)) {
+        if (!document.tokens[name]) throw new CommandError(`Theme ${theme.id} overrides missing token ${name}`);
+      }
+      const themes = document.themes ?? [];
+      const next = structuredClone(theme);
+      const index = themes.findIndex(item => item.id === theme.id);
+      document.themes = index >= 0
+        ? themes.map((item, position) => (position === index ? next : item))
+        : [...themes, next];
+      return;
+    }
+    case "theme.delete": {
+      const themes = document.themes ?? [];
+      if (!themes.some(item => item.id === command.payload.id)) {
+        throw new CommandError(`Theme ${command.payload.id} does not exist`);
+      }
+      document.themes = themes.filter(item => item.id !== command.payload.id);
+      return;
+    }
     case "page.create": return createPage(document, command.payload.page, command.payload.index);
     case "page.rename": {
       const page = document.pages[command.payload.id];

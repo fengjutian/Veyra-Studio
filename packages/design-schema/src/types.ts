@@ -601,6 +601,23 @@ export interface MigrationRecord {
   at: string;
 }
 
+/**
+ * 一组主题覆盖。
+ *
+ * 主题**不改解析规则**：它只是在进入布局/渲染/导出前把覆盖合并进 token 表
+ * （`applyThemeTokens()`）。因此别名、字体 token、组件、导出都自动跟随，
+ * 不需要在每一处解析调用里传主题。
+ *
+ * 覆盖只能修改**已存在的** token：主题不是给 token 起新名字的地方，
+ * 拼错名字应当在校验阶段被发现。
+ */
+export interface Theme {
+  id: string;
+  name: string;
+  /** token 名 → 覆盖值。未覆盖的 token 沿用 `document.tokens`。 */
+  tokens: Record<string, TokenValue>;
+}
+
 export interface DesignDocument {
   schemaVersion: 4;
   id: DocumentId;
@@ -615,6 +632,8 @@ export interface DesignDocument {
   /** 字体声明：上传的字体文件（资源 id）或依赖系统字体；可选，旧文档不需要迁移。 */
   fonts?: DocumentFont[];
   tokens: Record<string, TokenValue>;
+  /** 主题：token 值的可选覆盖；旧文档没有它也不需要迁移。 */
+  themes?: Theme[];
   assets: Record<AssetId, AssetMetadata>;
   /** 迁移历史；新建文档没有这个字段，迁移过的文档才有。 */
   migrations?: MigrationRecord[];

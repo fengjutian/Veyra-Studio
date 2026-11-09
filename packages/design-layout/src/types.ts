@@ -53,4 +53,9 @@ export interface LayoutResult {
 export interface LayoutOptions {
   viewport: Size;
   textMeasurer?: TextMeasurer;
+  /**
+   * 主题 id：布局前把该主题的 token 覆盖合并进来（字体 token 会改变 hug 尺寸）。
+   * 不传用基础值。
+   */
+  themeId?: string;
 }

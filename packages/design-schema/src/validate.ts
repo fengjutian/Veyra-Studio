@@ -37,24 +37,17 @@ export function validateDocument(input: unknown): DesignDocument {
 
   // 别名 token：目标必须存在，链上不能出现环。渲染时解析失败会退回节点值，
   // 但「悄悄退回」会让设计系统分层失效却不报错，所以在文档校验阶段就拒绝。
-  for (const [name, token] of Object.entries(document.tokens)) {
-    if (token.type !== "alias") continue;
-    if (!document.tokens[token.value]) {
-      issues.push(`token ${name} alias references missing token ${token.value}`);
-      continue;
+  checkTokenGraph(document.tokens, "", issues);
+  // 主题：id 唯一、名称非空、只覆盖已存在的 token；每个主题的合并视图也要过一遍别名检查
+  // ——主题可以把基础 token 覆盖成别名，同样可能造出环。
+  const themeIds = (document.themes ?? []).map(theme => theme.id);
+  if (new Set(themeIds).size !== themeIds.length) issues.push("theme ids must be unique");
+  for (const theme of document.themes ?? []) {
+    if (!theme.name.trim()) issues.push(`theme ${theme.id} name cannot be empty`);
+    for (const name of Object.keys(theme.tokens)) {
+      if (!document.tokens[name]) issues.push(`theme ${theme.id} overrides missing token ${name}`);
     }
-    const seen = new Set<string>([name]);
-    let current: string | undefined = token.value;
-    while (current) {
-      if (seen.has(current)) {
-        issues.push(`token ${name} has a cyclic alias chain`);
-        break;
-      }
-      seen.add(current);
-      const next: TokenValue | undefined = document.tokens[current];
-      if (!next || next.type !== "alias") break;
-      current = next.value;
-    }
+    checkTokenGraph({ ...document.tokens, ...theme.tokens }, `theme ${theme.id} `, issues);
   }
 
   const claimed = new Map<NodeId, string>();
@@ -243,6 +236,34 @@ function bindingAccepts(property: string, tokenType: string): boolean {
   // 字体绑定只认 typography token：`string` 是早期的标量类型，没有渲染语义。
   if (property === "typography") return tokenType === "typography";
   return true;
+}
+
+/**
+ * 检查一张 token 表里的别名链：目标存在、没有环。
+ *
+ * 基础表与每个主题的合并视图共用这一段——主题可以把基础 token 覆盖成别名，
+ * 同样可能造出环，只查基础表会漏。
+ */
+function checkTokenGraph(tokens: Record<string, TokenValue>, label: string, issues: string[]): void {
+  for (const [name, token] of Object.entries(tokens)) {
+    if (token.type !== "alias") continue;
+    if (!tokens[token.value]) {
+      issues.push(`${label}token ${name} alias references missing token ${token.value}`);
+      continue;
+    }
+    const seen = new Set<string>([name]);
+    let current: string | undefined = token.value;
+    while (current) {
+      if (seen.has(current)) {
+        issues.push(`${label}token ${name} has a cyclic alias chain`);
+        break;
+      }
+      seen.add(current);
+      const next: TokenValue | undefined = tokens[current];
+      if (!next || next.type !== "alias") break;
+      current = next.value;
+    }
+  }
 }
 
 function findRecordKey<T extends { id: string }>(records: Record<string, T>, value: T): string | undefined {

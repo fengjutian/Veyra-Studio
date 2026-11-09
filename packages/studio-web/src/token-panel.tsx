@@ -14,6 +14,12 @@ export interface TokenPanelProps {
   onBind(property: keyof PropertyBindings, tokenName: string): void;
   onUnbind(property: keyof PropertyBindings): void;
   onDelete(name: string): void;
+  /** 当前主题名；有值时面板进入「主题模式」：只能覆盖已有 token。 */
+  themeName?: string;
+  /** 这个 token 在当前主题下是否有覆盖。 */
+  overridden?(name: string): boolean;
+  /** 去掉当前主题下的覆盖，回到基础值。 */
+  onResetOverride?(name: string): void;
 }
 
 /** 每种 token 类型可以绑定的属性。 */
@@ -56,7 +62,7 @@ function tokenPreview(token: TokenValue): string {
  * 数值 token 能绑圆角/间距——和 `resolveRadius` / `resolveGap` / `resolveStroke`
  * 支持的绑定保持一致，避免出现"能绑但不生效"的选项。
  */
-export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUpdate, onBind, onUnbind, onDelete }: TokenPanelProps) {
+export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUpdate, onBind, onUnbind, onDelete, themeName, overridden, onResetOverride }: TokenPanelProps) {
   const entries = Object.entries(tokens).sort(([left], [right]) => left.localeCompare(right));
   const boundProperty = (name: string): keyof PropertyBindings | undefined =>
     (Object.entries(bindings ?? {}) as Array<[keyof PropertyBindings, string]>).find(([, value]) => value === name)?.[0];
@@ -64,9 +70,12 @@ export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUp
   return (
     <div className="token-panel">
       <div className="section-heading">
-        <h2>设计 Tokens</h2>
-        <button disabled={disabled} onClick={onCreate}><Icon name="tokenAdd" />新增</button>
+        <h2>设计 Tokens{themeName ? ` · ${themeName}` : ""}</h2>
+        <button disabled={disabled || Boolean(themeName)} onClick={onCreate} title={themeName ? "主题只能覆盖已有 token" : undefined}><Icon name="tokenAdd" />新增</button>
       </div>
+      {themeName ? (
+        <p className="empty-hint">当前在主题「{themeName}」：改值会写成该主题的覆盖，带「已覆盖」标记的可以恢复基础值。</p>
+      ) : null}
       {entries.length === 0 && <p className="empty-hint">还没有 token。新增颜色或数值 token 后可以绑定到选中节点。</p>}
       <div className="token-panel-list">
         {groupTokens(tokens).map(group => (
@@ -82,6 +91,16 @@ export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUp
                     ? <span className="token-swatch" style={{ background: String(token.value) }} />
                     : <span className="token-swatch token-swatch-value">{tokenPreview(token)}</span>}
                   <span className="token-panel-name" title={`${name}: ${tokenPreview(token)}`}>{name}</span>
+                  {overridden?.(name) ? (
+                    <>
+                      <span className="token-override-badge">已覆盖</span>
+                      {onResetOverride ? (
+                        <Tooltip label="恢复基础值">
+                          <button className="icon-only" aria-label={`恢复 ${name} 的基础值`} disabled={disabled} onClick={() => onResetOverride(name)}>↺</button>
+                        </Tooltip>
+                      ) : null}
+                    </>
+                  ) : null}
                   <select
                     className="token-bind-select"
                     aria-label={`绑定 ${name}`}

@@ -14,6 +14,8 @@ export interface HtmlExportOptions {
   pageId: string;
   viewport: { width: number; height: number };
   title?: string;
+  /** 主题 id：导出前把该主题的 token 覆盖合并进来；不传用基础值。 */
+  themeId?: string;
   resolveAsset?: (asset: AssetMetadata) => string | undefined;
   /**
    * 要写进 `<style>` 的 `@font-face` 规则。
@@ -40,6 +42,8 @@ export interface SvgExportOptions {
   pageId: string;
   viewport: { width: number; height: number };
   title?: string;
+  /** 主题 id：导出前把该主题的 token 覆盖合并进来；不传用基础值。 */
+  themeId?: string;
   resolveAsset?: (asset: AssetMetadata) => string | undefined;
   textMeasurer?: TextMeasurer;
   /**

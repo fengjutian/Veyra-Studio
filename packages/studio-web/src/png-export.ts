@@ -19,7 +19,7 @@ export interface PngExportResult {
  */
 export async function exportPageToPng(
   document: Parameters<typeof exportPageToSvg>[0],
-  options: { pageId: string; viewport: { width: number; height: number }; title?: string; scale?: number; nodeIds?: string[]; origin?: { x: number; y: number }; resolveAsset?: (asset: AssetMetadata) => string | undefined },
+  options: { pageId: string; viewport: { width: number; height: number }; title?: string; themeId?: string; scale?: number; nodeIds?: string[]; origin?: { x: number; y: number }; resolveAsset?: (asset: AssetMetadata) => string | undefined },
 ): Promise<PngExportResult> {
   const scale = options.scale && options.scale > 0 ? options.scale : 1;
   const svgResult = exportPageToSvg(document, options);

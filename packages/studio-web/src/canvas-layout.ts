@@ -15,18 +15,18 @@ export interface CanvasLayout {
  * `hug`, `fill` and `stack` sizing behave the same way in the editor and in
  * the HTML/SVG exporters.
  */
-export function useCanvasLayout(document: DesignDocument | undefined, pageId: string, viewport: { width: number; height: number }, cacheEpoch = 0): CanvasLayout {
+export function useCanvasLayout(document: DesignDocument | undefined, pageId: string, viewport: { width: number; height: number }, cacheEpoch = 0, themeId?: string): CanvasLayout {
   const measurer = useMemo(() => createBrowserTextMeasurer(), []);
   return useMemo(() => {
     if (!document || !pageId) return { boxes: {}, warnings: [] };
     try {
-      const result = computePageLayout(document, pageId, { viewport, textMeasurer: measurer });
+      const result = computePageLayout(document, pageId, { viewport, textMeasurer: measurer, themeId });
       return { boxes: result.boxes, warnings: result.warnings };
     } catch {
       // A malformed document must not blank the canvas; fall back to raw layout values.
       return { boxes: {}, warnings: [] };
     }
-  }, [document, pageId, viewport.width, viewport.height, measurer, cacheEpoch]);
+  }, [document, pageId, viewport.width, viewport.height, measurer, cacheEpoch, themeId]);
 }
 
 /**

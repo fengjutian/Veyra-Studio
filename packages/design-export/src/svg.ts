@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { LIST_MARKER_GAP, TEXT_DEFAULTS, absolutePath, applyTypographyToken, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveParagraphs, resolveRadius, resolveStroke, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
+import { LIST_MARKER_GAP, TEXT_DEFAULTS, absolutePath, applyThemeTokens, applyTypographyToken, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveParagraphs, resolveRadius, resolveStroke, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -11,7 +11,8 @@ import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./type
  * and unsupported features produce explicit diagnostics instead of silent drops.
  */
 export function exportPageToSvg(documentInput: DesignDocument, options: SvgExportOptions): SvgExportResult {
-  const document = validateDocument(documentInput);
+  // 主题在入口合并进 token 表：之后所有解析（含别名与字体 token）走的都是同一条路。
+  const document = applyThemeTokens(validateDocument(documentInput), options.themeId);
   const page = document.pages[options.pageId];
   if (!page) throw new Error(`Page ${options.pageId} does not exist`);
   if (!finiteSize(options.viewport)) throw new Error("Viewport dimensions must be finite non-negative numbers");

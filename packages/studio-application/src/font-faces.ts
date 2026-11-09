@@ -11,6 +11,7 @@ import {
 } from "@ufira/design-export";
 import type { ProjectRepository } from "@ufira/design-persistence";
 import type { DesignDocument, NodeId } from "@ufira/design-schema";
+import { applyThemeTokens } from "@ufira/design-schema";
 
 /**
  * 导出时把文档声明过的字体内联进 HTML 交付物。
@@ -65,9 +66,11 @@ export function getFontSubsetProvider(): FontSubsetProvider | undefined {
  */
 export async function prepareFontFaces(
   repository: ProjectRepository,
-  document: DesignDocument,
-  options: { pageId: string; nodeIds?: readonly NodeId[] },
+  documentInput: DesignDocument,
+  options: { pageId: string; nodeIds?: readonly NodeId[]; themeId?: string },
 ): Promise<FontFacePreparation> {
+  // 字体 token 可能在不同主题里指向不同族名：字体内联必须按当前主题收集。
+  const document = applyThemeTokens(documentInput, options.themeId);
   const diagnostics: ExportDiagnostic[] = [];
   const usages = collectExportFonts(document, options);
   const fontTexts = collectExportFontTexts(document, options);

@@ -389,6 +389,28 @@ export const designNodeSchema = z.discriminatedUnion("type", [
   instanceNodeSchema,
 ]);
 
+/** 一个 token 的值；主题覆盖与基础 token 共用同一份形状。 */
+const tokenValueSchema = z.union([
+  z.object({
+    type: z.enum(["color", "number", "string"]),
+    value: z.union([z.string(), z.number()]),
+  }),
+  z.object({
+    type: z.literal("typography"),
+    value: z.object({
+      fontFamily: z.string().min(1),
+      // 字号必须为正：0 会让文本测量退化成 0 宽、0 高。
+      fontSize: z.number().finite().positive(),
+      lineHeight: z.number().finite().nonnegative().optional(),
+      fontWeight: z.number().int().min(100).max(900).optional(),
+      fontStyle: z.enum(["normal", "italic"]).optional(),
+      letterSpacing: z.number().finite().optional(),
+    }),
+  }),
+  // 别名：值是被引用的 token 名；目标存在性与环由 `validateDocument()` 检查。
+  z.object({ type: z.literal("alias"), value: z.string().min(1) }),
+]);
+
 export const designDocumentSchema = z.object({
   schemaVersion: z.literal(4),
   id,
@@ -418,26 +440,13 @@ export const designDocumentSchema = z.object({
     weight: z.number().int().min(100).max(900).optional(),
     style: z.enum(["normal", "italic"]).optional(),
   })).optional(),
-  tokens: z.record(z.string(), z.union([
-    z.object({
-      type: z.enum(["color", "number", "string"]),
-      value: z.union([z.string(), z.number()]),
-    }),
-    z.object({
-      type: z.literal("typography"),
-      value: z.object({
-        fontFamily: z.string().min(1),
-        // 字号必须为正：0 会让文本测量退化成 0 宽、0 高。
-        fontSize: z.number().finite().positive(),
-        lineHeight: z.number().finite().nonnegative().optional(),
-        fontWeight: z.number().int().min(100).max(900).optional(),
-        fontStyle: z.enum(["normal", "italic"]).optional(),
-        letterSpacing: z.number().finite().optional(),
-      }),
-    }),
-    // 别名：值是被引用的 token 名；目标存在性与环由 `validateDocument()` 检查。
-    z.object({ type: z.literal("alias"), value: z.string().min(1) }),
-  ])),
+  tokens: z.record(z.string(), tokenValueSchema),
+  // 主题：只覆盖已存在的 token 值；名字/目标存在性由 `validateDocument()` 检查。
+  themes: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    tokens: z.record(z.string(), tokenValueSchema),
+  })).optional(),
   assets: z.record(id, z.object({
     id,
     hash: z.string().min(1),

@@ -20,6 +20,7 @@ import type {
   NodeId,
   PageId,
   TextPatch,
+  Theme,
   TokenValue,
   VectorGeometry,
 } from "@ufira/design-schema";
@@ -174,6 +175,23 @@ export interface UpsertTokenCommand {
 export interface DeleteTokenCommand {
   type: "token.delete";
   payload: { name: string };
+}
+
+/**
+ * 新增或整组替换一个主题。
+ *
+ * 与 token 一样按名字定位，主题按 id 定位：id 是稳定的引用键（改名字不该让
+ * 视图层的当前主题失效）。
+ */
+export interface UpsertThemeCommand {
+  type: "theme.upsert";
+  payload: { theme: Theme };
+}
+
+/** 删除一个主题。只删覆盖，不动基础 token。 */
+export interface DeleteThemeCommand {
+  type: "theme.delete";
+  payload: { id: string };
 }
 
 export interface CreatePageCommand {
@@ -351,6 +369,8 @@ export type DesignCommand =
   | DeleteAssetCommand
   | UpsertTokenCommand
   | DeleteTokenCommand
+  | UpsertThemeCommand
+  | DeleteThemeCommand
   | CreatePageCommand
   | RenamePageCommand
   | DeletePageCommand

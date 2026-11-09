@@ -1,4 +1,4 @@
-import type { CornerRadii, DesignDocument, DesignNode, Paint, TokenValue, TypographyValue } from "./types";
+import type { CornerRadii, DesignDocument, DesignNode, Paint, Theme, TokenValue, TypographyValue } from "./types";
 
 /**
  * Token 解析。
@@ -12,6 +12,40 @@ import type { CornerRadii, DesignDocument, DesignNode, Paint, TokenValue, Typogr
 
 export function resolveToken(document: DesignDocument, name: string | undefined): TokenValue | undefined {
   return name ? document.tokens[name] : undefined;
+}
+
+/** 按 id 找主题；找不到返回 `undefined`（视图层据此退回基础值）。 */
+export function findTheme(document: DesignDocument, themeId: string | undefined): Theme | undefined {
+  if (!themeId) return undefined;
+  return (document.themes ?? []).find(theme => theme.id === themeId);
+}
+
+/** 某个主题是否覆盖了这个 token（面板据此显示「已覆盖」）。 */
+export function isTokenOverridden(document: DesignDocument, themeId: string | undefined, name: string): boolean {
+  const theme = findTheme(document, themeId);
+  return Boolean(theme && Object.prototype.hasOwnProperty.call(theme.tokens, name));
+}
+
+/** 合并后的 token 表：基础值 + 主题覆盖。 */
+export function themeTokenMap(document: DesignDocument, themeId: string | undefined): Record<string, TokenValue> {
+  const theme = findTheme(document, themeId);
+  if (!theme || !Object.keys(theme.tokens).length) return document.tokens;
+  return { ...document.tokens, ...theme.tokens };
+}
+
+/**
+ * 把主题覆盖应用到文档上，返回一份**浅拷贝**。
+ *
+ * 主题不是新的解析链路：进入布局、渲染、导出之前把覆盖合并进 token 表，
+ * 之后所有解析（包括别名、字体 token、组件）都按普通 token 走。
+ * 因此 `resolveTokenTarget()` 不需要认识主题，调用方也不必层层传递 themeId。
+ *
+ * 没有主题、或主题没有任何覆盖时原样返回同一个对象，调用方可以据此跳过重算。
+ */
+export function applyThemeTokens(document: DesignDocument, themeId: string | undefined): DesignDocument {
+  const theme = findTheme(document, themeId);
+  if (!theme || !Object.keys(theme.tokens).length) return document;
+  return { ...document, tokens: { ...document.tokens, ...theme.tokens } };
 }
 
 /**

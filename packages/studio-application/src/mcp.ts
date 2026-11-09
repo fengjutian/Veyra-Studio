@@ -74,6 +74,8 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "instance.property.reset": true,
   "slot.fill": true,
   "interaction.patch": true,
+  "theme.upsert": true,
+  "theme.delete": true,
   "history.restore": true,
 };
 

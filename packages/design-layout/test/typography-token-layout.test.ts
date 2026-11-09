@@ -59,3 +59,19 @@ test("typography token: 固定尺寸的文本节点只有字号影响测量，�
   const result = computePageLayout(document, "page:1", { viewport: { width: 800, height: 600 } });
   assert.deepEqual(result.boxes["text:1"], { x: 0, y: 0, width: 200, height: 30 });
 });
+
+test("typography token: 主题覆盖字号后 hug 尺寸跟着变", () => {
+  const document = documentWith(true);
+  document.themes = [{
+    id: "theme:big",
+    name: "大字",
+    tokens: { "text.display": { type: "typography", value: { fontFamily: "Inter", fontSize: 64, lineHeight: 72 } } },
+  }];
+  const base = computePageLayout(document, "page:1", { viewport: { width: 800, height: 600 } });
+  const themed = computePageLayout(document, "page:1", { viewport: { width: 800, height: 600 }, themeId: "theme:big" });
+
+  assert.ok(themed.boxes["text:1"]!.width > base.boxes["text:1"]!.width);
+  assert.equal(themed.boxes["text:1"]!.height, 72);
+  // 不传 themeId 时行为不变。
+  assert.equal(base.boxes["text:1"]!.height, 48);
+});
