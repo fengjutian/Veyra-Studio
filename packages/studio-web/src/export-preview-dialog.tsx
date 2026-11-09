@@ -42,7 +42,7 @@ export function ExportPreviewDialog({ open, onOpenChange, preview, compare }: Ex
             )}
             {preview && (
               <section className="export-preview-pane">
-                {compare && <span className="export-preview-pane-title">当前</span>}
+                {compare && <span className="export-preview-pane-title">{preview.title}</span>}
                 <PreviewContent preview={preview} />
               </section>
             )}

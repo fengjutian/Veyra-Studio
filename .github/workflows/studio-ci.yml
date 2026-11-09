@@ -58,6 +58,9 @@ jobs:
       - run: npm run build:studio-core
       - run: npm run build:studio-web
       - run: npm run test:studio-web
+      # 端到端：版本并排对比。对着构建产物跑——导入 fixture、用真实按键造出第二个
+      # 版本、点开两栏、逐点比对两栏内容。纯函数测不出「两栏是不是同一交付物」。
+      - run: npm run visual:compare:probe -- --require-browser
 
   budgets:
     name: 性能预算（layout / export / paint）
