@@ -23,6 +23,10 @@ import {
   resolveGridTrackWidths,
 } from "@ufira/design-layout";
 
+// isContentGridTrack / isResizableGridTrack 属于布局语义，编辑器只是复用；
+// 从这里一起导出，属性面板与测试不必各自去记该从哪个包拿。
+export { isContentGridTrack, isResizableGridTrack } from "@ufira/design-layout";
+
 /** 轨道数的上限——再多就没法看了，也没法在属性面板里操作。 */
 export const MAX_GRID_TRACK_COUNT = 24;
 

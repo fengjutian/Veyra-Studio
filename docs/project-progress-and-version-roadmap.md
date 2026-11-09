@@ -277,8 +277,9 @@ AI 原型：
   **已实现**：拖拽调整轨道宽度、增删轨道；**命名区域**（`grid.areas` 模板 +
   `grid.cells[n].area` 引用，行列与跨度由区域外接矩形推导；解析/校验在
   `design-schema/src/grid-areas.ts`，HTML 导出 `grid-template-areas` + `grid-area`，
-  规格见 `grid-layout.md` §9）。
-  **尚未实现**：自动轨道（`auto-fill` / `auto-fit`）。
+  规格见 `grid-layout.md` §9）；**自动重复轨道**
+  （`repeat(auto-fill|auto-fit, …)`，条数在布局时按可用尺寸展开，hug 容器退化成一条并警告，
+  HTML 导出同名 CSS `repeat()`，规格见 §10）。线 A 的 Grid 差距已清零；
   差距清单与优先级见 `figma-gap-roadmap.md`；
 - 原型交互与运行时：`design-schema/src/interactions.ts` 按 Penpot 的
   interactions 语义定义事件、动作、动画与 overlay 定位，节点上以可选

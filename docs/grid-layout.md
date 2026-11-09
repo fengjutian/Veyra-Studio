@@ -33,11 +33,15 @@ type GridTrack =
   | { type: "min-content" }
   | { type: "max-content" };
 
+// 2026-11-09 新增（见 §10）：
+type RepeatTrack = { type: "repeat"; mode: "auto-fill" | "auto-fit"; min: number; grow?: boolean };
+
 interface GridSpec {
-  columns: GridTrack[];
-  rows: GridTrack[];
+  columns: Array<GridTrack | RepeatTrack>;
+  rows: Array<GridTrack | RepeatTrack>;
   columnGap: number;
   rowGap: number;
+  areas?: string[];   // 命名区域，2026-11-09 新增（§9）
   cells?: Record<string, GridCell>;
   align?: "start" | "center" | "end" | "stretch";
 }
@@ -223,6 +227,7 @@ import { GridTrackEditor as GridTrackVisualEditor } from "./grid-track-editor";
 - **行方向没有可视化条**：模型层已经支持（把宽度换成高度），组件目前只画宽度轴。
 - **改间隙会连带改轨道宽度**：总宽守恒的直接结果（见 §4.1）。
 - **不做自动轨道**（`auto-fill` / `auto-fit`）：与求解器保持一致，属于有意的简化。
+  > 2026-11-09 更新：自动重复轨道已落地，见 §10；本节描述的是当时的限制。
 
 ## 9. 命名区域（`grid-template-areas`）
 
@@ -292,3 +297,81 @@ schema 层直接拒绝；带区域名时也不能再写跨度——区域的矩�
 - 不支持 `grid-template-areas` 的自动轨道组合（与 §8 的 `auto-fill` / `auto-fit` 同一限制）；
 - 区域名只在**同一个 Grid 容器内**唯一，没有跨容器引用；
 - 编辑器只处理列轴的轨道条，行轨道仍用列表式编辑器，但命名区域对行列同时生效。
+
+> 2026-11-09 更新：自动重复轨道已落地（§10），9.5 的第一条限制不再成立。
+
+## 10. 自动重复轨道（`repeat(auto-fill|auto-fit, …)`）
+
+> 2026-11-09 落地。CSS 的 `repeat()` 天然依赖容器尺寸，这一节说明它在本项目里
+> 什么时候能展开、什么时候只能退化。
+
+### 10.1 数据模型
+
+```ts
+type GridTrack =
+  | { type: "fixed"; size: number }
+  | { type: "fraction"; weight: number }
+  | { type: "auto" }
+  | { type: "min-content" }
+  | { type: "max-content" }
+  | { type: "repeat"; mode: "auto-fill" | "auto-fit"; min: number; grow?: boolean };
+```
+
+- `min` 必须为正（0 会让条数发散，schema 直接拒绝）；
+- `grow: true` 相当于 `minmax(min, 1fr)`，轨道在最小宽度之上均分剩余空间；
+  缺省是 `repeat(…, min)`，右侧留白；
+- 可选字段，**不升文档格式版本**，旧文档行为逐字不变。
+
+### 10.2 条数公式
+
+展开在求解**之前**完成（`expandRepeatTracks`，`design-layout/src/grid.ts`）：
+
+```
+n = ⌊(可用尺寸 − 其它轨道基准尺寸 − 其它轨道占的间隙 + gap) ÷ (min + gap)⌋，至少 1 条
+```
+
+- 「其它轨道」先扣掉，与 CSS 一致：`[fixed 200, repeat(min 100)]` 在 400px 里只放 2 条，
+  而不是 4 条把容器撑爆；
+- 其它轨道里只有 `fixed` 有确定基准尺寸，`fraction` / 内容轨道按 0 计；
+- 条数上限 24（与属性面板的轨道数上限一致）：1px 的容器抖动不该让轨道数在临界点反复跳变；
+- 展开后的轨道只剩 `fixed` 与 `fraction`，`solveGrid()` 一行未改。
+
+### 10.3 `auto-fill` 与 `auto-fit` 的差别
+
+- `auto-fill`：条数只由容器决定，放不满时右边留空轨道；
+- `auto-fit`：条数再被「这一轴上的子节点数」夹住，空轨道被收起，
+  于是剩余空间全部给到已有轨道（Figma 里「自动铺满」的效果）。
+
+`auto-fit` 的收起规则是**近似**：按子节点总数夹条数，而不是逐条判断哪一列真的空着。
+自动排布时两者等价（子节点总是从第一列开始填），显式 `cells` 把子节点摆得稀疏时，
+被收起的数量可能与浏览器略有出入。
+
+### 10.4 hug 容器：退化成一条并警告
+
+`hug` 容器的尺寸是**结果**（由内容决定），而内容的位置又依赖轨道条数——这个循环没有不动点。
+此时每条 `repeat` 只展开**一条固定轨道**（即使是 `grow`，因为未知空间里没有东西可分），
+并产生 `grid-auto-repeat` 布局警告。空容器 hug 时因此是 `min` 宽，而不是 0 宽。
+
+### 10.5 导出
+
+HTML 导出直接把声明交给浏览器：
+
+| 声明 | CSS |
+| --- | --- |
+| `{ mode: "auto-fill", min: 120, grow: true }` | `repeat(auto-fill, minmax(120px, 1fr))` |
+| `{ mode: "auto-fit", min: 80 }` | `repeat(auto-fit, 80px)` |
+
+画布与本机浏览器用同一套条数公式解算，导出物因此与画布一致；子节点没有显式 `cells` 时，
+浏览器按行优先自动排布，与 `assignCellsByOrder` 的顺序相同。
+
+### 10.6 编辑器
+
+- 轨道类型下拉框新增「自动重复」，可调 `min`、`auto-fill` / `auto-fit` 与「均分」；
+- 轨道条上只画一个 `min` 宽的占位（真实条数由容器宽度在布局时决定），
+  拖拽手柄禁用并给出 `track-not-resizable` 诊断——不假装能拖。
+
+## 11. 当前差距
+
+Grid 线 A 的能力已全部落地。仍未实现的是**命名网格区域与自动轨道的组合**
+（`grid.areas` 要求模板行列数等于轨道数，而自动轨道的条数要到布局时才确定），
+以及 §8 列出的编辑期限制（margin 不进文档、行方向没有可视化条）。

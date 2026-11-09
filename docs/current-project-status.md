@@ -39,7 +39,14 @@
   HTML 导出（`grid-template-areas` + `grid-area`）与属性面板读同一份结果；
   布局求解器本身一行未改。模板行列数必须与轨道数一致，改轨道数时编辑器会把区域
   固化成行列号再丢模板（位置不跳、文档仍然合法）；
-  **尚未实现**：自动轨道（`auto-fill` / `auto-fit`）；
+  **自动重复轨道**（`repeat(auto-fill|auto-fit, …)`，2026-11-09）：`GridTrack` 新增
+  `repeat`（`min` 最小宽度 + 可选 `grow` 均分剩余空间），条数在布局时按
+  「先扣掉同轴其它轨道、再按 `min + gap` 整除」展开（上限 24 条），
+  `auto-fit` 再被该轴子节点数夹住以收起空轨道；展开结果只有 `fixed` / `fraction`，
+  求解器一行未改。hug 容器拿不到确定尺寸，退化成一条固定轨道并产生
+  `grid-auto-repeat` 警告（否则 fraction 会塌成 0 宽）。HTML 导出输出
+  `repeat(auto-fill, minmax(120px, 1fr))` 这类写法，画布与浏览器用同一套条数公式。
+  编辑器里自动轨道只画一个 `min` 宽的占位，不可拖拽；
 - **表现层能力**（混合模式 / 椭圆渐变 / 背景模糊）：三项都是**可选字段**，
   文档格式版本不变（仍是 v4），旧文档无需迁移。
   `AppearanceSpec.blendMode` 取值与 CSS `mix-blend-mode` 对齐（16 种）；
@@ -654,7 +661,10 @@
   先把区域固化为行列号再清除模板。解析/校验/矩形判定在
   `design-schema/src/grid-areas.ts`，编辑期模型在 `studio-web/src/grid-areas-model.ts`，
   规格见 `grid-layout.md` §9；
-  **尚未实现**：自动轨道（`auto-fill` / `auto-fit`）；
+  **自动重复轨道也已实现**（2026-11-09）：`repeat` 轨道按容器可用尺寸展开，
+  `auto-fill` / `auto-fit` 与 `grow` 均由 `design-layout/src/grid.ts` 的
+  `expandRepeatTracks()` 统一处理，hug 容器退化成一条并给 `grid-auto-repeat` 警告，
+  规格见 `grid-layout.md` §10；
   与 Figma 的差距清单见 `figma-gap-roadmap.md`；
 - SVG 路径导入：`design-schema/src/svg-path.ts` 按 Penpot 的解析语义支持
   `M/L/C/Q/A/H/V/S/T/Z` 及小写相对形式与隐式命令（`M` 之后省略命令字母按 `L` 处理），
