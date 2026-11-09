@@ -428,20 +428,25 @@
   顶部有「全部重置」与「脱离组件」，多选全是实例时还有「批量脱离」。
 - 组件属性（component props，2026-11-08）：组件可以声明一组**有类型、有默认值**的对外参数，
   实例按属性改值而不改结构。`ComponentDefinition.properties` 是属性声明
-  （`text` / `boolean` 两种，用判别联合保证类型与默认值配对），
-  `node.componentPropertyBindings` 是绑定（方向「字段 → 属性 id」，
-  只支持 `text` 与 `visible` 两个字段），`instance.propValues` 存**实例显式改过**的值——
-  没改过的跟随组件默认值，与 Figma 一致。三个字段全可选，文档格式版本仍是 v4。
+  （用判别联合保证类型与默认值配对），`node.componentPropertyBindings` 是绑定
+  （方向「字段 → 属性 id」），`instance.propValues` 存**实例显式改过**的值——
+  没改过的跟随组件默认值，与 Figma 一致。几个字段全可选，文档格式版本仍是 v4。
   物化顺序是「复制子树 → 应用 override → 应用属性值」：属性是更高层的契约，
   优先于字段级覆盖，与之配套 `component.override` 拒绝写入被属性绑定的字段，
   不让人以为改成功了。命令：`component.property.set / remove / bind / unbind`、
-  `instance.property.set / reset`；实例面板新增「组件属性」区（文本框 / 勾选框 + 恢复默认），
+  `instance.property.set / reset`；实例面板新增「组件属性」区（按类型的控件 + 恢复默认），
   选中组件内部节点时属性面板新增「组件属性」区（暴露 / 解绑 / 删除）。
   变体创建时继承属性声明，切换变体时实例的显式值按属性 id 保留。
   规格见 `component-properties.md`；
-  **尚未实现**：实例交换 / 颜色 / 字号等属性类型；
-  属性声明按组件各存一份（不是变体集共享），源组件改默认值不会同步到已有变体；
-  文本属性写纯文本，会清掉被绑定文本节点的段内样式；
+  **已实现（2026-11-09）**：属性类型扩到五种——`text` / `boolean` / `instance-swap` /
+  `color` / `number`，并且能真的绑到节点字段上（`text` / `visible` / `fill` /
+  `fontSize` / `instance`）；字段与属性类型的对应由 `BINDING_REQUIREMENTS` 一张表决定，
+  命令层与文档校验层读同一张表。**变体集共享声明**：在集合上声明一次，
+  集内所有变体都拿到（同名 id 组件自己的优先，但不得改类型）；新增命令
+  `component.setProperty.set / remove`。实例交换是真交换：旧子树删掉、
+  新组件的根子树按同一套物化规则重新长出来。
+  **尚未实现**：属性声明的默认值变化不会同步到已有变体（共享声明只解决「有没有」，
+  不解决「默认值改了多少」）；文本属性写纯文本，会清掉被绑定文本节点的段内样式；
   属性不能跨组件嵌套引用；
 - 人工编辑支持可持久化撤销/重做及 `Ctrl/Cmd+Z`、`Shift+Ctrl/Cmd+Z` 快捷键；历史操作
   以 `history.restore` 事务写入日志，revision 保持单调递增，并可在快照后连续重放；
@@ -548,7 +553,16 @@
   规格见 `font-inline.md`；
   **字体子集化已实现**（浏览器端 harfbuzz wasm：超过 1 MB 的字体先裁到导出范围里
   真正用到的字符再内联，规格见 `font-management.md` §7）；
-  **尚未实现**：SVG 导出的字体内联、字体 token 的渲染语义；
+  **SVG 导出的字体内联已实现**（2026-11-09）：SVG 交付物此前和 HTML 一样只带
+  `font-family`、不带字形，现在与 HTML **共用同一套**字体准备逻辑（收集 / 匹配 /
+  1 MB 阈值 / 子集化 / 诊断），差别只有落点——规则写进根 `<svg>` 下的一个 `<style>`。
+  先实测再实现：新探针走真实导出路径，覆盖顶层 `.svg` 文档、HTML 内联 `<svg>`、
+  `<img src="…svg">` 三种加载场景，文字宽度都从 483.6px 变成 912px
+  （Press Start 2P 的等宽步进），探针已并入 `npm run check:visual`。
+  顺带修掉一个**老 bug**：SVG 导出写 `font-family` 时不加引号，
+  `Press Start 2P` 这类含数字的族名会让整条声明作废（`2P` 不是合法 CSS 标识符），
+  导出的 SVG 根本用不上声明的字体；现在只在必要时加引号，裸写时旧产物逐字不变。
+  **尚未实现**：字体 token 的渲染语义；
 - 图片资产闭环：可从本地插入 PNG/JPEG/GIF/WebP 图片，字节按 SHA-256 写进仓库并去重，
   文档里先登记资源元数据（`asset.upsert`）再在同一个事务里创建 `image` 节点，两步不会
   只成一半；画布按 `fit`（覆盖/适应/拉伸）用对象 URL 渲染，资源缺失时画占位框并标注
@@ -623,8 +637,8 @@
 - **原型已有运行时**：`interaction.patch` 的数据层 + `studio-web/src/prototype/` 的预览，
   支持点击/悬停/延迟三种事件、navigate/overlay/prev-screen/open-url 五类动作、
   dissolve/slide/push 动画与 overlay 定位（详见下方「原型预览」条目）；
-  仍未实现：滚动保持（`preserveScroll` 字段已建模未消费）、
-  原型内的固定元素与滚动容器；协作（实时多人、评论、分享）完全空缺；
+  仍未实现：原型内的固定元素（sticky / fixed）、滚动条 UI 与惯性滚动；
+  协作（实时多人、评论、分享）完全空缺；
 - **Grid 的可视化轨道编辑已实现**：属性面板里有轨道条，能拖拽改轨道宽度、增删轨道，
   宽度代数在 `design-layout/src/grid.ts`（`resolveGridTrackWidths` / `applyGridTrackWidths`），
   编辑期模型在 `studio-web/src/grid-track-model.ts`，规格见 `grid-layout.md`；
@@ -652,8 +666,16 @@
   背景遮罩与点外部关闭（`closeClickOutside`）；动画用 DOM 层的 CSS keyframes 实现
   （dissolve 淡入、slide 入场、push 新旧两屏同步位移），每层一张 canvas，
   图片仍走与编辑器同一套对象 URL。规格见 `prototype-runtime.md`；
-  **尚未实现**：`preserveScroll` 的滚动保持、
-  原型内滚动容器与固定元素；
+  **滚动保持与滚动容器已实现**（2026-11-09）：`preserveScroll` 是 `navigate` 动作上的
+  正向开关——离开一屏时记住各滚动宿主的偏移，`preserveScroll: true` 到达时读回，
+  否则重置为 0；`back` / `prev-screen` 一律保持（「返回」就是回到刚才待过的地方）。
+  滚动容器靠节点上的可选字段 `overflow` 声明（`hidden` 缺省 / `scroll` / `visible`），
+  只有容器型节点能带（文档校验与命令层都会拦），属性面板的「溢出」小节可以直接改。
+  滚轮落在哪个宿主上就滚哪个——从命中路径最深往上找第一个「能滚」的宿主，
+  滚不动的跳过继续往外找；滚轮用**非被动**监听器接（React 的 `onWheel` 是被动监听，
+  `preventDefault()` 不生效，浏览器会把外层预览区一起滚走）。
+  字段全可选，**不升 schema 版本**，旧文档行为逐字不变；
+  **尚未实现**：原型内的固定元素（sticky / fixed）、滚动条 UI 与惯性滚动；
 - 生产可用的 `studio-web` 或桌面工作台；当前只有 Web 垂直切片；
 - 生产可用的渲染系统；画布已切到 Canvas 2D 场景渲染（`renderer/scene.ts` +
   `renderer/canvas-renderer.ts`），有根节点级视口裁剪、像素回归和绘制耗时基线，
