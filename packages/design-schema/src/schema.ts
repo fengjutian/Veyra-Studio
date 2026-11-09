@@ -185,11 +185,17 @@ const constraintAxisSchema = z.enum(["start", "end", "center", "stretch", "scale
 export const componentPropertySchema = z.discriminatedUnion("type", [
   z.object({ id: id, name: z.string().min(1), type: z.literal("text"), defaultValue: z.string() }),
   z.object({ id: id, name: z.string().min(1), type: z.literal("boolean"), defaultValue: z.boolean() }),
+  z.object({ id: id, name: z.string().min(1), type: z.literal("instance-swap"), defaultValue: z.string() }),
+  z.object({ id: id, name: z.string().min(1), type: z.literal("color"), defaultValue: z.string() }),
+  z.object({ id: id, name: z.string().min(1), type: z.literal("number"), defaultValue: z.number() }),
 ]);
 
 const componentPropertyBindingsSchema = z.object({
   text: z.string().min(1).optional(),
   visible: z.string().min(1).optional(),
+  fill: z.string().min(1).optional(),
+  fontSize: z.string().min(1).optional(),
+  instance: z.string().min(1).optional(),
 });
 
 const baseNodeShape = {
@@ -296,7 +302,7 @@ const instanceNodeSchema = z.object({
   type: z.literal("instance"),
   componentId: id,
   overrides: z.record(z.string(), z.unknown()),
-  propValues: z.record(z.string(), z.union([z.string(), z.boolean()])).optional(),
+  propValues: z.record(z.string(), z.union([z.string(), z.boolean(), z.number()])).optional(),
 });
 
 // 判别联合按 type 选分支，报错会直接落到出问题的字段上；
@@ -333,6 +339,8 @@ export const designDocumentSchema = z.object({
     id,
     name: z.string(),
     properties: z.array(z.string().min(1)).min(1),
+    // 变体集共享的组件属性声明；可选，旧集合没有它也完全合法。
+    componentProperties: z.array(componentPropertySchema).optional(),
   })).optional(),
   fonts: z.array(z.object({
     family: z.string().min(1),

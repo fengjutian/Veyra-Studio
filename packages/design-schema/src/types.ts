@@ -368,7 +368,7 @@ export interface InstanceNode extends BaseNode {
    * 只存**改过**的值：没改过的实例不写任何东西，这样组件默认值变化时
    * 这类实例会跟着变（和 Figma 一致）。
    */
-  propValues?: Record<string, string | boolean>;
+  propValues?: Record<string, ComponentPropertyValue>;
 }
 
 /**
@@ -377,9 +377,24 @@ export interface InstanceNode extends BaseNode {
  * 用判别联合而不是 `defaultValue: string | boolean`——类型与默认值必须配对，
  * 写成联合会让「text 属性的默认值是 false」这种错误数据也能通过 schema。
  */
+export type ComponentPropertyType = "text" | "boolean" | "instance-swap" | "color" | "number";
+
+/** 组件属性的类型。 */
 export type ComponentProperty =
   | { id: string; name: string; type: "text"; defaultValue: string }
-  | { id: string; name: string; type: "boolean"; defaultValue: boolean };
+  | { id: string; name: string; type: "boolean"; defaultValue: boolean }
+  | { id: string; name: string; type: "instance-swap"; defaultValue: string }
+  | { id: string; name: string; type: "color"; defaultValue: string }
+  | { id: string; name: string; type: "number"; defaultValue: number };
+
+/**
+ * 属性值在实例上的存储形态。
+ *
+ * `text` / `color` / `instance-swap` 是字符串，`boolean` 是布尔值，
+ * `number` 是数字。判别联合保证了「类型 → 值形态」的对应，
+ * 这里只需要一个「值本身」的联合类型来描述存储。
+ */
+export type ComponentPropertyValue = string | boolean | number;
 
 /**
  * 节点字段与组件属性的绑定，方向是「字段 → 属性 id」。
@@ -388,14 +403,27 @@ export type ComponentProperty =
  * 和一个 visible 属性，这样天然满足；节点被删除时绑定随之消失，
  * 不会留下指向已删节点的悬空引用。
  *
- * 只支持 `text` 与 `visible` 两个字段——一旦允许绑定任意字段，
- * 属性就会退化成 override 的别名。
+ * 支持的字段与属性类型的对应：
+ *
+ * | 字段 | 属性类型 | 语义 |
+ * | --- | --- | --- |
+ * | `text` | `text` | 文本节点的内容被属性值取代 |
+ * | `visible` | `boolean` | 节点的可见性被属性值控制 |
+ * | `fill` | `color` | 节点的填充色被属性值取代 |
+ * | `fontSize` | `number` | 文本节点的字号被属性值取代 |
+ * | `instance` | `instance-swap` | 组件内部的实例被换成属性值指向的组件 |
  */
 export interface ComponentPropertyBindings {
   /** 文本字段由哪个 text 属性驱动。 */
   text?: string;
   /** 可见性由哪个 boolean 属性驱动。 */
   visible?: string;
+  /** 填充色由哪个 color 属性驱动。 */
+  fill?: string;
+  /** 字号由哪个 number 属性驱动。 */
+  fontSize?: string;
+  /** 内部实例由哪个 instance-swap 属性驱动。 */
+  instance?: string;
 }
 
 export interface VectorNode extends BaseNode {
@@ -443,6 +471,13 @@ export interface ComponentSetDefinition {
   name: string;
   /** 变体属性名，顺序即 UI 展示顺序。 */
   properties: string[];
+  /**
+   * 变体集**共享**的组件属性声明；可选，旧集合没有它也完全合法。
+   *
+   * 解决「同一个变体集里的每个变体都要重复声明同一组属性」：
+   * 声明一次，集内所有变体都拿到。合并规则见 `docs/component-properties.md` §4.1。
+   */
+  componentProperties?: ComponentProperty[];
 }
 
 export interface TokenValue {

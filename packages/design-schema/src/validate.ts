@@ -2,8 +2,16 @@ import { designDocumentSchema } from "./schema";
 import { fontKey, isFontMimeType } from "./fonts";
 import { supportsBooleanOperand } from "./boolean";
 import { findOwningComponentId } from "./components";
-import { isInsideSubtree } from "./component-properties";
-import type { DesignDocument, NodeId } from "./types";
+import {
+  BINDING_REQUIREMENTS,
+  effectiveComponentProperties,
+  isInsideSubtree,
+  sharedPropertyTypeConflicts,
+  validatePropertyValue,
+  type BindingRequirement,
+  type ComponentPropertyField,
+} from "./component-properties";
+import type { ComponentPropertyBindings, DesignDocument, NodeId } from "./types";
 
 export class DocumentValidationError extends Error {
   constructor(public readonly issues: string[]) {
@@ -90,20 +98,26 @@ export function validateDocument(input: unknown): DesignDocument {
       continue;
     }
     const owner = document.components[ownerId];
-    const properties = new Map((owner?.properties ?? []).map(property => [property.id, property]));
+    // 有效声明 = 变体集共享声明 + 组件自己的声明。
+    const properties = new Map(effectiveComponentProperties(document, ownerId).map(property => [property.id, property]));
     if (!isInsideSubtree(document, nodeId, owner!.rootNodeId)) {
       issues.push(`node ${nodeId} has component property bindings but is not inside component ${ownerId}`);
     }
-    if (bindings.text) {
-      const property = properties.get(bindings.text);
-      if (!property) issues.push(`node ${nodeId} text binding references unknown property ${bindings.text} of component ${ownerId}`);
-      else if (property.type !== "text") issues.push(`node ${nodeId} text binding cannot use ${property.type} property ${property.id}`);
-      else if (node.type !== "text") issues.push(`node ${nodeId} text binding requires a text node`);
-    }
-    if (bindings.visible) {
-      const property = properties.get(bindings.visible);
-      if (!property) issues.push(`node ${nodeId} visible binding references unknown property ${bindings.visible} of component ${ownerId}`);
-      else if (property.type !== "boolean") issues.push(`node ${nodeId} visible binding cannot use ${property.type} property ${property.id}`);
+    // 每个绑定字段的语义要求：字段 → 允许的属性类型 + 节点类型要求。
+    for (const [field, requirement] of Object.entries(BINDING_REQUIREMENTS) as Array<[ComponentPropertyField, BindingRequirement]>) {
+      const propertyId = bindings[field as keyof ComponentPropertyBindings];
+      if (!propertyId) continue;
+      const property = properties.get(propertyId);
+      if (!property) {
+        issues.push(`node ${nodeId} ${field} binding references unknown property ${propertyId} of component ${ownerId}`);
+        continue;
+      }
+      if (property.type !== requirement.propertyType) {
+        issues.push(`node ${nodeId} ${field} binding cannot use ${property.type} property ${property.id}`);
+      }
+      if (requirement.nodeType && node.type !== requirement.nodeType) {
+        issues.push(`node ${nodeId} ${field} binding requires a ${requirement.nodeType} node`);
+      }
     }
   }
 
@@ -111,7 +125,7 @@ export function validateDocument(input: unknown): DesignDocument {
   for (const [nodeId, node] of Object.entries(document.nodes)) {
     if (node.type !== "instance") continue;
     const properties = new Map(
-      (document.components[node.componentId]?.properties ?? []).map(property => [property.id, property]),
+      effectiveComponentProperties(document, node.componentId).map(property => [property.id, property]),
     );
     for (const [propertyId, value] of Object.entries(node.propValues ?? {})) {
       const property = properties.get(propertyId);
@@ -119,12 +133,15 @@ export function validateDocument(input: unknown): DesignDocument {
         issues.push(`instance ${nodeId} sets unknown component property ${propertyId}`);
         continue;
       }
-      if (property.type === "text" && typeof value !== "string") {
-        issues.push(`instance ${nodeId} property ${propertyId} must be a string`);
-      }
-      if (property.type === "boolean" && typeof value !== "boolean") {
-        issues.push(`instance ${nodeId} property ${propertyId} must be a boolean`);
-      }
+      const problem = validatePropertyValue(property, value, { document });
+      if (problem) issues.push(`instance ${nodeId} property ${propertyId} ${problem}`);
+    }
+  }
+
+  // 变体集共享声明：组件不得改变共享属性的类型（那是破坏共享契约）。
+  for (const [componentId] of Object.entries(document.components)) {
+    for (const propertyId of sharedPropertyTypeConflicts(document, componentId)) {
+      issues.push(`component ${componentId} changes the type of shared property ${propertyId}`);
     }
   }
 

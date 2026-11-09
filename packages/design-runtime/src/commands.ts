@@ -3,6 +3,7 @@ import type {
   ComponentDefinition,
   ComponentProperty,
   ComponentPropertyField,
+  ComponentPropertyValue,
   ComponentSetDefinition,
   BooleanOperation,
   ComponentSetId,
@@ -217,6 +218,27 @@ export interface AssignComponentVariantCommand {
 }
 
 /**
+ * 给变体集声明一个**共享**的组件属性。
+ *
+ * 集内所有成员都拿到这条声明，不必各自重复声明。
+ */
+export interface SetComponentSetPropertyCommand {
+  type: "component.setProperty.set";
+  payload: { setId: string; property: ComponentProperty };
+}
+
+/**
+ * 删除变体集共享的组件属性。
+ *
+ * 成员组件自己没有同名声明时，那条属性对它们就不存在了——
+ * 绑定与实例值会一起清掉。
+ */
+export interface RemoveComponentSetPropertyCommand {
+  type: "component.setProperty.remove";
+  payload: { setId: string; propertyId: string };
+}
+
+/**
  * 从现有组件复制出一个新变体。
  *
  * 复制发生在命令里而不是 UI：新组件的根子树必须有唯一 id，交给运行时统一生成
@@ -336,6 +358,8 @@ export type DesignCommand =
   | CreateComponentCommand
   | CreateComponentSetCommand
   | AssignComponentVariantCommand
+  | SetComponentSetPropertyCommand
+  | RemoveComponentSetPropertyCommand
   | CreateComponentVariantCommand
   | SwitchComponentVariantCommand
   | RegisterFontCommand
@@ -464,7 +488,7 @@ export interface UnbindComponentPropertyCommand {
 /** 设置实例上某个属性的值；立即作用到实例的物化副本。 */
 export interface SetInstancePropertyCommand {
   type: "instance.property.set";
-  payload: { instanceId: NodeId; propertyId: string; value: string | boolean };
+  payload: { instanceId: NodeId; propertyId: string; value: ComponentPropertyValue };
 }
 
 /** 删掉实例的显式值，回到组件声明的默认值。 */

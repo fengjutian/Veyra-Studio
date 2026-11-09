@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -1465,7 +1465,7 @@ function App() {
     setMessage("已解除组件属性绑定");
   });
   /** 设置实例的属性值。 */
-  const setInstanceProperty = (instanceId: string, propertyId: string, value: string | boolean) => void run(async () => {
+  const setInstanceProperty = (instanceId: string, propertyId: string, value: ComponentPropertyValue) => void run(async () => {
     await execute([{ type: "instance.property.set", payload: { instanceId, propertyId, value } }]);
   });
   /** 删掉实例的显式属性值，回到默认值。 */

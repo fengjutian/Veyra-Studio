@@ -1,5 +1,6 @@
-import type { DesignDocument, DesignNode, InstanceNode, Paint } from "@ufira/design-schema";
+import type { ComponentPropertyValue, DesignDocument, DesignNode, InstanceNode, Paint } from "@ufira/design-schema";
 import { NumberField, TextField } from "./property-panel";
+import { ComponentPropEditor, type ComponentChoice } from "./component-prop-editor";
 import { instancePropertyViews, nodeBoundByProperty } from "./component-props";
 import type { VariantOption } from "./components";
 
@@ -29,9 +30,11 @@ export interface InstancePanelProps {
   /** 把实例脱离成普通 frame。 */
   onDetach(): void;
   /** 设置实例的组件属性值。 */
-  onSetProperty?(propertyId: string, value: string | boolean): void;
+  onSetProperty?(propertyId: string, value: ComponentPropertyValue): void;
   /** 删掉实例的显式属性值，回到默认值。 */
   onResetProperty?(propertyId: string): void;
+  /** `instance-swap` 属性的候选组件；不传就用文档里全部组件（去掉自己）。 */
+  componentChoices?: ComponentChoice[];
 }
 
 export interface TextCopy {
@@ -43,10 +46,15 @@ export interface TextCopy {
   opacityPercent: number;
 }
 
-export function InstancePanel({ document, instance, disabled, variants, onSwitchVariant, onOverride, onReset, onResetAll, onDetach, onSetProperty, onResetProperty }: InstancePanelProps) {
+export function InstancePanel({ document, instance, disabled, variants, onSwitchVariant, onOverride, onReset, onResetAll, onDetach, onSetProperty, onResetProperty, componentChoices }: InstancePanelProps) {
   const copies = collectTextCopies(document, instance.id);
   const overridden = Object.keys(instance.overrides).length;
   const properties = instancePropertyViews(document, instance);
+  // `instance-swap` 的候选：文档里全部组件，除了这个实例自己指向的那个
+  // （把自己换成自己没有意义，而且会形成自引用）。
+  const choices = componentChoices ?? Object.values(document.components)
+    .filter(component => component.id !== instance.componentId)
+    .map(component => ({ componentId: component.id, label: component.name }));
   return (
     <div className="instance-panel">
       {variants && variants.length > 1 && (
@@ -71,24 +79,14 @@ export function InstancePanel({ document, instance, disabled, variants, onSwitch
           </div>
           {properties.map(property => (
             <div className="instance-override" key={property.propertyId}>
-              {property.type === "text" ? (
-                <TextField
-                  label={property.name}
-                  value={String(property.value)}
-                  disabled={disabled}
-                  onCommit={value => onSetProperty?.(property.propertyId, value)}
-                />
-              ) : (
-                <label className="field field-inline">
-                  <span className="field-label">{property.name}</span>
-                  <input
-                    type="checkbox"
-                    disabled={disabled}
-                    checked={Boolean(property.value)}
-                    onChange={event => onSetProperty?.(property.propertyId, event.target.checked)}
-                  />
-                </label>
-              )}
+              <ComponentPropEditor
+                label={property.name}
+                type={property.type}
+                value={property.value}
+                disabled={disabled}
+                components={choices}
+                onChange={value => onSetProperty?.(property.propertyId, value)}
+              />
               <div className="instance-override-appearance">
                 <span className="field-label" title={property.targetName ?? ""}>{property.targetName ?? "未绑定"}</span>
                 {property.explicit && <button type="button" disabled={disabled} onClick={() => onResetProperty?.(property.propertyId)}>恢复默认</button>}

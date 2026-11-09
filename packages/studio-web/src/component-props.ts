@@ -1,5 +1,5 @@
-import type { ComponentProperty, ComponentPropertyField, DesignDocument, DesignNode, InstanceNode } from "@ufira/design-schema";
-import { componentProperties, propertyTargets, resolvePropertyValue } from "@ufira/design-schema";
+import type { ComponentProperty, ComponentPropertyField, ComponentPropertyType, ComponentPropertyValue, DesignDocument, DesignNode, InstanceNode } from "@ufira/design-schema";
+import { effectiveComponentProperties, propertyTargets, resolvePropertyValue } from "@ufira/design-schema";
 
 /**
  * 组件属性（component props）的展示层数据。
@@ -11,25 +11,29 @@ import { componentProperties, propertyTargets, resolvePropertyValue } from "@ufi
 export interface InstancePropertyView {
   propertyId: string;
   name: string;
-  type: "text" | "boolean";
+  type: ComponentPropertyType;
   /** 有效值：显式值优先，没有就用组件默认值。 */
-  value: string | boolean;
+  value: ComponentPropertyValue;
   /** 实例是否显式改过这个属性。 */
   explicit: boolean;
   /** 绑定目标的节点名（人话）；没有绑定时为空。 */
   targetName?: string;
+  /** 绑定在哪个字段上；没有绑定时为空。 */
+  field?: ComponentPropertyField;
 }
 
 /** 组件面板里一个属性的行。 */
 export interface ComponentPropertyView {
   propertyId: string;
   name: string;
-  type: "text" | "boolean";
-  defaultValue: string | boolean;
+  type: ComponentPropertyType;
+  defaultValue: ComponentPropertyValue;
   /** 绑定在哪个节点、哪个字段上；没有绑定时为空。 */
   targetNodeId?: string;
   targetName?: string;
   field?: ComponentPropertyField;
+  /** 这个属性来自变体集的**共享声明**（而不是组件自己的声明）。 */
+  shared?: boolean;
 }
 
 /**
@@ -37,12 +41,14 @@ export interface ComponentPropertyView {
  *
  * 顺序按组件声明的属性顺序——声明顺序就是设计者给出的语义顺序，
  * 按 id 排序会让「标题 / 副标题 / 按钮文字」变成随机顺序。
+ *
+ * 声明来源是**有效声明**（变体集共享声明 + 组件自己的声明，已合并）。
  */
 export function instancePropertyViews(document: DesignDocument, instance: InstanceNode): InstancePropertyView[] {
   const definition = document.components[instance.componentId];
   if (!definition) return [];
   const targets = propertyTargets(document, instance.componentId);
-  return componentProperties(document, instance.componentId).map(property => {
+  return effectiveComponentProperties(document, instance.componentId).map(property => {
     const target = targets.find(entry => entry.property.id === property.id);
     return {
       propertyId: property.id,
@@ -50,7 +56,12 @@ export function instancePropertyViews(document: DesignDocument, instance: Instan
       type: property.type,
       value: resolvePropertyValue(document, instance, property),
       explicit: instance.propValues?.[property.id] !== undefined,
-      ...(target ? { targetName: document.nodes[target.sourceNodeId]?.name ?? target.sourceNodeId } : {}),
+      ...(target
+        ? {
+            targetName: document.nodes[target.sourceNodeId]?.name ?? target.sourceNodeId,
+            field: target.field,
+          }
+        : {}),
     };
   });
 }
@@ -58,13 +69,17 @@ export function instancePropertyViews(document: DesignDocument, instance: Instan
 /** 组件的属性列表（含绑定目标）。 */
 export function componentPropertyViews(document: DesignDocument, componentId: string): ComponentPropertyView[] {
   const targets = propertyTargets(document, componentId);
-  return componentProperties(document, componentId).map(property => {
+  const sharedIds = new Set(
+    (document.componentSets?.[document.components[componentId]?.variantSetId ?? ""]?.componentProperties ?? []).map(property => property.id),
+  );
+  return effectiveComponentProperties(document, componentId).map(property => {
     const target = targets.find(entry => entry.property.id === property.id);
     return {
       propertyId: property.id,
       name: property.name,
       type: property.type,
       defaultValue: property.defaultValue,
+      ...(sharedIds.has(property.id) ? { shared: true } : {}),
       ...(target
         ? {
             targetNodeId: target.sourceNodeId,

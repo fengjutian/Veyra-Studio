@@ -50,6 +50,8 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "component.create": true,
   "component.setCreate": true,
   "component.setVariant": true,
+  "component.setProperty.set": true,
+  "component.setProperty.remove": true,
   "component.createVariant": true,
   "component.switchVariant": true,
   "font.register": true,

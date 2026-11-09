@@ -308,6 +308,6 @@ test("rejects an instance value whose type does not match the property", () => {
   instantiate(runtime, 5);
   assert.throws(
     () => runtime.execute(envelope(6, [{ type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:title", value: true } }])),
-    /needs a string value/,
+    /must be a string/,
   );
 });

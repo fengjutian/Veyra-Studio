@@ -1,4 +1,4 @@
-import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, withPropertyBinding, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, effectiveComponentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, validatePropertyValue, withPropertyBinding, BINDING_REQUIREMENTS, COMPONENT_PROPERTY_FIELDS, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -293,6 +293,8 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "component.create": return createComponent(document, command.payload.id, command.payload.nodeId, command.payload.name);
     case "component.setCreate": return createComponentSet(document, command.payload.set);
     case "component.setVariant": return assignComponentVariant(document, command.payload);
+    case "component.setProperty.set": return setComponentSetProperty(document, command.payload);
+    case "component.setProperty.remove": return removeComponentSetProperty(document, command.payload);
     case "component.createVariant": return createComponentVariant(document, command.payload);
     case "component.switchVariant": return switchComponentVariant(document, command.payload);
     case "font.register": return registerFont(document, command.payload.font);
@@ -482,7 +484,105 @@ function createComponentSet(document: DesignDocument, set: ComponentSetDefinitio
   if (properties.some(property => !property)) throw new CommandError("Component set properties cannot be empty");
   if (new Set(properties).size !== properties.length) throw new CommandError("Component set properties must be unique");
   if (document.componentSets?.[set.id]) throw new CommandError(`Component set ${set.id} already exists`);
-  document.componentSets = { ...(document.componentSets ?? {}), [set.id]: { id: set.id, name: set.name.trim(), properties } };
+  // 共享的组件属性声明：类型与默认值必须配对。
+  const shared = [...(set.componentProperties ?? [])];
+  const sharedIds = new Set<string>();
+  for (const property of shared) {
+    if (!property.id.trim()) throw new CommandError("Property id cannot be empty");
+    if (!property.name.trim()) throw new CommandError("Property name cannot be empty");
+    if (sharedIds.has(property.id)) throw new CommandError(`Component set ${set.id} has duplicate property ${property.id}`);
+    sharedIds.add(property.id);
+    const problem = validatePropertyValue(property, property.defaultValue, { document });
+    if (problem) throw new CommandError(`Property ${property.id} ${problem}`);
+  }
+  document.componentSets = {
+    ...(document.componentSets ?? {}),
+    [set.id]: { id: set.id, name: set.name.trim(), properties, ...(shared.length ? { componentProperties: shared } : {}) },
+  };
+}
+
+/**
+ * 给变体集声明一个**共享**的组件属性。
+ *
+ * 共享声明的语义：集内所有变体都拿到这一组属性，不必各自重复声明。
+ * 成员组件不得用同一个 id 声明成别的类型——那会破坏共享契约。
+ */
+function setComponentSetProperty(document: DesignDocument, payload: { setId: string; property: ComponentProperty }): void {
+  const set = document.componentSets?.[payload.setId];
+  if (!set) throw new CommandError(`Component set ${payload.setId} does not exist`);
+  const property = payload.property;
+  if (!property.id.trim()) throw new CommandError("Property id cannot be empty");
+  if (!property.name.trim()) throw new CommandError("Property name cannot be empty");
+  const problem = validatePropertyValue(property, property.defaultValue, { document });
+  if (problem) throw new CommandError(`Property ${property.id} ${problem}`);
+  for (const component of Object.values(document.components)) {
+    if (component.variantSetId !== set.id) continue;
+    const own = (component.properties ?? []).find(candidate => candidate.id === property.id);
+    if (own && own.type !== property.type) {
+      throw new CommandError(`Component ${component.id} declares property ${property.id} as ${own.type}, which conflicts with the shared ${property.type}`);
+    }
+  }
+  const shared = [...(set.componentProperties ?? [])];
+  const index = shared.findIndex(candidate => candidate.id === property.id);
+  if (index >= 0) shared[index] = property;
+  else shared.push(property);
+  set.componentProperties = shared;
+  for (const component of Object.values(document.components)) {
+    if (component.variantSetId !== set.id) continue;
+    applyComponentProperties(document, component.id);
+  }
+}
+
+/**
+ * 删除变体集共享的组件属性。
+ *
+ * 成员组件自己没有声明同名属性时，那条属性对它们就不存在了：
+ * 绑定与实例值要一起清掉，副本恢复成组件定义的原始样子。
+ */
+function removeComponentSetProperty(document: DesignDocument, payload: { setId: string; propertyId: string }): void {
+  const set = document.componentSets?.[payload.setId];
+  if (!set) throw new CommandError(`Component set ${payload.setId} does not exist`);
+  const shared = set.componentProperties ?? [];
+  if (!shared.some(property => property.id === payload.propertyId)) {
+    throw new CommandError(`Property ${payload.propertyId} is not shared by component set ${set.id}`);
+  }
+  set.componentProperties = shared.filter(property => property.id !== payload.propertyId);
+  for (const component of Object.values(document.components)) {
+    if (component.variantSetId !== set.id) continue;
+    const own = (component.properties ?? []).some(property => property.id === payload.propertyId);
+    if (own) continue;
+    detachProperty(document, component.id, payload.propertyId);
+    applyComponentProperties(document, component.id);
+  }
+}
+
+/**
+ * 把一个属性从组件的有效声明里摘掉：清掉绑定与实例值，并恢复副本。
+ *
+ * 组件**自己**的声明不动——只有共享声明被删掉时才用得上。
+ */
+function detachProperty(document: DesignDocument, componentId: string, propertyId: string): void {
+  const affected: NodeId[] = [];
+  for (const node of Object.values(document.nodes)) {
+    const bindings = node.componentPropertyBindings;
+    if (!bindings) continue;
+    const bound = COMPONENT_PROPERTY_FIELDS.filter(field => bindings[field] === propertyId);
+    if (!bound.length) continue;
+    const next = { ...bindings };
+    for (const field of bound) delete next[field];
+    if (Object.values(next).some(value => value !== undefined)) node.componentPropertyBindings = next;
+    else delete node.componentPropertyBindings;
+    affected.push(node.id);
+  }
+  for (const node of Object.values(document.nodes)) {
+    if (node.type !== "instance" || node.componentId !== componentId) continue;
+    if (node.propValues?.[propertyId] !== undefined) {
+      const next = { ...node.propValues };
+      delete next[propertyId];
+      node.propValues = next;
+    }
+    for (const sourceNodeId of affected) restoreCopyFromSource(document, node.id, sourceNodeId);
+  }
 }
 
 /** 变体值必须正好覆盖集合声明的全部属性，多一个少一个都不行。 */
@@ -665,9 +765,10 @@ function switchComponentVariant(document: DesignDocument, payload: { id: NodeId;
   instance.childIds = childIds;
   instance.overrides = keptOverrides;
   // 属性值按属性 id 保留；新变体没有的属性 id 会被丢弃（它在那里不存在）。
-  const nextPropertyIds = new Set((next.properties ?? []).map(property => property.id));
+  // 有效声明含变体集共享声明——共享的属性在切换后依然存在。
+  const nextPropertyIds = new Set(effectiveComponentProperties(document, next.id).map(property => property.id));
   if (instance.propValues) {
-    const kept: Record<string, string | boolean> = {};
+    const kept: Record<string, ComponentPropertyValue> = {};
     for (const [propertyId, value] of Object.entries(instance.propValues)) {
       if (nextPropertyIds.has(propertyId)) kept[propertyId] = value;
     }
@@ -768,16 +869,104 @@ function applyInstanceProperties(document: DesignDocument, instance: InstanceNod
     const copy = document.nodes[`${instance.id}--${target.sourceNodeId}`];
     if (!copy) continue;
     const value = resolvePropertyValue(document, instance, target.property);
-    if (target.field === "text") {
-      if (copy.type !== "text") continue;
+    applyPropertyToCopy(document, copy, target.field, value);
+  }
+}
+
+/**
+ * 把一个属性值写到副本的对应字段上。
+ *
+ * 字段与属性类型的对应由 `BINDING_REQUIREMENTS` 决定：
+ * `text` ↔ text、`visible` ↔ boolean、`fill` ↔ color、
+ * `fontSize` ↔ number、`instance` ↔ instance-swap。
+ */
+function applyPropertyToCopy(document: DesignDocument, copy: DesignNode, field: ComponentPropertyField, value: ComponentPropertyValue): void {
+  switch (field) {
+    case "text": {
+      if (copy.type !== "text") return;
       copy.text = String(value);
       delete copy.runs;
       // 段落样式区间必须对齐段落边界，纯文本替换后旧区间必然失效——与段内样式一起清掉。
       delete copy.paragraphStyles;
-    } else {
+      return;
+    }
+    case "visible": {
       copy.visible = Boolean(value);
+      return;
+    }
+    case "fill": {
+      copy.appearance = { ...copy.appearance, fills: [{ type: "solid", color: String(value) }] };
+      return;
+    }
+    case "fontSize": {
+      if (copy.type !== "text") return;
+      copy.fontSize = Number(value);
+      return;
+    }
+    case "instance": {
+      if (copy.type !== "instance") return;
+      const componentId = String(value);
+      // 空串表示「未设置」：保持组件定义里的原始实例，不做交换。
+      if (!componentId || copy.componentId === componentId) return;
+      swapInstanceComponent(document, copy, componentId);
+      return;
     }
   }
+}
+
+/**
+ * 把组件内部的一个实例副本换成另一个组件。
+ *
+ * 实例交换是「换掉整个子树」：旧子树删掉，新组件的根子树重新物化到副本下。
+ * 副本 id 规则与物化一致（`${parentCopyId}--${sourceId}`），所以交换之后
+ * 外层实例的 id 结构不变。
+ */
+function swapInstanceComponent(document: DesignDocument, copy: InstanceNode, componentId: string): void {
+  const definition = document.components[componentId];
+  if (!definition) throw new CommandError(`Component ${componentId} does not exist`);
+  const root = requireNode(document, definition.rootNodeId);
+  for (const childId of [...copy.childIds]) removeSubtree(document, childId);
+  copy.childIds = [];
+  copy.componentId = componentId;
+  // 旧组件的覆盖对不上新组件的源节点，直接清掉。
+  copy.overrides = {};
+  for (const childId of root.childIds) {
+    copy.childIds.push(materializeNode(document, childId, copy.id));
+  }
+}
+
+/**
+ * 把组件定义里的一个节点复制成物化副本，挂到 `parentId` 下。
+ *
+ * 副本 id 是 `${parentId}--${sourceId}`：`parentId` 本身已经是副本 id，
+ * 所以这个拼接对任意深度都成立（实例物化与实例交换共用同一套规则）。
+ *
+ * 绑定是组件定义的属性，不是副本的：副本上的绑定会被剥掉，
+ * 否则副本会指向一个它并不属于的组件的属性。
+ */
+function materializeNode(document: DesignDocument, sourceId: NodeId, parentId: NodeId, copies?: Map<NodeId, NodeId>): NodeId {
+  const source = requireNode(document, sourceId);
+  const copyId = `${parentId}--${sourceId}`;
+  if (document.nodes[copyId]) throw new CommandError(`Node ${copyId} is already materialized`);
+  copies?.set(sourceId, copyId);
+  const copy = structuredClone(source) as DesignNode;
+  copy.id = copyId;
+  copy.parentId = parentId;
+  copy.childIds = [];
+  delete copy.componentPropertyBindings;
+  document.nodes[copyId] = copy;
+  for (const childId of source.childIds) {
+    copy.childIds.push(materializeNode(document, childId, copyId, copies));
+  }
+  return copyId;
+}
+
+/** 删掉一棵子树（不碰父节点的 childIds——交换时父节点自己会被重写）。 */
+function removeSubtree(document: DesignDocument, nodeId: NodeId): void {
+  const node = document.nodes[nodeId];
+  if (!node) return;
+  for (const childId of [...node.childIds]) removeSubtree(document, childId);
+  delete document.nodes[nodeId];
 }
 
 /** 把组件的属性值重新应用到它的所有实例上。 */
@@ -794,8 +983,11 @@ function restoreCopyFromSource(document: DesignDocument, instanceId: NodeId, sou
   const copy = document.nodes[`${instanceId}--${sourceNodeId}`];
   if (!source || !copy) return;
   copy.visible = source.visible;
+  // 填充色与字号也可能被属性接管：解绑后要回到组件定义的原始样子。
+  copy.appearance = structuredClone(source.appearance);
   if (copy.type === "text" && source.type === "text") {
     copy.text = source.text;
+    copy.fontSize = source.fontSize;
     if (source.runs) copy.runs = structuredClone(source.runs);
     else delete copy.runs;
     if (source.paragraphStyles) copy.paragraphStyles = structuredClone(source.paragraphStyles);
@@ -817,27 +1009,26 @@ function setComponentProperty(document: DesignDocument, payload: { componentId: 
   if (!property.name.trim()) throw new CommandError("Property name cannot be empty");
   // 类型与默认值必须配对。类型系统已经保证编译期一致，但命令可以从 JSON 进来，
   // 所以这里按「未收窄的值」再判一次。
-  const rawDefault: unknown = property.defaultValue;
-  if (property.type === "text" && typeof rawDefault !== "string") {
-    throw new CommandError(`Property ${property.id} is a text property and needs a string default value`);
-  }
-  if (property.type === "boolean" && typeof rawDefault !== "boolean") {
-    throw new CommandError(`Property ${property.id} is a boolean property and needs a boolean default value`);
-  }
+  const defaultProblem = validatePropertyValue(property, property.defaultValue, { document });
+  if (defaultProblem) throw new CommandError(`Property ${property.id} ${defaultProblem}`);
 
   const properties = [...(component.properties ?? [])];
   const index = properties.findIndex(existing => existing.id === property.id);
   const previous = index >= 0 ? properties[index] : undefined;
+  // 变体集共享声明的属性不得改类型：那是破坏共享契约。
+  const shared = document.componentSets?.[component.variantSetId ?? ""]?.componentProperties ?? [];
+  const sharedProperty = shared.find(candidate => candidate.id === property.id);
+  if (sharedProperty && sharedProperty.type !== property.type) {
+    throw new CommandError(`Property ${property.id} is shared by the variant set and cannot change its type`);
+  }
   // 改类型会让已有绑定和实例值失效：绑定字段与类型不匹配的直接拒绝，
   // 实例值则清掉（它们是旧类型的值，留着只会让文档非法）。
   if (previous && previous.type !== property.type) {
     for (const target of propertyTargets(document, component.id)) {
       if (target.property.id !== property.id) continue;
-      if (target.field === "text" && property.type !== "text") {
-        throw new CommandError(`Property ${property.id} is bound to text and cannot change to ${property.type}`);
-      }
-      if (target.field === "visible" && property.type !== "boolean") {
-        throw new CommandError(`Property ${property.id} is bound to visibility and cannot change to ${property.type}`);
+      const requirement = BINDING_REQUIREMENTS[target.field];
+      if (requirement.propertyType !== property.type) {
+        throw new CommandError(`Property ${property.id} is bound to ${target.field} and cannot change to ${property.type}`);
       }
     }
     for (const node of Object.values(document.nodes)) {
@@ -870,29 +1061,9 @@ function removeComponentProperty(document: DesignDocument, payload: { componentI
   }
   component.properties = properties.filter(property => property.id !== payload.propertyId);
 
-  // 清理绑定，并记下受影响的节点好恢复副本。
-  const affected: NodeId[] = [];
-  for (const node of Object.values(document.nodes)) {
-    const bindings = node.componentPropertyBindings;
-    if (!bindings) continue;
-    if (bindings.text !== payload.propertyId && bindings.visible !== payload.propertyId) continue;
-    const next = { ...bindings };
-    if (next.text === payload.propertyId) delete next.text;
-    if (next.visible === payload.propertyId) delete next.visible;
-    if (next.text || next.visible) node.componentPropertyBindings = next;
-    else delete node.componentPropertyBindings;
-    affected.push(node.id);
-  }
-
-  for (const node of Object.values(document.nodes)) {
-    if (node.type !== "instance" || node.componentId !== component.id) continue;
-    if (node.propValues?.[payload.propertyId] !== undefined) {
-      const next = { ...node.propValues };
-      delete next[payload.propertyId];
-      node.propValues = next;
-    }
-    for (const sourceNodeId of affected) restoreCopyFromSource(document, node.id, sourceNodeId);
-  }
+  // 清理绑定与实例值，被绑定的字段恢复成组件定义里的原始样子。
+  detachProperty(document, component.id, payload.propertyId);
+  applyComponentProperties(document, component.id);
 }
 
 /**
@@ -907,17 +1078,20 @@ function bindComponentProperty(
 ): void {
   const component = document.components[payload.componentId];
   if (!component) throw new CommandError(`Component ${payload.componentId} does not exist`);
-  const property = (component.properties ?? []).find(candidate => candidate.id === payload.propertyId);
+  // 有效声明 = 变体集共享声明 + 组件自己的声明。
+  const property = effectiveComponentProperties(document, component.id).find(candidate => candidate.id === payload.propertyId);
   if (!property) throw new CommandError(`Property ${payload.propertyId} does not exist on component ${component.id}`);
   const node = requireNode(document, payload.nodeId);
   if (!isInsideSubtree(document, node.id, component.rootNodeId)) {
     throw new CommandError(`Node ${node.id} is not inside component ${component.id}`);
   }
-  if (payload.field === "text") {
-    if (property.type !== "text") throw new CommandError(`Property ${property.id} is a ${property.type} property and cannot bind text`);
-    if (node.type !== "text") throw new CommandError(`Node ${node.id} is not a text node`);
-  } else if (property.type !== "boolean") {
-    throw new CommandError(`Property ${property.id} is a ${property.type} property and cannot bind visibility`);
+  // 字段 → 属性类型、节点类型的要求由同一张表给出（`BINDING_REQUIREMENTS`）。
+  const requirement = BINDING_REQUIREMENTS[payload.field];
+  if (property.type !== requirement.propertyType) {
+    throw new CommandError(`Property ${property.id} is a ${property.type} property and cannot bind ${payload.field}`);
+  }
+  if (requirement.nodeType && node.type !== requirement.nodeType) {
+    throw new CommandError(`Node ${node.id} is not a ${requirement.nodeType} node and cannot bind ${payload.field}`);
   }
 
   node.componentPropertyBindings = withPropertyBinding(node.componentPropertyBindings, payload.field, property.id);
@@ -940,7 +1114,7 @@ function unbindComponentProperty(
   }
   const next = { ...bindings };
   delete next[payload.field];
-  if (next.text || next.visible) node.componentPropertyBindings = next;
+  if (Object.values(next).some(value => value !== undefined)) node.componentPropertyBindings = next;
   else delete node.componentPropertyBindings;
 
   for (const instance of Object.values(document.nodes)) {
@@ -951,18 +1125,15 @@ function unbindComponentProperty(
 }
 
 /** 设置实例的属性值；立刻作用到物化副本。 */
-function setInstanceProperty(document: DesignDocument, payload: { instanceId: NodeId; propertyId: string; value: string | boolean }): void {
+function setInstanceProperty(document: DesignDocument, payload: { instanceId: NodeId; propertyId: string; value: ComponentPropertyValue }): void {
   const instance = requireInstance(document, payload.instanceId);
   const component = document.components[instance.componentId];
   if (!component) throw new CommandError(`Component ${instance.componentId} does not exist`);
-  const property = (component.properties ?? []).find(candidate => candidate.id === payload.propertyId);
+  // 有效声明 = 变体集共享声明 + 组件自己的声明。
+  const property = effectiveComponentProperties(document, instance.componentId).find(candidate => candidate.id === payload.propertyId);
   if (!property) throw new CommandError(`Property ${payload.propertyId} is not declared by component ${instance.componentId}`);
-  if (property.type === "text" && typeof payload.value !== "string") {
-    throw new CommandError(`Property ${property.id} is a text property and needs a string value`);
-  }
-  if (property.type === "boolean" && typeof payload.value !== "boolean") {
-    throw new CommandError(`Property ${property.id} is a boolean property and needs a boolean value`);
-  }
+  const problem = validatePropertyValue(property, payload.value, { document });
+  if (problem) throw new CommandError(`Property ${property.id} ${problem}`);
   instance.propValues = { ...(instance.propValues ?? {}), [property.id]: payload.value };
   applyInstanceProperties(document, instance);
 }
@@ -1115,27 +1286,7 @@ function instantiateComponent(document: DesignDocument, node: InstanceNode, inde
   const owner = requireContainer(document, node.parentId);
 
   const copies = new Map<NodeId, NodeId>();
-  const materialize = (sourceId: NodeId, parentId: NodeId): NodeId => {
-    const source = requireNode(document, sourceId);
-    const copyId = `${node.id}--${sourceId}`;
-    if (document.nodes[copyId]) throw new CommandError(`Instance ${node.id} already materializes ${sourceId}`);
-    copies.set(sourceId, copyId);
-    const copy = structuredClone(source) as DesignNode;
-    copy.id = copyId;
-    copy.parentId = parentId;
-    copy.childIds = [];
-    // 绑定是组件定义的属性，不是副本的：副本上的绑定会被剥掉，
-    // 否则副本会指向一个它并不属于的组件的属性。
-    delete copy.componentPropertyBindings;
-    document.nodes[copyId] = copy;
-    for (const childId of source.childIds) {
-      const childCopyId = materialize(childId, copyId);
-      copy.childIds.push(childCopyId);
-    }
-    return copyId;
-  };
-
-  const materializedChildIds = root.childIds.map(childId => materialize(childId, node.id));
+  const materializedChildIds = root.childIds.map(childId => materializeNode(document, childId, node.id, copies));
   const instance = structuredClone(node) as InstanceNode;
   instance.childIds = materializedChildIds;
 
