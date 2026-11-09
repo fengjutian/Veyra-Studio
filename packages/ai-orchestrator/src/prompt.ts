@@ -1,6 +1,7 @@
 import type { DesignDocument, DesignNode, Paint } from "@ufira/design-schema";
 import { describeCommandVocabulary, describeNodeTemplate } from "./command-vocabulary";
 import type { AiPlanRequest } from "./safe-ai-editor";
+import { formatSelfCheckForPrompt } from "./self-check";
 
 export interface PlannerPrompt {
   system: string;
@@ -46,17 +47,22 @@ function buildSystemPrompt(): string {
     "5. 文本的字号/行高/字重等改动优先用 text.patch，不要用 node.patch。",
     "6. 只做用户要求的改动，不要顺手重构或改无关节点；commands 保持最少。",
     "7. assumptions 用来写你替用户做的假设（例如\"沿用当前页面的边距\"），没有假设就给空数组。",
+    "8. 如果提示里给出了「体检结论」的待修清单，就只针对清单里的问题做改动，清单之外的问题不要顺手改。",
   ].join("\n");
 }
 
 function buildUserPrompt(request: AiPlanRequest): string {
-  return [
-    `用户需求：${request.prompt.trim()}`,
-    "",
-    summarizeDocument(request.document, request.selectedNodeIds),
-    "",
-    "请只输出 JSON 计划。",
-  ].join("\n");
+  const parts: string[] = [`用户需求：${request.prompt.trim()}`, ""];
+  // 体检结论排在文档摘要之前：模型先看到"哪里不对"，再看"现在长什么样"，
+  // 顺序反了容易让它先通读文档再自己找问题（那就是它在干体检的活）。
+  if (request.selfCheck) {
+    parts.push(formatSelfCheckForPrompt(request.selfCheck, request.selfCheckRound ? { round: request.selfCheckRound } : {}));
+    parts.push("");
+  }
+  parts.push(summarizeDocument(request.document, request.selectedNodeIds));
+  parts.push("");
+  parts.push("请只输出 JSON 计划。");
+  return parts.join("\n");
 }
 
 /** 把当前文档压成模型能读懂的紧凑摘要。 */

@@ -10,6 +10,20 @@ export class PlanParseError extends Error {
 }
 
 /**
+ * 模型明确表示「没有要改的」。
+ *
+ * 这不是解析失败，而是一个合法结论——所以单独一个类型：编排循环靠它区分
+ * 「模型认为没东西可改」（正常收工）和「模型回复是坏的」（该报错）。
+ * 继承 `PlanParseError`，已有的 `instanceof PlanParseError` 判断不受影响。
+ */
+export class PlanEmptyError extends PlanParseError {
+  constructor() {
+    super("模型返回的计划没有包含任何命令");
+    this.name = "PlanEmptyError";
+  }
+}
+
+/**
  * 把模型回复解析成命令计划。
  *
  * 模型经常把 JSON 包在 ```json 围栏里，或者在 JSON 前后加一段说明，所以这里
@@ -81,7 +95,7 @@ function normalizePlan(value: unknown): AiCommandPlan {
   if (!summary) throw new PlanParseError("模型返回的计划缺少 summary");
 
   if (!Array.isArray(value.commands)) throw new PlanParseError("模型返回的计划缺少 commands 数组");
-  if (!value.commands.length) throw new PlanParseError("模型返回的计划没有包含任何命令");
+  if (!value.commands.length) throw new PlanEmptyError();
 
   const commands: DesignCommand[] = value.commands.map((command, index) => normalizeCommand(command, index));
 

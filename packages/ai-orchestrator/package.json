@@ -17,6 +17,7 @@
     "test": "tsx --test test/**/*.test.ts"
   },
   "dependencies": {
+    "@ufira/design-export": "*",
     "@ufira/design-runtime": "*",
     "@ufira/design-schema": "*",
     "@ufira/studio-application": "*"

@@ -53,7 +53,7 @@
 | `0.5.0` | Token、组件与资产 | Phase 2 | 进行中 | 范围已全部落地（组件变体/属性、字体 token、分组/别名/主题、资源来源、SVG 图片、样式表导入）；待发布流程 | 可复用设计系统能力完整进入编辑、持久化和导出链路 |
 | `0.6.0` | AI 设计闭环 | Phase 3 | 进行中 | 部分；闭环/审查/流式/凭据已实现，缺真实 Provider 逐家验收与密钥轮换 | 真实 Provider、结构化计划、审批、回滚与失败恢复可用 |
 | `0.7.0` | 交付与质量 | Phase 4 | 进行中 | 大部分；设计 lint、可访问性基线与整应用走查、版本并排对比、资产打包已落地，缺跨浏览器像素基线 | HTML/CSS、SVG、PNG 和质量诊断形成明确支持矩阵 |
-| `0.8.0` | 外部 Agent 与集成 | Phase 4 | 进行中 | 部分；stdio/HTTP/工具契约已实现，缺 OAuth、多租户与 SSE | 独立 Studio MCP adapter 和受控集成可用，不依赖 Figma |
+| `0.8.0` | 外部 Agent 与集成 | Phase 4 | 进行中 | 部分；stdio/HTTP/工具契约与编排循环（AI 自主多轮运行）已实现，缺 OAuth、多租户与 SSE | 独立 Studio MCP adapter 和受控集成可用，不依赖 Figma |
 | `0.9.0` | Beta 稳定化 | Phase 4 | 进行中 | 部分；预算、视觉回归、对比度、键盘/读屏自动化与整应用走查已有，缺跨浏览器矩阵 | 性能、兼容性、可访问性、迁移和端到端测试达到 Beta 门槛 |
 | `0.10.0` | V1 Release Candidate | Phase 4 | 规划 | 未开始 | 功能冻结，阻断级问题清零，安装、升级和发布候选可验证 |
 | `1.0.0` | 独立 AI Design Studio V1 | V1 | 规划 | 未开始 | 达到稳定发布、支持和兼容承诺 |
@@ -556,6 +556,18 @@ WCAG 2.4.7 Focus Visible 的违反。CI 的 a11y job 现在同时跑组件级与
 - HTTP 传输：`npm run mcp:http` 暴露 `POST /mcp` 与 `GET /healthz`，Bearer token 鉴权，
   `initialize` 下发 `Mcp-Session-Id`、会话按空闲过期、同会话请求串行，请求体 256 KB 上限。
 
+编排循环已完成（2026-11-09）：体检器（设计 lint、对比度、导出诊断）本来各自都能跑，
+缺的是把它们串起来的那一层。`ai-orchestrator` 新增体检层（聚成一份带稳定指纹的
+报告）与编排循环（体检 → 计划 → dry-run → 审查 → 提交 → 再体检 → 再计划）。
+每一轮都把**体检结论回喂给模型**（拼进提示的 user 段），所以第二轮之后模型拿到的
+不是需求复读，而是「哪里还不对」。停止条件是显式的九种：收敛 / 轮次用完 /
+结构审查阻断 / 审批否决 / 模型没给命令 / 模型故障 / 提交失败 / 取消 / 震荡；
+其中「同一个问题连续出现 3 轮」判定为修不动，从待修清单剔除，避免模型原地打转
+烧满轮次。工作台 AI 分段新增「自主运行」入口与轮次日志，每轮走正常事务因此可逐轮
+撤销。规格见 `autonomous-loop.md`；单元测试 15 项覆盖停止条件与回喂通道，端到端由
+`npm run visual:loop:probe` 守着：真实界面上点「自主运行」→ 轮次日志逐轮显示落地
+命令 → 画布节点真的变多 → 收尾如实说明为什么停。
+
 仍未完成：OAuth / 多租户隔离、SSE 服务端推送、外部素材服务策略。
 
 ### `0.9.0`：Beta 稳定化
@@ -659,5 +671,6 @@ V1 必须具备：
 - [`current-project-status.md`](./current-project-status.md)：当前实现和明确未实现的事实清单。
 - [`ai-design-studio-architecture-analysis.md`](./ai-design-studio-architecture-analysis.md)：目标架构和阶段决策稿，不代表实现进度。
 - [`asset-packaging.md`](./asset-packaging.md)：资源包交付（图片与字体拆成独立文件、相对路径引用、ZIP 分发）的范围与限制。
+- [`autonomous-loop.md`](./autonomous-loop.md)：编排循环（体检驱动的多轮「计划 → 执行 → 自查 → 再计划」）的范围与限制。
 - 根级 [`AGENTS.md`](../AGENTS.md)：开发约束、legacy 隔离政策和验证要求。
 

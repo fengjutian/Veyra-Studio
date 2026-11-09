@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
-import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
+import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
-import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
+import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -117,6 +117,10 @@ function App() {
   // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
   const planAbort = useRef<AbortController | undefined>(undefined);
   const [planning, setPlanning] = useState(false);
+  // 自主编排循环的轮次日志与收尾结论。
+  const [loopRounds, setLoopRounds] = useState<AutonomousRound[]>([]);
+  const [loopSummary, setLoopSummary] = useState<string>();
+  const [loopRunning, setLoopRunning] = useState(false);
   // 字体到位后自增，触发一次带真实字体度量的重排。
   const [fontEpoch, setFontEpoch] = useState(0);
   // 流式回复的累计文本，只在生成过程中显示。
@@ -1430,6 +1434,46 @@ function App() {
       setPlanning(false); setBusy(false); setStreamText("");
     }
   };
+
+  /**
+   * 自主运行：体检驱动的多轮编排。
+   *
+   * 每一轮都是「体检 → 计划 → dry-run → 审查 → 提交」，提交完立刻重新体检，
+   * 下一轮把体检结论回喂给模型——这就是「AI 自己跑」的那一层。
+   *
+   * 每一轮都走正常事务，因此跑完之后可以逐轮撤销。
+   */
+  const startAutonomousRun = async () => {
+    if (!editor || !project || !prompt.trim() || busy || loopRunning) return;
+    const controller = new AbortController();
+    planAbort.current = controller;
+    operationInFlight.current = true;
+    setLoopRunning(true); setBusy(true); setLoopRounds([]); setLoopSummary(undefined);
+    try {
+      const resolveAsset = await createSelfCheckResolver(project.snapshot());
+      const result = await runAutonomousLoop(editor, {
+        goal: prompt.trim(),
+        selectedNodeIds: selectedIds,
+        maxRounds: 6,
+        selfCheck: { resolveAsset },
+        signal: controller.signal,
+        onRound: round => {
+          setLoopRounds(previous => [...previous, round]);
+          setDocument(project.snapshot());
+        },
+      });
+      setLoopSummary(result.message);
+      setDocument(project.snapshot());
+      setMessage(result.message);
+    } catch (error) {
+      setMessage(error instanceof AiCancelledError ? "已取消自主运行" : errorMessage(error));
+    } finally {
+      planAbort.current = undefined;
+      operationInFlight.current = false;
+      setLoopRunning(false); setBusy(false);
+    }
+  };
+
   /** 写 token：主题激活时写成该主题的覆盖，否则改基础值。 */
   const applyToken = async (name: string, token: TokenValue) => {
     if (activeTheme && activeThemeId) {
@@ -2421,6 +2465,14 @@ function App() {
             {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
             {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
           </section>
+          <section className="inspector-section">
+            <h2>自主运行</h2>
+            <p className="empty-hint">按体检结论（设计 lint、对比度、导出诊断）自动多轮修复：体检 → 计划 → 审查 → 提交 → 再体检，直到没有待修项或触发停止条件。每轮都可撤销。</p>
+            <button disabled={busy || !prompt.trim() || loopRunning} onClick={() => void startAutonomousRun()}><Icon name="aiLoop" />自主运行</button>
+            {loopRunning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消运行</button>}
+            {loopRounds.length > 0 && <div className="loop-log" aria-live="polite">{loopRounds.map(round => <div className="loop-round" key={round.round}><span className="loop-round-index">第 {round.round} 轮</span><span className="loop-round-summary">{round.summary}</span><span className="loop-round-meta">落地 {round.appliedCommands} 条命令 · 待修 {round.report.counts.actionable} → {round.after?.counts.actionable ?? "—"}</span>{round.note && <span className="loop-round-note">{round.note}</span>}</div>)}</div>}
+            {loopSummary && <p className="loop-summary">{loopSummary}</p>}
+          </section>
         </Tabs.Content>
       </Tabs.Root>
       <div className="inspector-foot">
@@ -2462,6 +2514,27 @@ async function migrateLegacySnapshot(repository: ProjectRepository, projectId: s
     await repository.saveSnapshot(migrated.document);
     localStorage.removeItem(key); localStorage.removeItem(`${key}:pending`); localStorage.removeItem(`studio:${projectId}:transactions`);
   } catch { /* Preserve invalid legacy data for manual recovery. */ }
+}
+
+/**
+ * 体检层的资源解析器。
+ *
+ * 只认**开跑前就声明在文档里**的资源：这些资源要是读不到字节，交付物里就真的
+ * 缺图，值得当成待修项报出来。循环过程中新加的资源不在这个集合里——那类资源
+ * 是模型自己加的，判定它「缺字节」多半是误报，所以先给一张占位图。
+ */
+async function createSelfCheckResolver(snapshot: DesignDocument): Promise<(asset: AssetMetadata) => string | undefined> {
+  const declared = new Set(Object.keys(snapshot.assets));
+  const urls = new Map<string, string>();
+  for (const asset of Object.values(snapshot.assets)) {
+    const bytes = await repository.getAsset(snapshot.id, asset.hash);
+    if (bytes) urls.set(asset.id, assetDataUrl(asset, bytes));
+  }
+  return asset => {
+    const url = urls.get(asset.id);
+    if (url) return url;
+    return declared.has(asset.id) ? undefined : PLACEHOLDER_ASSET_URL;
+  };
 }
 
 function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: string, box?: { x: number; y: number; width: number; height: number }): DesignNode {

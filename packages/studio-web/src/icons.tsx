@@ -57,6 +57,7 @@ import {
   Pentagon,
   Plus,
   Redo2,
+  RefreshCw,
   RotateCcw,
   Scan,
   Search,
@@ -193,6 +194,7 @@ export const ICONS = {
   aiPlan: WandSparkles,
   aiConfirm: Check,
   aiCancel: X,
+  aiLoop: RefreshCw,
 
   // 图层树
   chevronRight: ChevronRight,

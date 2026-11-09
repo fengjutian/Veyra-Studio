@@ -1,7 +1,9 @@
 import type { DesignCommand, CommandEnvelope } from "@ufira/design-runtime";
 import type { DesignDocument, NodeId } from "@ufira/design-schema";
 import type { StudioExecuteResult, StudioProject } from "@ufira/studio-application";
+import { PlanEmptyError } from "./plan-parser";
 import { reviewAiPlan, type ReviewFinding, type ReviewResult } from "./review";
+import type { SelfCheckContext } from "./self-check";
 
 /** 取消信号的形状。用结构化类型，避免依赖 DOM 的 AbortSignal 声明。 */
 export interface AbortSignalLike {
@@ -14,6 +16,15 @@ export interface AiPlanRequest {
   prompt: string;
   document: DesignDocument;
   selectedNodeIds: NodeId[];
+  /**
+   * 体检结论。
+   *
+   * 编排循环靠它把「哪里不对」回喂给模型：模型看到的不是上一次的需求，而是
+   * 体检说这里还差什么。没有它，循环就只是把同一个请求重复很多遍。
+   */
+  selfCheck?: SelfCheckContext;
+  /** 当前是第几轮；只影响体检结论的措辞。 */
+  selfCheckRound?: number;
   /** 取消信号：规划过程中用户点「取消」时透传给 Planner。 */
   signal?: AbortSignalLike;
   /**
@@ -28,6 +39,10 @@ export interface AiPlanRequest {
 export interface CreatePlanOptions {
   signal?: AbortSignalLike;
   onDelta?(delta: string, fullText: string): void;
+  /** 体检结论；会原样传给 Planner，最终拼进提示的 user 段。 */
+  selfCheck?: SelfCheckContext;
+  /** 当前是第几轮。 */
+  selfCheckRound?: number;
 }
 
 export interface AiCommandPlan {
@@ -80,6 +95,16 @@ export class SafeAiEditor {
   ) {}
 
   /**
+   * 当前文档快照。
+   *
+   * 编排循环要靠它做体检（读文档、扫问题），而 `project` 是私有的；这里开一个
+   * 只读入口，避免把整个项目对象暴露出去。
+   */
+  snapshot(): DesignDocument {
+    return this.project.snapshot();
+  }
+
+  /**
    * 让模型给出一份可预览的计划。
    *
    * 失败或取消时什么都不留下：计划只有在 dry-run 成功之后才会进入 `pending`，
@@ -97,11 +122,14 @@ export class SafeAiEditor {
       prompt,
       document: structuredClone(document),
       selectedNodeIds: [...selectedNodeIds],
+      ...(options.selfCheck ? { selfCheck: options.selfCheck } : {}),
+      ...(options.selfCheckRound !== undefined ? { selfCheckRound: options.selfCheckRound } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.onDelta ? { onDelta: options.onDelta } : {}),
     });
     if (!planned.summary.trim()) throw new Error("AI plan summary cannot be empty");
-    if (planned.commands.length === 0) throw new Error("AI plan must contain at least one command");
+    // 模型说「没有要改的」是合法结论，单独的错误类型让调用方能区分它和故障。
+    if (planned.commands.length === 0) throw new PlanEmptyError();
 
     const planId = crypto.randomUUID();
     const envelope = this.envelope(planId, document, planned.commands);

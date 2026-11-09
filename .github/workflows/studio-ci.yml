@@ -64,6 +64,9 @@ jobs:
       # 端到端：资产打包。真实应用里插一张真 PNG → 点「导出资源包」→ 把下载下来的
       # ZIP 读回来核对条目、引用与图片字节。
       - run: npm run visual:package:probe -- --require-browser
+      # 端到端：编排循环。点「自主运行」→ 轮次日志逐轮显示落地命令 → 画布节点真的
+      # 变多 → 收尾如实说明为什么停。单元测试管编排层，这个管接线。
+      - run: npm run visual:loop:probe -- --require-browser
 
   budgets:
     name: 性能预算（layout / export / paint）

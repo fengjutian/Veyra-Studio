@@ -179,6 +179,14 @@ button.icon-only{padding:5px;min-width:26px}
 .review-badge{flex:none;font-size:10px;border:1px solid #4a4327;border-radius:999px;padding:0 6px;color:#d8c26a}
 .review-blocking .review-badge{color:#ff9b9b;border-color:#5a2b2b}
 .review-message{min-width:0;word-break:break-word}
+/* 自主运行的轮次日志：每轮一行摘要 + 一行元信息，窄面板里靠 word-break 折行。 */
+.loop-log{display:grid;gap:6px;margin:8px 0}
+.loop-round{display:grid;gap:2px;padding:6px 8px;border:1px solid #2b303b;border-radius:6px;background:#0b0d12;font-size:11px;color:#c8ccd6}
+.loop-round-index{color:#98a2b3}
+.loop-round-summary{min-width:0;word-break:break-word}
+.loop-round-meta{color:#98a2b3}
+.loop-round-note{color:#d8c26a;min-width:0;word-break:break-word}
+.loop-summary{font-size:11px;color:#c8ccd6;margin:6px 0 0}
 /* 深色细滚动条：浏览器默认的浅色滚动条在暗色工作台里像"页面漏了一块"，
    统一成深色细轨道；顶栏自身横向滚动时不显示滚动条，避免挤掉 52px 的高度。 */
 *{scrollbar-width:thin;scrollbar-color:#3a4150 transparent}
