@@ -1,6 +1,7 @@
 import type { AssetMetadata } from "@ufira/design-schema";
 import type { AssetUsage } from "@ufira/studio-application";
 import { assetLabel, formatBytes } from "./asset-relink";
+import { assetOriginSummary } from "./asset-origin";
 import { Icon } from "./icons";
 import { Tooltip } from "./ui/tooltip";
 
@@ -11,6 +12,8 @@ export interface AssetPanelProps {
   disabled?: boolean;
   onRelink(asset: AssetMetadata): void;
   onDelete(asset: AssetMetadata): void;
+  /** 登记来源与授权（全部可选，不知道就不填）。 */
+  onEditOrigin?(asset: AssetMetadata): void;
 }
 
 /**
@@ -19,18 +22,25 @@ export interface AssetPanelProps {
  * 只做三件用户能看懂的事：这份资源有多大、被几个图片节点引用、要不要补文件或
  * 清理掉。资源缺失时给出「重新关联」，未引用时给出「清理」，两者不会同时出现。
  */
-export function AssetPanel({ usage, missingIds, disabled, onRelink, onDelete }: AssetPanelProps) {
+export function AssetPanel({ usage, missingIds, disabled, onRelink, onDelete, onEditOrigin }: AssetPanelProps) {
   if (!usage.length) return <p className="empty-hint">还没有图片资源。用左侧「图片」按钮插入一张。</p>;
   const rows = [...usage].sort((left, right) => assetLabel(left.asset).localeCompare(assetLabel(right.asset)));
   return (
     <div className="asset-list">
       {rows.map(({ asset, nodeIds }) => {
         const missing = missingIds.has(asset.id);
+        const origin = assetOriginSummary(asset.origin);
         return (
           <div className={missing ? "asset-row asset-missing" : "asset-row"} key={asset.id}>
             <span className="asset-name" title={`${assetLabel(asset)} · ${asset.mimeType}`}>{assetLabel(asset)}</span>
             <span className="asset-meta">{formatBytes(asset.byteLength)}</span>
             <span className="asset-refs">{nodeIds.length ? `引用 ${nodeIds.length}` : "未引用"}</span>
+            {origin ? <span className="asset-origin" title={origin}>{origin}</span> : null}
+            {onEditOrigin && (
+              <Tooltip label={origin ? "修改来源与授权" : "登记来源与授权"}>
+                <button className="icon-only" aria-label={`编辑资源 ${assetLabel(asset)} 的来源`} disabled={disabled} onClick={() => onEditOrigin(asset)}><Icon name="tokenEdit" /></button>
+              </Tooltip>
+            )}
             {missing && (
               <Tooltip label="选择这张图的原文件，把字节补回项目">
                 <button disabled={disabled} onClick={() => onRelink(asset)}><Icon name="import" />重新关联</button>

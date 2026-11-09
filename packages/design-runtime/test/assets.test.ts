@@ -66,6 +66,23 @@ test("validates asset metadata before registering it", () => {
   assert.throws(() => runtime.execute(envelope(0, [{ type: "asset.upsert", payload: { asset: { ...asset, byteLength: -1 } } }])), CommandError);
 });
 
+test("updates origin metadata without touching the asset identity", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{ type: "asset.upsert", payload: { asset } }]));
+  const withOrigin = { ...asset, origin: { source: "unsplash.com/photos/abc", author: "Jane Doe", license: "CC-BY-4.0" } };
+  runtime.execute(envelope(1, [{ type: "asset.upsert", payload: { asset: withOrigin } }]));
+
+  const stored = runtime.snapshot().assets["asset:one"];
+  assert.deepEqual(stored?.origin, withOrigin.origin);
+  assert.equal(stored?.hash, asset.hash);
+  assert.equal(stored?.byteLength, asset.byteLength);
+
+  // 清空来源也是一次普通 upsert：字段整体替换，不留下空对象。
+  const { origin: _dropped, ...cleared } = withOrigin;
+  runtime.execute(envelope(2, [{ type: "asset.upsert", payload: { asset: cleared } }]));
+  assert.equal(runtime.snapshot().assets["asset:one"]?.origin, undefined);
+});
+
 test("patches only the fit of an image node", () => {
   const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   runtime.execute(envelope(0, [

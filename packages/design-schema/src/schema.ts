@@ -442,6 +442,13 @@ export const designDocumentSchema = z.object({
     mimeType: z.string().min(1),
     byteLength: z.number().int().nonnegative(),
     name: z.string().optional(),
+    // 来源/授权全部可选：不知道就不填，不能因为缺元数据让旧文档变得不合法。
+    origin: z.object({
+      source: z.string().optional(),
+      author: z.string().optional(),
+      license: z.string().optional(),
+      note: z.string().optional(),
+    }).optional(),
   })),
   migrations: z.array(z.object({
     from: z.number().int().positive(),

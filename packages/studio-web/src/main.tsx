@@ -75,6 +75,7 @@ import { StoragePanel } from "./storage-panel";
 import { DiskBackupPanel } from "./disk-backup-panel";
 import { DiskBackupRunner, type DiskBackupStatus } from "./disk-backup";
 import { askTypographyValue } from "./typography-form";
+import { mergeAssetOrigin } from "./asset-origin";
 import {
   backupDirectoryFromHandle,
   clearSavedBackupDirectory,
@@ -946,6 +947,25 @@ function App() {
     if (!stillShared && repository.deleteAsset) await repository.deleteAsset(document.id, asset.hash);
     await refreshMissingAssets(project.snapshot());
     setMessage(`资源「${assetLabel(asset)}」已清理`);
+  });
+  /** 登记/修改资源的来源与授权。全部字段可选，留空即清空。 */
+  const editAssetOrigin = (asset: AssetMetadata) => void run(async () => {
+    const values = await askForm({
+      title: "资源来源与授权",
+      description: "全部可选：填了会随文档一起保存、备份和迁移，留空表示未登记。",
+      fields: [
+        { key: "source", label: "来源（素材库或原始 URL）", defaultValue: asset.origin?.source ?? "" },
+        { key: "author", label: "作者 / 版权方", defaultValue: asset.origin?.author ?? "" },
+        { key: "license", label: "许可证（如 CC-BY-4.0）", defaultValue: asset.origin?.license ?? "" },
+        { key: "note", label: "备注", defaultValue: asset.origin?.note ?? "" },
+      ],
+    });
+    if (!values) return;
+    const next = mergeAssetOrigin(asset, values);
+    // 没有任何变化就不提交：避免白涨一个 revision。
+    if (JSON.stringify(next.origin ?? null) === JSON.stringify(asset.origin ?? null)) return;
+    await execute([{ type: "asset.upsert", payload: { asset: next } }]);
+    setMessage(next.origin ? `资源「${assetLabel(asset)}」的来源已登记` : `资源「${assetLabel(asset)}」的来源已清空`);
   });
   const switchPage = (id: string) => { setCurrentPageId(id); setSelectedIds([]); setPreview(undefined); };
   const createPage = () => void run(async () => {
@@ -1979,7 +1999,7 @@ function App() {
           </section>
           <section className="inspector-section">
             <h2>图片资源</h2>
-            <AssetPanel usage={assetUsage} missingIds={missingIds} disabled={busy} onRelink={startRelink} onDelete={deleteAsset} />
+            <AssetPanel usage={assetUsage} missingIds={missingIds} disabled={busy} onRelink={startRelink} onDelete={deleteAsset} onEditOrigin={editAssetOrigin} />
             <input ref={relinkInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) relinkAssetFile(file); }} />
           </section>          <section className="inspector-section">
             <h2>字体</h2>

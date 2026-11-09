@@ -554,12 +554,31 @@ export type TokenValue =
   | { type: "color" | "number" | "string"; value: string | number }
   | { type: "typography"; value: TypographyValue };
 
+/**
+ * 资源的来源与授权信息。
+ *
+ * 交付设计稿时最常被问到的不是「这张图多大」，而是「这张图哪来的、能不能商用」。
+ * 全部字段可选：不知道就不填，不逼用户编；填了就随文档一起备份、导出和迁移。
+ */
+export interface AssetOrigin {
+  /** 来源：素材库名或原始 URL。 */
+  source?: string;
+  /** 作者或版权方。 */
+  author?: string;
+  /** 许可证：SPDX 标识（`CC-BY-4.0`）或一句人话。 */
+  license?: string;
+  /** 补充说明（例如「仅限本项目使用」）。 */
+  note?: string;
+}
+
 export interface AssetMetadata {
   id: AssetId;
   hash: string;
   mimeType: string;
   byteLength: number;
   name?: string;
+  /** 来源与授权；旧文档没有这个字段，缺省表示未登记。 */
+  origin?: AssetOrigin;
 }
 
 /**
