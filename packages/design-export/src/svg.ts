@@ -28,6 +28,7 @@ export function exportPageToSvg(documentInput: DesignDocument, options: SvgExpor
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${num(options.viewport.width)}" height="${num(options.viewport.height)}" viewBox="0 0 ${num(options.viewport.width)} ${num(options.viewport.height)}" data-page-id="${escapeXml(page.id)}"${documentUsesBlendMode(document) ? ' style="isolation:isolate"' : ""}>`,
     `  <title>${title}</title>`,
+    renderFontStyles(options.fontFaces),
     renderTokenStyles(document, tokenVariables),
     body ? indent(body, 2) : "",
     state.defs.length ? `  <defs>\n${indent(state.defs.join("\n"), 4)}\n  </defs>` : "",
@@ -72,6 +73,25 @@ function renderTokenStyles(document: DesignDocument, tokenVariables: Record<stri
     .map(([name, token]) => `    ${tokenVariables[name]}: ${escapeXml(cssTokenValue(token.value))};`)
     .join("\n");
   return `  <style>\n  :root {\n${declarations}\n  }\n  </style>`;
+}
+
+/**
+ * 把 `@font-face` 规则写进根 `<svg>` 下的一个 `<style>` 元素。
+ *
+ * 单独一个元素（而不是与 token 规则合并）：没有字体的旧文档导出结果必须
+ * **逐字不变**，合并会让那部分产物也跟着变。
+ *
+ * CSS 文本是 XML 文本，`&` 与 `<` 必须转义——base64 字母表里恰好没有这两个
+ * 字符，但转义照做：规则文本不该依赖「恰好没有特殊字符」。
+ *
+ * 实测（Chrome headless，48px Press Start 2P）：顶层 `.svg` 文档、HTML 内联
+ * `<svg>`、`<img src="…svg">` 三种场景，文字宽度都从 456px 变成 912px，
+ * 字体确实被应用。规格见 `docs/font-inline.md` §8。
+ */
+function renderFontStyles(fontFaces: readonly string[] | undefined): string {
+  if (!fontFaces?.length) return "";
+  const css = escapeXmlText(fontFaces.join("\n"));
+  return `  <style type="text/css">\n${indent(css, 2)}\n  </style>`;
 }
 
 function renderNode(
@@ -355,7 +375,7 @@ function nodeStyle(document: DesignDocument, node: DesignNode, tokenVariables: R
     declarations.push(`stroke-width:${num(node.appearance.strokeWidth ?? 1)}`);
   }
   if (node.type === "text") {
-    declarations.push(`font-family:${cssString(node.fontFamily)}`);
+    declarations.push(`font-family:${cssFontFamily(node.fontFamily)}`);
     declarations.push(`font-size:${num(node.fontSize)}`);
     const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
     if (fontWeight !== TEXT_DEFAULTS.fontWeight) declarations.push(`font-weight:${fontWeight}`);
@@ -398,6 +418,50 @@ function cssTokenValue(value: string | number): string {
 
 function cssString(value: string): string {
   return value.replace(/["\\\n\r]/g, "");
+}
+
+/**
+ * CSS 的 `font-family` 值。
+ *
+ * **只在必要时加引号**：族名是一串 CSS 标识符时可以裸写（`Inter`），
+ * 但只要有一段不是合法标识符就必须加引号——`Press Start 2P` 的 `2P`
+ * 以数字开头，整条 `font-family` 声明会作废，文字直接走默认字体。
+ * 这个坑很隐蔽：族名看起来没问题，导出的 SVG 却用不上声明的字体。
+ *
+ * 裸写时保持旧产物的字节不变（`font-family:Inter` 不变成 `font-family:"Inter"`）。
+ */
+function cssFontFamily(value: string): string {
+  const plain = value.trim();
+  const valid = plain.length > 0 && plain.split(/\s+/).every(isCssIdentPart);
+  if (valid) return cssString(value);
+  return `"${value.replace(/["\\\n\r]/g, character => `\\${character}`)}"`;
+}
+
+/**
+ * 一段族名能不能裸写（不加引号）。
+ *
+ * CSS 标识符：首字符是字母 / 下划线 / 非 ASCII 字符，
+ * 后续可以再带数字、连字符与非 ASCII 字符。
+ * 以数字开头的段（`2P`）不是合法标识符——这正是要加引号的原因。
+ */
+function isCssIdentPart(part: string): boolean {
+  if (!part) return false;
+  let first = true;
+  for (const char of part) {
+    const code = char.codePointAt(0)!;
+    const letter = (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+    const digit = code >= 0x30 && code <= 0x39;
+    const hyphen = code === 0x2d;
+    const underscore = code === 0x5f;
+    const nonAscii = code >= 0xa0;
+    if (first) {
+      if (!(letter || underscore || nonAscii)) return false;
+      first = false;
+      continue;
+    }
+    if (!(letter || digit || hyphen || underscore || nonAscii)) return false;
+  }
+  return true;
 }
 
 function preserveAspectRatio(fit: string): string {
@@ -475,6 +539,17 @@ function paragraphTextsSvg(node: TextNode, box: ComputedBox, textAlign: string, 
 
 function escapeXml(value: string): string {
   return value.replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[character]!);
+}
+
+/**
+ * XML **文本**里的转义（只转 `&`、`<`、`>`）。
+ *
+ * 与 {@link escapeXml} 的区别：属性值里的引号必须转义（否则提前结束属性），
+ * 但文本里的 `"` 与 `'` 是合法字符，转义了反而让 CSS 变成 `&quot;` 这种
+ * 难读的样子。`<style>` 里的内容就是文本。
+ */
+function escapeXmlText(value: string): string {
+  return value.replace(/[&<>]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]!);
 }
 
 function indent(value: string, spaces = 2): string {

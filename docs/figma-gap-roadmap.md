@@ -27,7 +27,7 @@
 | 2 | 组件变体（variant） | ✅ | ✅ | ✅ 变体集 + 实例切换（UI 限单属性） | A | **本轮完成** |
 | 3 | 原型运行时 | ✅ | ✅ | ✅ 预览/状态机/overlay/动画/按下与悬停 | A | **本轮完成**（滚动保持与滚动容器见 §10） |
 | 4 | 富文本（段内混排） | ✅ | ✅ | ✅ 段内字重/字形/字号/颜色 + 段落样式（列表/缩进/段落缩进/悬挂/间距） | A | **已完成**（见 §7） |
-| 5 | 字体管理（上传/缺失字） | ✅ | ✅ | ✅ 上传 + 声明 + 缺失诊断 + 导出内联 + **子集化** | A | **已完成**（见 §9） |
+| 5 | 字体管理（上传/缺失字） | ✅ | ✅ | ✅ 上传 + 声明 + 缺失诊断 + 导出内联（HTML **与 SVG**）+ **子集化** | A | **已完成**（见 §9） |
 | 6 | 布尔组（保留运算树） | ✅ | ✅ | ✅ 运算树 + 实时重算 + **曲线级结果** | A | **已完成**（见 §10） |
 | 7 | 混合模式 | ✅ | ✅ | ✅ 16 种全覆盖 + 图层组离屏合成 | A | **已完成**（§4 / §5） |
 | 8 | 椭圆渐变 | ✅ | ✅ | ✅ 椭圆 + 旋转角 | A | **已完成**（§4 / §5） |
@@ -59,7 +59,8 @@ areas / layout_data 五个模块，约 1000 行 ClojureScript）。
 **3. 原型运行时** — 本轮已落地：顶栏「预览」进入全屏预览，状态机（`prototype/state.ts`）
 支持点击命中向上冒泡、after-delay 计时器、屏幕历史与 prev-screen；overlay 支持中心/四角/
 manual 定位、背景遮罩与点外部关闭；动画 dissolve/slide/push 用 DOM 层 CSS keyframes
-实现。规格见 `prototype-runtime.md`。按下与悬停/离开事件也已接线（hover 只在进入时触发一次），仍缺 `preserveScroll` 与原型内滚动容器。
+实现。规格见 `prototype-runtime.md`。按下与悬停/离开事件也已接线（hover 只在进入时触发一次）；
+滚动保持（`preserveScroll`）与原型内滚动容器（`overflow` 字段 + 滚轮）见 §10。
 
 **4. 富文本** — 已落地**段内字重/字形/颜色**：`TextNode.runs` 用偏移区间承载样式，
 换行统一走 `layoutRichText()`，HTML 出 `<span>`、SVG 出 `<tspan>`，面板选中文字即可
@@ -660,19 +661,30 @@ HTML 受影响最重。
 ### 9.2 验收
 
 - 字体收集、声明匹配、`@font-face` 生成、体积阈值、字重回退诊断有测试覆盖
-  （design-export 10 条、studio-application 4 条、studio-web 4 条）；
+  （design-export 16 条、studio-application 9 条、studio-web 4 条）；
 - 子集化：cmap 只剩用到的字符、体积显著变小、压缩格式与空字符集被拒
   （design-export 5 条）；超限字体走子集化路径并内联子集（studio-application 2 条）；
 - **真实浏览器探针**（`npm run visual:font-inline-probe`）：
   导出物里的字体**真的被加载并应用**（同一页面里先量回退字体宽度、
   再装上 `@font-face` 量第二次：304px → 608px，宽度不同即证明字体生效）；
-- 探针已并入 `npm run check:visual`。
+- **SVG 侧也有探针**（`npm run visual:svg-font-probe`）：走真实导出路径，
+  顶层 `.svg` 文档、HTML 内联 `<svg>`、`<img src="…svg">` 三种加载场景，
+  文字宽度都从 483.6px 变成 912px（Press Start 2P 的等宽步进），
+  `<img>` 场景的截图肉眼可见像素字体；
+- 两个探针都已并入 `npm run check:visual`。
+
+> 顺带修掉一个**老 bug**：SVG 导出写 `font-family` 时不加引号，
+> 于是 `Press Start 2P` 这类含数字的族名会让整条声明作废（`2P` 不是合法
+> CSS 标识符）——导出的 SVG 根本用不上声明的字体。现在只在必要时加引号，
+> 裸写时旧产物逐字不变。
 
 ### 9.3 已知限制
 
 - **子集化只支持 sfnt**（TrueType / OpenType）：woff / woff2 要先解压；
 - 裁掉的字形就没了：交付物里的字体只有导出时用到的那些字形；
-- 内联让 HTML 体积增加约 33%（base64 的代价）。
+- 内联让 HTML 体积增加约 33%（base64 的代价）；
+- **SVG 里的 `@font-face` 只有浏览器认**：Illustrator / Inkscape / Figma
+  导入 SVG 时不执行 CSS，落到那些工具里仍是回退字形（工具行为，不是导出物的问题）。
 
 ## 10. 后续排期
 

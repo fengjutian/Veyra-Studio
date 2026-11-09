@@ -81,6 +81,43 @@ test("inlines the declared font into the exported html", async () => {
   assert.deepEqual(result.diagnostics, []);
 });
 
+test("inlines the declared font into the exported svg", async () => {
+  const { project } = await projectWithFont();
+  const result = await project.exportSvgWithAssets({ pageId: "page:1", viewport: { width: 400, height: 200 } });
+  assert.match(result.svg, /@font-face \{/);
+  assert.match(result.svg, /font-family: "Press Start 2P";/);
+  assert.match(result.svg, /src: url\(data:font\/ttf;base64,/);
+  assert.match(result.svg, /font-weight: 400;/);
+  // 字体规则要在根 <svg> 下的 <style> 里，且在使用它的文字之前。
+  assert.ok(result.svg.indexOf("@font-face") < result.svg.indexOf("<text"));
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("does not inline a font into the svg when it was never declared", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  await project.execute(envelope(0, [
+    { type: "node.create", payload: { node: textNode("text:1", "Arial") } },
+  ]));
+  const result = await project.exportSvgWithAssets({ pageId: "page:1", viewport: { width: 400, height: 200 } });
+  assert.doesNotMatch(result.svg, /@font-face/);
+  assert.deepEqual(result.diagnostics, []);
+});
+
+test("reports a font whose bytes cannot be read in the svg export too", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const asset = fontAsset(FONT_BYTES, "ghost");
+  await project.execute(envelope(0, [
+    { type: "asset.upsert", payload: { asset } },
+    { type: "node.create", payload: { node: textNode("text:1", "Press Start 2P") } },
+    { type: "font.register", payload: { font: { family: "Press Start 2P", assetId: asset.id, weight: 400 } } },
+  ]));
+  const result = await project.exportSvgWithAssets({ pageId: "page:1", viewport: { width: 400, height: 200 } });
+  assert.doesNotMatch(result.svg, /@font-face/);
+  assert.equal(result.diagnostics.some(diagnostic => diagnostic.feature === "font-inline"), true);
+});
+
 test("does not inline a font that was never declared", async () => {
   const repository = new MemoryRepository();
   const project = await StudioProject.create(repository, "project:1", "Demo");

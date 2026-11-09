@@ -122,11 +122,21 @@ export class StudioProject {
     return { ...result, diagnostics: dedupeByFeature([...result.diagnostics, ...fonts.diagnostics]) };
   }
 
-  /** 导出 SVG，资源处理同 {@link exportHtmlWithAssets}。 */
+  /**
+   * 导出 SVG，并把文档引用的图片资源一起交给导出器。
+   *
+   * 资源与字体的处理同 {@link exportHtmlWithAssets}：图片转成 data URL，
+   * 字体转成 `@font-face` 规则写进 SVG 里的 `<style>`——
+   * 浏览器里 SVG 的内联 `@font-face` 是生效的（实测见 `docs/font-inline.md` §8.2）。
+   */
   async exportSvgWithAssets(options: SvgExportOptions): Promise<SvgExportResult> {
     const document = this.runtime.snapshot();
     const resolveAsset = options.resolveAsset ?? await createAssetResolver(this.repository, document, options.pageId, options.nodeIds);
-    return exportPageToSvg(document, { ...options, resolveAsset });
+    const fonts = options.fontFaces
+      ? { css: options.fontFaces.join("\n"), diagnostics: [] }
+      : await prepareFontFaces(this.repository, document, options);
+    const result = exportPageToSvg(document, { ...options, resolveAsset, fontFaces: fonts.css ? [fonts.css] : [] });
+    return { ...result, diagnostics: dedupeByFeature([...result.diagnostics, ...fonts.diagnostics]) };
   }
 
   private lastTransaction(): TransactionEntry {

@@ -141,18 +141,85 @@ studio-web「导出 HTML」
 ## 7. 已知限制
 
 - **不做子集化**：大字体只能整份内联或放弃（见 §2）；
-- **SVG 导出不内联字体**：SVG 引用系统字体，且非浏览器查看器
-  （Illustrator / Inkscape）对内联 `@font-face` 支持不一致；
-  本轮只在 SVG 侧保持现状；
 - 内联的字体让 HTML 体积增加约 33%（base64 的代价）；
 - 字体解析只覆盖 `name` / `OS/2` 表，TTC 集合与部分 CJK 字体的族名
   可能读不出来（读不出就回落，不报错）。
 
-## 8. 测试
+## 8. SVG 导出的字体内联
+
+### 8.1 问题
+
+SVG 交付物和 HTML 一样只带 `font-family`：**不带字形**。
+对方机器上没装这个字体 → 回退字形 → 交付稿和设计稿字形不同。
+上一轮把 SVG 排在「次之」并且明确不内联，理由是「非浏览器查看器对内联
+`@font-face` 支持不一致」。
+
+### 8.2 先实测，再决定
+
+「支持不一致」是一句没有证据的话，所以这一项**先探针、后实现**。
+探针（Chrome headless，`Press Start 2P`，48px，样例 `Handgloves 0123 ABC`）
+测三种加载场景，判据是「有 / 无 `@font-face` 时文字宽度是否不同」：
+
+| 场景 | 无 `@font-face` | 有 `@font-face` | 结论 |
+| --- | --- | --- | --- |
+| 顶层 `.svg` 文档（直接打开） | 456 px | **912 px** | 生效 |
+| HTML 里内联 `<svg>` | 456 px | **912 px** | 生效 |
+| `<img src="…svg">` | 456 px | **912 px** | 生效（截图肉眼可见像素字体） |
+
+912 = 19 字 × 48 px，正是 Press Start 2P 的等宽步进；456 是回退字体的宽度。
+所以**浏览器里 SVG 的内联 `@font-face` 是可靠的**。
+
+> ⚠️ 第一版探针给出的结论是**相反的**（「没生效」）。两个探针自身的 bug：
+> ① `.svg` 是 XML，脚本里的 `&&` 让 XML 解析失败，脚本**根本没执行**，
+>    于是拿不到测量值；
+> ② `font-family="Press Start 2P, monospace"` 没加引号，
+>    `2P` 不是合法的 CSS 标识符，整条声明作废。
+> 修掉之后结论反转。**探针本身也要被验证**——「读数是空」不等于「读数相同」。
+>
+> 探针留在 `packages/studio-web/visual/svg-font-probe.ts`（一次性脚本不入库）。
+
+### 8.3 规则
+
+SVG 侧与 HTML 侧**共用同一套字体准备逻辑**（`prepareFontFaces`）：
+同样的收集、同样的匹配、同样的 1 MB 阈值、同样的子集化、同样的诊断。
+差别只有「规则写到哪里」。
+
+```xml
+<svg xmlns="http://www.w3.org/2000/svg" …>
+  <title>…</title>
+  <style type="text/css">
+  @font-face { … }
+  </style>
+  <style>          <!-- token 变量，旧文档逐字不变 -->
+  :root { … }
+  </style>
+  …
+</svg>
+```
+
+- 字体规则放在**根 `<svg>` 下、token `<style>` 之前**：
+  字体的声明要先于使用它的规则；
+- 单独一个 `<style>` 元素（而不是与 token 规则合并）：
+  没有字体的旧文档导出结果必须**逐字不变**，合并会让那部分产物也变；
+- CSS 文本是 **XML 文本**，`&` 与 `<` 要转义（base64 字母表里没有这两个字符，
+  但转义照做——规则文本不该依赖「恰好没有特殊字符」）。
+
+### 8.4 限制
+
+- **非浏览器查看器仍然不行**：Illustrator / Inkscape / Figma 导入 SVG 时
+  不执行 CSS `@font-face`，那些工具里看到的仍是回退字形（或它们自己的
+  字体替换规则）。这是工具行为，不是导出物的问题——
+  导出物在浏览器里是自洽的；
+- 体积代价与 HTML 相同（约 +33%），阈值同样适用；
+- SVG 里没有「超限就不内联」的降级路径：超限字体不内联 + 记诊断，
+  与 HTML 一致。
+
+## 9. 测试
 
 | 文件 | 覆盖 |
 | --- | --- |
-| `design-export/test/font-inline.test.ts` | 字体收集、@font-face 生成、阈值、字重回退诊断 |
-| `studio-application/test/font-inline.test.ts` | 资产字节 → data URI、内联接线 |
+| `design-export/test/font-inline.test.ts` | 字体收集、@font-face 生成、阈值、字重回退诊断、SVG 侧写出 `<style>` 与 XML 转义 |
+| `studio-application/test/font-inline.test.ts` | 资产字节 → data URI、内联接线（HTML 与 SVG 两条路径） |
 | `studio-web/test/font-metadata.test.ts` | 字体元数据解析与回落 |
 | `studio-web/visual/font-inline-probe.ts` | 真实浏览器：导出的 HTML 里字体真的生效 |
+| `studio-web/visual/svg-font-probe.ts` | 真实浏览器：导出的 SVG 里字体真的生效（三种加载场景） |

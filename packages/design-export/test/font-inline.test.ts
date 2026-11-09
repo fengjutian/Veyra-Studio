@@ -5,6 +5,7 @@ import {
   FONT_INLINE_MAX_BYTES,
   collectExportFonts,
   exportPageToHtml,
+  exportPageToSvg,
   fontFaceCss,
   inlineFonts,
   matchFontDeclaration,
@@ -133,4 +134,47 @@ test("keeps the old export byte-identical when there are no font faces", () => {
   const withFaces = exportPageToHtml(document, { pageId: "page:1", viewport: { width: 400, height: 200 } });
   const withoutFaces = exportPageToHtml(document, { pageId: "page:1", viewport: { width: 400, height: 200 }, fontFaces: [] });
   assert.equal(withFaces.document, withoutFaces.document);
+});
+
+test("puts the font faces into the exported SVG style block", () => {
+  const document = documentWithTexts([{ family: "Inter", weight: 400 }]);
+  const css = fontFaceCss({ family: "Inter", weight: 400, style: "normal", bytes: new Uint8Array([1]), mime: "font/woff2" });
+  const result = exportPageToSvg(document, { pageId: "page:1", viewport: { width: 400, height: 200 }, fontFaces: [css] });
+  assert.match(result.svg, /@font-face \{/);
+  assert.match(result.svg, /font-family: "Inter";/);
+  // @font-face 要在根 <svg> 下的 <style> 里，且在使用它的文字之前。
+  assert.ok(result.svg.indexOf("@font-face") < result.svg.indexOf("</svg>"));
+  assert.ok(result.svg.indexOf("@font-face") < result.svg.indexOf("<text"));
+});
+
+test("keeps the old SVG export byte-identical when there are no font faces", () => {
+  const document = documentWithTexts([{ family: "Inter", weight: 400 }]);
+  const withoutFaces = exportPageToSvg(document, { pageId: "page:1", viewport: { width: 400, height: 200 } });
+  const emptyFaces = exportPageToSvg(document, { pageId: "page:1", viewport: { width: 400, height: 200 }, fontFaces: [] });
+  assert.equal(withoutFaces.svg, emptyFaces.svg);
+  assert.ok(!withoutFaces.svg.includes("@font-face"));
+});
+
+test("escapes XML special characters in the SVG font rules", () => {
+  const document = documentWithTexts([{ family: "Inter", weight: 400 }]);
+  // 规则文本里带 & 与 < ：写进 SVG 时必须转义，否则整个 XML 文档解析失败。
+  const css = '@font-face { font-family: "A&B<C"; src: url(data:font/ttf;base64,AA==) format("truetype"); }';
+  const result = exportPageToSvg(document, { pageId: "page:1", viewport: { width: 400, height: 200 }, fontFaces: [css] });
+  assert.ok(result.svg.includes("A&amp;B&lt;C"));
+  assert.ok(!/A&B<C/.test(result.svg));
+});
+
+test("quotes a family name that is not a bare CSS identifier", () => {
+  // `2P` 以数字开头，不是合法标识符：不加引号整条 font-family 声明会作废。
+  const document = documentWithTexts([{ family: "Press Start 2P", weight: 400 }]);
+  const result = exportPageToSvg(document, { pageId: "page:1", viewport: { width: 400, height: 200 } });
+  // style 属性里的引号被 XML 转义成 &quot;；XML 解析器会还原成真正的引号，CSS 才认得。
+  assert.match(result.svg, /font-family:&quot;Press Start 2P&quot;/);
+});
+
+test("keeps a plain family name unquoted so old SVG exports stay byte-identical", () => {
+  const document = documentWithTexts([{ family: "Inter", weight: 400 }]);
+  const result = exportPageToSvg(document, { pageId: "page:1", viewport: { width: 400, height: 200 } });
+  assert.match(result.svg, /font-family:Inter;/);
+  assert.ok(!result.svg.includes('font-family:"Inter"'));
 });
