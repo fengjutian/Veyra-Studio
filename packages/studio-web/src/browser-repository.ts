@@ -1,12 +1,15 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
 import {
+  CURRENT_STORAGE_VERSION,
   JOURNAL_RETENTION,
   ProjectNotFoundError,
   SNAPSHOT_RETENTION,
   SnapshotNotFoundError,
   assertSavableDocument,
+  detectStorageLayoutVersion,
   estimateJsonBytes,
   loadDocumentPayload,
+  migrateStorageLayout,
   normalizeAssetHash,
   prepareBaselinePrune,
   replayJournal,
@@ -18,6 +21,8 @@ import {
   type ProjectStorageUsage,
   type ProjectSummary,
   type SnapshotSummary,
+  type StorageLayoutState,
+  type StorageMigrationRecord,
 } from "@ufira/design-persistence";
 import type { TransactionEntry } from "@ufira/design-runtime";
 import { detectSchemaVersion, type DesignDocument } from "@ufira/design-schema";
@@ -27,6 +32,19 @@ interface SnapshotRecord { projectId: string; revision: number; document: Design
 interface AssetRecord { projectId: string; hash: string; bytes: Uint8Array }
 /** 重建基线：每个项目一份，永不被裁剪。 */
 interface BaselineRecord { projectId: string; document: DesignDocument }
+
+/**
+ * 存储布局记录（单行，id 固定为 `layout`）。
+ *
+ * 这里只记版本与迁移历史，表结构本身由 Dexie 的 `version(n).stores()` 负责——
+ * IndexedDB 的建表/加表是声明式的，没有「运行时改结构」这一步。
+ */
+interface StorageLayoutRecord {
+  id: "layout";
+  version: number;
+  documentSchemaVersion?: number;
+  migrations: StorageMigrationRecord[];
+}
 
 /** 项目列表摘要；与仓库契约里的 {@link ProjectSummary} 是同一个形状。 */
 export type StoredProjectSummary = ProjectSummary;
@@ -38,6 +56,7 @@ interface StudioDatabase extends Dexie {
   transactions: Table<TransactionEntry, [string, number]>;
   assets: Table<AssetRecord, [string, string]>;
   baselines: EntityTable<BaselineRecord, "projectId">;
+  storage: EntityTable<StorageLayoutRecord, "id">;
 }
 
 export interface DexieRepositoryOptions { databaseName?: string; indexedDB?: IDBFactory; IDBKeyRange?: typeof IDBKeyRange }
@@ -56,8 +75,11 @@ export class BrowserProjectNotFoundError extends ProjectNotFoundError {
  *
  * 3 新增 `baselines` 表：每项目一份重建基线，给事务日志当重放起点。它和历史
  * 版本不是一回事——历史版本会被裁，基线永远留着。
+ *
+ * 版本号的唯一来源是 `storage-layout.ts` 的 `CURRENT_STORAGE_VERSION.browser`；
+ * 这里的 Dexie schema 版本（4）只多了一张 meta 表，不改布局本身。
  */
-export const BROWSER_STORAGE_VERSION = 3;
+export const BROWSER_STORAGE_VERSION = CURRENT_STORAGE_VERSION.browser;
 
 export class DexieProjectRepository implements ProjectRepository {
   private readonly database: StudioDatabase;
@@ -67,13 +89,44 @@ export class DexieProjectRepository implements ProjectRepository {
     database.version(1).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash" });
     database.version(2).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", snapshotHistory: "[projectId+revision], projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash" });
     database.version(3).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", snapshotHistory: "[projectId+revision], projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash", baselines: "&projectId" });
+    // 4：只多一张 meta 表（布局版本 + 迁移历史），不给已有表加索引，
+    // 所以升级是纯新增，不会重写任何项目数据。
+    database.version(4).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", snapshotHistory: "[projectId+revision], projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash", baselines: "&projectId", storage: "&id" });
     this.database = database;
   }
 
   open(projectId: string): Promise<ProjectSnapshot> { return this.recover(projectId); }
 
+  /**
+   * 把存储布局升到当前版本，并把结果记进 meta 表。
+   *
+   * 旧库（没有 meta 表）会被当成 v1 逐级升上来；比当前应用更新的布局直接抛
+   * `StorageMigrationError`，不让它带着未知结构继续跑。
+   */
+  private async ensureStorageLayout(document?: DesignDocument): Promise<void> {
+    const record = await this.database.storage.get("layout");
+    const state: StorageLayoutState = {
+      version: detectStorageLayoutVersion(record?.version),
+      documentSchemaVersion: record?.documentSchemaVersion ?? (document ? detectSchemaVersion(document) ?? undefined : undefined),
+      migrations: record?.migrations ?? [],
+    };
+    const result = migrateStorageLayout("browser", state);
+    const unchanged = !result.changed
+      && record?.version === result.state.version
+      && record?.documentSchemaVersion === result.state.documentSchemaVersion;
+    if (unchanged) return;
+    await this.database.storage.put({
+      id: "layout",
+      version: result.state.version,
+      documentSchemaVersion: result.state.documentSchemaVersion,
+      migrations: result.state.migrations,
+    });
+  }
+
   async saveSnapshot(document: DesignDocument): Promise<void> {
     const valid = assertSavableDocument(document);
+    // 布局版本先于数据写：全新库第一次保存时也要留下「这份数据是哪个布局写的」。
+    await this.ensureStorageLayout(valid);
     await this.database.transaction("rw", this.database.projects, this.database.snapshots, this.database.snapshotHistory, this.database.baselines, async () => {
       // 覆盖前先把上一份快照挪进历史表：迁移升级和普通保存都因此留有退路。
       const previous = await this.database.snapshots.get(valid.id);
@@ -147,8 +200,10 @@ export class DexieProjectRepository implements ProjectRepository {
     if (!candidates.length) throw new BrowserProjectNotFoundError(projectId);
     const newest = candidates[0]!;
     const { document, migratedFrom } = loadDocumentPayload(newest.document);
+    // 布局版本检查和文档迁移是两件事：前者管表结构，后者管文档格式。
     // 迁移过的文档立刻按新格式落盘，原始快照留在历史表里，随时可以退回。
     if (migratedFrom !== undefined) await this.saveSnapshot(document);
+    await this.ensureStorageLayout(document);
     const entries = await this.listTransactions(projectId, document.revision);
     const replay = replayJournal(document, entries);
     return {

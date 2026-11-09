@@ -79,6 +79,9 @@
   资产去重、旧版本迁移）；保留策略统一为最近 10 份快照与 200 条事务，另有
   `pruneJournal()` 主动裁剪；包入口拆成浏览器安全的根入口与
   `@ufira/design-persistence/filesystem` 子入口，node 内置模块不再进浏览器包；
+  存储布局也有独立迁移链（`storage-layout.ts`，规格见 `storage-layout.md`）：
+  版本常量 + 步骤表 + 逐级迁移 + 迁移历史，文件系统与浏览器两个后端各有一套步骤，
+  未来版本一律拒绝；
 - `packages/design-layout`：宿主无关的 absolute/stack 布局原型，支持 fixed、fill、hug、
   padding、gap、对齐、文本测量接口和结构化布局警告；文本测量提供确定性的字符宽度估算器
   与宿主可注入的测量契约（`createHostTextMeasurer`），修复了 hug 文本高度不随可用宽度换行
@@ -729,8 +732,12 @@
 - 存储配额只做了用量视图与告警，还没有配额上限策略；
 - 自动备份是浏览器的本地 IndexedDB 备份：没有导出到磁盘的定时备份、没有加密、
   也不能跨设备同步，清空站点数据依然会一起丢失；
-- 迁移只覆盖了文档格式这一条链路，存储布局版本（文件系统 manifest、浏览器
-  IndexedDB）虽有版本号，但旧布局的迁移步骤尚未成体系。
+- 存储布局迁移已与文档格式迁移对齐（2026-11-09）：`storage-layout.ts` 提供
+  `CURRENT_STORAGE_VERSION` / `STORAGE_MIGRATIONS` / `migrateStorageLayout()`，
+  文件系统打开项目时升级 manifest 并把原始文件备份到
+  `backups/manifest-v{旧版本}.json`，浏览器把布局版本记进 `storage` meta 表
+  （Dexie schema 4 只新增该表），旧库当成 v1 逐级升级，未来版本一律拒绝；
+  规格见 `storage-layout.md`。仍缺：布局只升不降（回滚由旧版本应用处理）。
 
 ## 文档阅读优先级
 

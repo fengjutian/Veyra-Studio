@@ -92,3 +92,84 @@ test("records the storage layout version in the manifest", async t => {
   assert.equal(manifest.documentSchemaVersion, CURRENT_SCHEMA_VERSION);
   assert.equal(manifest.name, "Demo");
 });
+
+test("upgrades a v1 manifest to the current storage layout and keeps the original", async t => {
+  const { directory, repository } = await fixture(t);
+  const projectDirectory = join(directory, encodeURIComponent("project:1"));
+  const snapshots = join(projectDirectory, "snapshots");
+  await mkdir(snapshots, { recursive: true });
+  const document = createDocument("project:1", "Demo");
+  await writeFile(join(snapshots, "000000000000.json"), JSON.stringify(document));
+  // v1 的 manifest：没有 storageVersion / documentSchemaVersion。
+  const legacyManifest = {
+    projectId: "project:1",
+    name: "Demo",
+    latestRevision: 0,
+    updatedAt: document.meta.updatedAt,
+  };
+  await writeFile(join(projectDirectory, "manifest.json"), JSON.stringify(legacyManifest));
+
+  await repository.open("project:1");
+
+  const manifest = JSON.parse(await readFile(join(projectDirectory, "manifest.json"), "utf8"));
+  assert.equal(manifest.storageVersion, 2);
+  assert.equal(manifest.documentSchemaVersion, CURRENT_SCHEMA_VERSION);
+  assert.equal(manifest.storageMigrations.length, 1);
+  assert.equal(manifest.storageMigrations[0].from, 1);
+  // 迁移前的原始 manifest 留档，回滚时按版本取回。
+  const backup = JSON.parse(await readFile(join(projectDirectory, "backups", "manifest-v1.json"), "utf8"));
+  assert.deepEqual(backup, legacyManifest);
+});
+
+test("writes a manifest for a project that predates manifests", async t => {
+  const { directory, repository } = await fixture(t);
+  const projectDirectory = join(directory, encodeURIComponent("project:1"));
+  const snapshots = join(projectDirectory, "snapshots");
+  await mkdir(snapshots, { recursive: true });
+  const document = createDocument("project:1", "Legacy");
+  await writeFile(join(snapshots, "000000000000.json"), JSON.stringify(document));
+
+  const recovered = await repository.open("project:1");
+  assert.equal(recovered.document.id, "project:1");
+
+  const manifest = JSON.parse(await readFile(join(projectDirectory, "manifest.json"), "utf8"));
+  assert.equal(manifest.projectId, "project:1");
+  assert.equal(manifest.storageVersion, 2);
+  assert.equal(manifest.storageMigrations.length, 1);
+});
+
+test("refuses to open a project written by a newer storage layout", async t => {
+  const { directory, repository } = await fixture(t);
+  const projectDirectory = join(directory, encodeURIComponent("project:1"));
+  const snapshots = join(projectDirectory, "snapshots");
+  await mkdir(snapshots, { recursive: true });
+  const document = createDocument("project:1", "Future");
+  await writeFile(join(snapshots, "000000000000.json"), JSON.stringify(document));
+  await writeFile(join(projectDirectory, "manifest.json"), JSON.stringify({
+    projectId: "project:1",
+    name: "Future",
+    latestRevision: 0,
+    updatedAt: document.meta.updatedAt,
+    storageVersion: 99,
+  }));
+
+  await assert.rejects(repository.open("project:1"), /storage layout v99 is newer than this app supports/);
+});
+
+test("keeps the storage migration history across ordinary saves", async t => {
+  const { directory, repository } = await fixture(t);
+  const projectDirectory = join(directory, encodeURIComponent("project:1"));
+  const snapshots = join(projectDirectory, "snapshots");
+  await mkdir(snapshots, { recursive: true });
+  const document = createDocument("project:1", "Demo");
+  await writeFile(join(snapshots, "000000000000.json"), JSON.stringify(document));
+  await writeFile(join(projectDirectory, "manifest.json"), JSON.stringify({ projectId: "project:1", name: "Demo", latestRevision: 0, updatedAt: document.meta.updatedAt }));
+
+  await repository.open("project:1");
+  document.revision = 1;
+  await repository.saveSnapshot(document);
+
+  const manifest = JSON.parse(await readFile(join(projectDirectory, "manifest.json"), "utf8"));
+  // 保存不能把「这份数据是怎么升上来的」抹掉。
+  assert.equal(manifest.storageMigrations.length, 1);
+});

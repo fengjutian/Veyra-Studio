@@ -142,6 +142,45 @@ test("upgrades a version 2 database and creates the rebuild baseline", async t =
   assert.equal((await repository.readBaseline!("project:1"))?.revision, 0);
 });
 
+test("records the browser storage layout version and migration history", async t => {
+  const repository = createRepository(); t.after(() => repository.deleteDatabase());
+  const document = createDocument("project:1", "Demo", "page:1");
+  await repository.saveSnapshot(document);
+
+  const record = await repository.storage.storage.get("layout");
+  assert.equal(record?.version, 3);
+  assert.deepEqual(record?.migrations.map(item => [item.from, item.to]), [[1, 2], [2, 3]]);
+  assert.equal(record?.documentSchemaVersion, CURRENT_SCHEMA_VERSION);
+});
+
+test("upgrades a version 1 database to the current storage layout record", async t => {
+  const databaseName = `legacy-layout-${crypto.randomUUID()}`;
+  const legacy = new Dexie(databaseName, { indexedDB, IDBKeyRange });
+  legacy.version(1).stores({ projects: "&id, updatedAt", snapshots: "&projectId, revision", transactions: "[documentId+revision], documentId, revision", assets: "[projectId+hash], projectId, hash" });
+  await legacy.open();
+  const document = createDocument("project:1", "Legacy", "page:1");
+  await legacy.table("snapshots").put({ projectId: "project:1", revision: 0, document });
+  legacy.close();
+
+  const repository = createRepository(databaseName);
+  t.after(() => repository.deleteDatabase());
+  await repository.open("project:1");
+
+  const record = await repository.storage.storage.get("layout");
+  assert.equal(record?.version, 3);
+  // 旧库没有布局记录 → 当成 v1 逐级升上来，两步都要留痕。
+  assert.deepEqual(record?.migrations.map(item => item.to), [2, 3]);
+});
+
+test("refuses to open a project written by a newer storage layout", async t => {
+  const repository = createRepository(); t.after(() => repository.deleteDatabase());
+  const document = createDocument("project:1", "Future", "page:1");
+  await repository.saveSnapshot(document);
+  await repository.storage.storage.put({ id: "layout", version: 99, migrations: [] });
+
+  await assert.rejects(repository.open("project:1"), /newer than this app supports/);
+});
+
 function createRepository(databaseName = `test-${crypto.randomUUID()}`): DexieProjectRepository { return new DexieProjectRepository({ databaseName, indexedDB, IDBKeyRange }); }
 function entry(documentId: string, revision: number) { return { commandId: `cmd:${revision}`, documentId, revision, committedAt: new Date(0).toISOString(), actor: { type: "human" as const, id: "test" }, commands: [], warnings: [] }; }
 function frame(id: string): DesignNode { return { id, type: "frame", name: id, parentId: "page:1", childIds: [], visible: true, locked: false, layout: defaultLayout(), appearance: defaultAppearance() }; }

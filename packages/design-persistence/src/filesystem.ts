@@ -22,6 +22,13 @@ import {
   type SnapshotSummary,
 } from "./contract";
 import { prepareBaselinePrune } from "./baseline";
+import {
+  CURRENT_STORAGE_VERSION,
+  detectStorageLayoutVersion,
+  migrateStorageLayout,
+  type StorageLayoutState,
+  type StorageMigrationRecord,
+} from "./storage-layout";
 
 /**
  * 项目存储布局的版本。
@@ -29,8 +36,11 @@ import { prepareBaselinePrune } from "./baseline";
  * 1 是最初版本：manifest 只记 projectId / latestRevision / updatedAt。
  * 2 补上 storageVersion 与 documentSchemaVersion，让"这份数据是哪个布局、哪个
  * 文档格式写下来的"可以被查出来。
+ *
+ * 版本的唯一来源是 `storage-layout.ts` 的 `CURRENT_STORAGE_VERSION`；
+ * 这里只做转发，避免两个数字各改各的。
  */
-export const STORAGE_VERSION = 2;
+export const STORAGE_VERSION = CURRENT_STORAGE_VERSION.filesystem;
 
 /**
  * 基线快照的文件名。
@@ -48,6 +58,8 @@ interface Manifest {
   updatedAt: string;
   storageVersion?: number;
   documentSchemaVersion?: number;
+  /** 已经应用过的布局迁移（与文档自带的 `migrations` 同构）。 */
+  storageMigrations?: StorageMigrationRecord[];
 }
 
 export class FileSystemProjectRepository implements ProjectRepository {
@@ -67,6 +79,9 @@ export class FileSystemProjectRepository implements ProjectRepository {
 
     // 同一 revision 可能被迁移后的文档重写，所以这里用替换语义而不是独占创建。
     await replaceAtomic(join(snapshots, revisionFile(valid.revision)), JSON.stringify(valid));
+    // 布局迁移历史挂在 manifest 上；保存时要把已有的历史带过去，
+    // 否则一次自动保存就会把「这份数据是怎么升上来的」抹掉。
+    const previous = await readManifest(join(directory, "manifest.json"));
     await replaceAtomic(join(directory, "manifest.json"), JSON.stringify({
       projectId: valid.id,
       name: valid.meta.name,
@@ -74,6 +89,7 @@ export class FileSystemProjectRepository implements ProjectRepository {
       updatedAt: valid.meta.updatedAt,
       storageVersion: STORAGE_VERSION,
       documentSchemaVersion: valid.schemaVersion,
+      storageMigrations: previous?.storageMigrations,
     } satisfies Manifest));
     await this.ensureBaseline(valid.id, directory);
     await this.pruneSnapshots(directory);
@@ -161,30 +177,78 @@ export class FileSystemProjectRepository implements ProjectRepository {
       ...transactionFiles.map(parseRevision),
     );
 
+    // 先找出一份能读的文档，再统一做布局迁移。迁移放在 `try` 外面：
+    // 布局版本不受支持（或写盘失败）必须让用户看到，不能被「换上一份旧快照」
+    // 掩盖过去——那样只会把问题拖到下一次保存。
+    let found: { document: DesignDocument; migratedFrom?: number; raw: string } | undefined;
     for (const file of files) {
       const raw = await readFile(join(snapshots, file), "utf8").catch(() => undefined);
       if (raw === undefined) continue;
       try {
         const { document, migratedFrom } = loadDocumentPayload(JSON.parse(raw));
         if (document.id !== projectId) continue;
-        const recoveredFromRevision = document.revision;
-        // 迁移过的文档立刻按新格式落盘，原始文件留一份备份，随时可以退回。
-        if (migratedFrom !== undefined) await this.writeMigratedSnapshot(directory, document, raw);
-        const transactions = await this.listTransactions(projectId, recoveredFromRevision);
-        const replay = replayJournal(document, transactions, { latestKnownRevision });
-        return {
-          document: replay.document,
-          recoveredFromRevision,
-          replayedTransactions: replay.replayedTransactions,
-          latestKnownRevision: replay.latestKnownRevision,
-          degraded: replay.degraded,
-          migratedFrom,
-        };
+        found = { document, migratedFrom, raw };
+        break;
       } catch {
         // Fall through to the previous valid snapshot.
       }
     }
-    throw new Error(`Project ${projectId} has no valid snapshots`);
+    if (!found) throw new Error(`Project ${projectId} has no valid snapshots`);
+
+    await this.migrateManifestLayout(directory, manifest, found.document);
+
+    const recoveredFromRevision = found.document.revision;
+    // 迁移过的文档立刻按新格式落盘，原始文件留一份备份，随时可以退回。
+    if (found.migratedFrom !== undefined) await this.writeMigratedSnapshot(directory, found.document, found.raw);
+    const transactions = await this.listTransactions(projectId, recoveredFromRevision);
+    const replay = replayJournal(found.document, transactions, { latestKnownRevision });
+    return {
+      document: replay.document,
+      recoveredFromRevision,
+      replayedTransactions: replay.replayedTransactions,
+      latestKnownRevision: replay.latestKnownRevision,
+      degraded: replay.degraded,
+      migratedFrom: found.migratedFrom,
+    };
+  }
+
+  /**
+   * 把 manifest 的存储布局升到当前版本。
+   *
+   * 三种情况都会触发写回：
+   * - manifest 根本不存在（旧项目只靠快照目录）；
+   * - 版本落后（v1 没有 storageVersion / documentSchemaVersion）；
+   * - 文档格式版本变了（迁移过文档后 manifest 要跟着更新）。
+   *
+   * 写回前把原始 manifest 备份到 `backups/manifest-v{旧版本}.json`，
+   * 同一版本只留第一次的副本——重复打开不能覆盖原始证据。
+   */
+  private async migrateManifestLayout(directory: string, manifest: Manifest | undefined, document: DesignDocument): Promise<void> {
+    const state: StorageLayoutState = {
+      version: detectStorageLayoutVersion(manifest?.storageVersion),
+      documentSchemaVersion: manifest?.documentSchemaVersion ?? detectSchemaVersion(document) ?? undefined,
+      migrations: Array.isArray(manifest?.storageMigrations) ? manifest.storageMigrations : [],
+    };
+    // 未来版本在这里抛错（`StorageMigrationError`），调用方不能忽略。
+    const result = migrateStorageLayout("filesystem", state);
+    const target = CURRENT_STORAGE_VERSION.filesystem;
+
+    const needsWrite = !manifest
+      || manifest.storageVersion !== target
+      || result.changed
+      || (result.state.documentSchemaVersion !== undefined && manifest.documentSchemaVersion !== result.state.documentSchemaVersion);
+    if (!needsWrite) return;
+
+    if (manifest) await backupManifest(directory, manifest);
+    await replaceAtomic(join(directory, "manifest.json"), JSON.stringify({
+      projectId: manifest?.projectId ?? document.id,
+      name: document.meta.name,
+      latestRevision: Math.max(manifest?.latestRevision ?? -1, document.revision),
+      updatedAt: document.meta.updatedAt,
+      storageVersion: target,
+      documentSchemaVersion: result.state.documentSchemaVersion,
+      storageMigrations: result.state.migrations,
+    } satisfies Manifest));
   }
 
   async listProjects(): Promise<ProjectSummary[]> {
@@ -428,6 +492,20 @@ async function readManifest(path: string): Promise<Manifest | undefined> {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * 迁移落盘前保留原始 manifest。
+ *
+ * 文件名带旧版本号：同一版本只写一次，重复打开不会覆盖第一次的原件；
+ * 不同版本各留一份，回滚时可以按版本取回。
+ */
+async function backupManifest(directory: string, manifest: Manifest): Promise<void> {
+  const backups = join(directory, "backups");
+  await mkdir(backups, { recursive: true });
+  const path = join(backups, `manifest-v${detectStorageLayoutVersion(manifest.storageVersion)}.json`);
+  if (await fileExists(path)) return;
+  await writeFile(path, JSON.stringify(manifest));
 }
 
 async function writeExclusiveAtomic(path: string, data: string | Uint8Array): Promise<void> {
