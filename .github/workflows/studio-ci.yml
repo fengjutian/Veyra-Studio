@@ -73,6 +73,21 @@ jobs:
       # 预算是数量级门禁（5000 节点 12s、绘制 1.6s），不卡毫秒级抖动。
       - run: npm run check:budgets
 
+  a11y:
+    name: 可访问性（键盘遍历 / 读屏语义）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build:studio-core
+      # 规则不绑定平台也不绑定字体，所以能当阻断门禁；基线比对不跑——AX 树的细节
+      # 会随 Chrome 版本漂移，那是本地 `npm run visual:a11y:check` 的活。
+      - run: npm run visual:a11y:check -- --no-baseline --require-browser
+
   visual:
     name: 视觉回归（参考，不阻断）
     runs-on: ubuntu-latest

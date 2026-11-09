@@ -1,0 +1,138 @@
+{
+  "environment": {
+    "os": "win32",
+    "osRelease": "win32 10.0.26200",
+    "browser": "Chrome 156.0.0.0",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+    "generatedAt": "2026-11-09T07:20:35.924Z"
+  },
+  "focusOrder": [
+    {
+      "auditId": "tool.select",
+      "role": "button",
+      "name": "选择"
+    },
+    {
+      "auditId": "tool.frame",
+      "role": "button",
+      "name": "Frame"
+    },
+    {
+      "auditId": "tool.rectangle",
+      "role": "button",
+      "name": "矩形"
+    },
+    {
+      "auditId": "tool.ellipse",
+      "role": "button",
+      "name": "椭圆"
+    },
+    {
+      "auditId": "tool.line",
+      "role": "button",
+      "name": "直线"
+    },
+    {
+      "auditId": "tool.polygon",
+      "role": "button",
+      "name": "多边形"
+    },
+    {
+      "auditId": "tool.star",
+      "role": "button",
+      "name": "星形"
+    },
+    {
+      "auditId": "tool.pen",
+      "role": "button",
+      "name": "钢笔"
+    },
+    {
+      "auditId": "tool.text",
+      "role": "button",
+      "name": "文本"
+    },
+    {
+      "auditId": "history.undo",
+      "role": "button",
+      "name": "撤销"
+    },
+    {
+      "auditId": "history.redo",
+      "role": "button",
+      "name": "重做"
+    },
+    {
+      "auditId": "page.1",
+      "role": "option",
+      "name": "画布渲染基线"
+    },
+    {
+      "auditId": "layer.search",
+      "role": "searchbox",
+      "name": "搜索图层"
+    },
+    {
+      "auditId": "card",
+      "role": "option",
+      "name": "card · frame"
+    },
+    {
+      "auditId": "prop.name",
+      "role": "textbox",
+      "name": "名称"
+    },
+    {
+      "auditId": "prop.width",
+      "role": "spinbutton",
+      "name": "宽度"
+    },
+    {
+      "auditId": "prop.align",
+      "role": "combobox",
+      "name": "对齐"
+    },
+    {
+      "auditId": "inspector.apply",
+      "role": "button",
+      "name": "应用"
+    }
+  ],
+  "announcements": [
+    "listbox：页面列表",
+    "searchbox：搜索图层",
+    "button：应用",
+    "button：选择",
+    "button：Frame",
+    "button：矩形",
+    "button：椭圆",
+    "button：直线",
+    "button：多边形",
+    "button：星形",
+    "button：钢笔",
+    "button：文本",
+    "button：撤销",
+    "button：重做",
+    "option：画布渲染基线",
+    "listbox：画布节点",
+    "textbox：名称",
+    "spinbutton：宽度",
+    "combobox：对齐",
+    "option：card · frame",
+    "option：title · text",
+    "option：body · text",
+    "option：badge · frame",
+    "option：badge-text · text",
+    "option：accent · frame",
+    "option：dot · ellipse",
+    "option：clip · frame",
+    "option：overflowing · frame",
+    "option：right · text",
+    "option：image · image",
+    "option：missing · image",
+    "option：faded · frame",
+    "option：左对齐",
+    "option：居中",
+    "option：右对齐"
+  ]
+}

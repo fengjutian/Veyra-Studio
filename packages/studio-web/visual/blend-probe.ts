@@ -19,7 +19,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderHtmlToPng } from "../../design-export/visual/browser";
-import { decodePng } from "../../design-export/visual/png";
+import { decodePng, type RgbaImage } from "../../design-export/visual/png";
 
 /** 与 CSS `mix-blend-mode` 同名的 16 种模式。 */
 const MODES = [
@@ -68,7 +68,7 @@ function html(mode: string): string {
 }
 
 /** 取一个像素（PNG 是 RGBA，内存里按 4 字节一个通道存放）。 */
-function pixelAt(image: { width: number; height: number; data: Buffer }, x: number, y: number): Rgb {
+function pixelAt(image: RgbaImage, x: number, y: number): Rgb {
   const offset = (y * image.width + x) * 4;
   return { r: image.data[offset]!, g: image.data[offset + 1]!, b: image.data[offset + 2]!, a: image.data[offset + 3]! };
 }

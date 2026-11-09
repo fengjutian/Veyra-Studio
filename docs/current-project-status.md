@@ -410,8 +410,18 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
 - 可访问性（对比度）：`collectContrastIssues()` 从文档解析文本色与最近的背景色，
   按 WCAG 相对亮度公式算对比度（正文 4.5:1、大字号 3:1，大字号按 ≥24px 或
   ≥18.66px 加粗判定），token 绑定也算在内；属性面板列出不达标的文本节点，点击可
-  定位。工作台补了全局 `:focus-visible` 描边；键盘遍历与屏幕阅读器路径还没有自动化
-  检查；
+  定位。工作台补了全局 `:focus-visible` 描边；
+- **键盘遍历与读屏语义自动化**（2026-11-09）：`npm run visual:a11y:check` 用 CDP
+  派发**真实 Tab 键**遍历页面，读 Chrome 的可访问性树（AX tree）当读屏语义，两边
+  交叉验证九类缺陷：可访问名缺失、正 tabindex、焦点顺序与 DOM 顺序不一致、
+  DOM 可聚焦但 Tab 到不了、AX 可聚焦但 Tab 到不了、焦点陷阱、复合控件方向键
+  没走完/跳出控件、聚焦时没有可见指示。规则层是纯函数（`src/renderer/a11y-audit.ts`，
+  16 项单测含阴性对照），采集层用 Node 24 原生 WebSocket 说 CDP，没装 Playwright。
+  语义基线（Tab 顺序 + 读屏脚本）进仓库、不绑定平台，因此进了 `check:visual`；
+  CI 另有一个阻断 job 只跑规则（`--no-baseline`，基线会随 Chrome 版本漂移）。
+  另有一个**故意留缺陷**的阴性对照页面，探针每次都断言这些缺陷确实被报出来。
+  首个真实缺陷（图层搜索框聚焦无可见指示）由此查出并修复。规格见
+  `accessibility-automation.md`；
 - **设计 lint**（2026-11-09）：`design-schema/src/lint.ts` 的 `lintDocument()`
   检查五类质量问题——硬编码填充/描边、未绑 token 的自动布局间距、位置不在栅格上、
   同级重名。只提示（不阻止保存、不进事务、不改文档），且只在文档确实有对应 token

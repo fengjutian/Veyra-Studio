@@ -94,6 +94,7 @@ button.icon-only{padding:5px;min-width:26px}
 .studio.left-collapsed .layers,.studio.right-collapsed .inspector{padding:0;overflow:hidden;border:0}
 .layer-search{display:flex;align-items:center;gap:6px;margin-bottom:8px;padding:4px 7px;border:1px solid #363d4b;border-radius:7px;background:#242936;color:#98a2b3}
 .layer-search input{flex:1;min-width:0;border:0;background:transparent;color:#e7e9ee;font-size:12px;outline:none}
+.layer-search input:focus-visible{outline:2px solid #8b5cf6;outline-offset:2px}
 .layer-search .icon-only{padding:1px;min-width:18px}
 .canvas-scroller.pan-mode{cursor:grab}
 .canvas-scroller.panning{cursor:grabbing}

@@ -64,6 +64,24 @@ function isTabbable(el) {
   if (!el.getClientRects().length) return false;
   return true;
 }
+
+/*
+ * 焦点指示的判据：拿「聚焦前」和「聚焦后」的样式签名比。
+ *
+ * 只认 outline / box-shadow 会误判：Studio 的输入框是
+ * .dialog-input:focus{outline:none;border-color:#8b5cf6}——用边框变色表示聚焦，
+ * 这是合规的焦点指示，但按 outline 判据会被误报。
+ */
+function focusStyleSignature(el) {
+  const style = getComputedStyle(el);
+  return [
+    style.outlineStyle, style.outlineWidth, style.outlineColor,
+    style.boxShadow,
+    style.borderTopWidth, style.borderTopColor,
+    style.borderLeftWidth, style.borderLeftColor,
+    style.backgroundColor,
+  ].join("|");
+}
 `;
 
 /** 扫描 DOM 里所有可 Tab 到的元素（按文档顺序）。 */
@@ -78,6 +96,7 @@ export function domFocusableExpression(): string {
       tag: el.tagName.toLowerCase(),
       role: el.getAttribute("role") || "",
       tabIndex: el.tabIndex,
+      style: focusStyleSignature(el),
     });
   }
   return items;
@@ -90,16 +109,13 @@ export function focusVisitExpression(): string {
 (() => {
   const el = document.activeElement;
   if (!el || el === document.body || el === document.documentElement) return null;
-  const style = getComputedStyle(el);
-  const outlineVisible = style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0;
-  const shadowVisible = Boolean(style.boxShadow) && style.boxShadow !== "none";
   return {
     tag: el.tagName.toLowerCase(),
     role: el.getAttribute("role") || "",
     name: accessibleNameOf(el),
     auditId: auditIdOf(el),
     tabIndex: el.tabIndex,
-    focusIndicator: outlineVisible || shadowVisible,
+    style: focusStyleSignature(el),
   };
 })()`;
 }

@@ -61,6 +61,15 @@ function Workbench() {
             <button type="button" role="option" aria-selected="true" data-audit-id="page.1">画布渲染基线</button>
           </div>
         </div>
+        <div className="panel-block">
+          <div className="panel-head">
+            <h2>图层</h2>
+          </div>
+          {/* 与 layer-tree 真实标记一致：搜索框只有 placeholder，没有 aria-label。 */}
+          <div className="layer-search">
+            <input type="search" placeholder="搜索图层" data-audit-id="layer.search" />
+          </div>
+        </div>
       </aside>
 
       <section className="workspace">
@@ -80,22 +89,23 @@ function Workbench() {
 
       <aside className="inspector">
         <div className="inspector-body">
-          <div className="dialog-field">
-            <label className="dialog-field-label" htmlFor="prop-name">名称</label>
-            <input className="dialog-input" id="prop-name" data-audit-id="prop.name" defaultValue="画布渲染基线" />
-          </div>
-          <div className="dialog-field">
-            <label className="dialog-field-label" htmlFor="prop-width">宽度</label>
-            <input className="dialog-input" id="prop-width" data-audit-id="prop.width" type="number" defaultValue={360} />
-          </div>
-          <div className="dialog-field">
-            <label className="dialog-field-label" htmlFor="prop-align">对齐</label>
-            <select className="dialog-input" id="prop-align" data-audit-id="prop.align" defaultValue="left">
+          {/* 与 property-panel 真实标记一致：label 包裹普通 input/select。 */}
+          <label className="field">
+            <span className="field-label">名称</span>
+            <input data-audit-id="prop.name" defaultValue="画布渲染基线" />
+          </label>
+          <label className="field field-inline">
+            <span className="field-label">宽度</span>
+            <input type="number" data-audit-id="prop.width" defaultValue={360} />
+          </label>
+          <label className="field field-inline">
+            <span className="field-label">对齐</span>
+            <select data-audit-id="prop.align" defaultValue="left">
               <option value="left">左对齐</option>
               <option value="center">居中</option>
               <option value="right">右对齐</option>
             </select>
-          </div>
+          </label>
           <div className="dialog-actions">
             <button type="button" className="dialog-primary" data-audit-id="inspector.apply">应用</button>
           </div>

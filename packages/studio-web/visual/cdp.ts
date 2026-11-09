@@ -136,6 +136,8 @@ export interface AxTreeNode {
 /** 一个页面（tab）的会话。 */
 export interface CdpPage {
   sessionId: string;
+  /** 直接发一条 CDP 命令（页面级域）。 */
+  send<T = any>(method: string, params?: Record<string, unknown>): Promise<T>;
   navigate(url: string): Promise<void>;
   evaluate<T = unknown>(expression: string): Promise<T>;
   pressKey(key: string): Promise<void>;
@@ -243,6 +245,9 @@ export async function launchHeadlessBrowser(
 
     const page: CdpPage = {
       sessionId,
+      async send<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+        return connection.send<T>(method, params, sessionId);
+      },
       async navigate(target: string) {
         const loaded = connection.once("Page.loadEventFired");
         await connection.send("Page.navigate", { url: target }, sessionId);
