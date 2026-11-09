@@ -9,7 +9,7 @@ import {
   type GridCell,
   type GridTrack,
 } from "@ufira/design-schema";
-import { computePageLayout, solveGrid } from "../src/index";
+import { computePageLayout, expandRepeatTracks, solveGrid } from "../src/index";
 
 /**
  * Grid 布局的用例。
@@ -376,4 +376,150 @@ test("grid: 命名区域容器 hug 时按轨道与区域跨度定尺寸", () => 
   const result = computePageLayout(documentWith(root, [first]), "page:1", { viewport: { width: 800, height: 600 } });
   assert.equal(result.boxes.root?.width, 70);
   assert.equal(result.boxes.root?.height, 25);
+});
+
+/* ------------------------- 自动重复轨道（repeat） ------------------------- */
+
+test("repeat: auto-fill 按可用宽度展开条数（grow 时均分剩余空间）", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "repeat", mode: "auto-fill", min: 100, grow: true }],
+    rows: [{ type: "fixed", size: 50 }],
+    columnGap: 10,
+    width: 400,
+  });
+  const children = ["a", "b", "c"].map(id => {
+    const child = node(id, "root");
+    child.layout = { ...defaultLayout(), width: 20, height: 10 };
+    return child;
+  });
+
+  const result = computePageLayout(documentWith(root, children), "page:1", { viewport: { width: 800, height: 600 } });
+  // ⌊(400 + 10) ÷ (100 + 10)⌋ = 3 条 → 每条约 (400 - 2×10) ÷ 3 = 126.67。
+  assert.equal(Math.round(result.boxes.a?.x ?? -1), 0);
+  assert.equal(Math.round(result.boxes.b?.x ?? -1), 137);
+  assert.equal(Math.round(result.boxes.c?.x ?? -1), 273);
+  assert.equal(result.warnings.length, 0);
+});
+
+test("repeat: 不 grow 时每条轨道等于最小宽度，右侧留白", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "repeat", mode: "auto-fill", min: 100 }],
+    rows: [{ type: "fixed", size: 50 }],
+    columnGap: 10,
+    width: 400,
+  });
+  const children = ["a", "b", "c"].map(id => {
+    const child = node(id, "root");
+    child.layout = { ...defaultLayout(), width: 20, height: 10 };
+    return child;
+  });
+
+  const result = computePageLayout(documentWith(root, children), "page:1", { viewport: { width: 800, height: 600 } });
+  // 3 条 100px + 2 个 10px 间隙 = 320 < 400，右侧留白 80。
+  assert.equal(result.boxes.a?.x, 0);
+  assert.equal(result.boxes.b?.x, 110);
+  assert.equal(result.boxes.c?.x, 220);
+});
+
+test("repeat: auto-fit 用子节点数收起空轨道，剩余空间给现有轨道", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "repeat", mode: "auto-fit", min: 100, grow: true }],
+    rows: [{ type: "fixed", size: 50 }],
+    columnGap: 10,
+    width: 400,
+  });
+  const first = node("first", "root");
+  first.layout = { ...defaultLayout(), width: 20, height: 10 };
+  const second = node("second", "root");
+  second.layout = { ...defaultLayout(), width: 20, height: 10 };
+
+  const result = computePageLayout(documentWith(root, [first, second]), "page:1", { viewport: { width: 800, height: 600 } });
+  // auto-fill 能放 3 条，但只有 2 个子节点 → auto-fit 收成 2 条，每条约 (400-10)/2 = 195。
+  assert.equal(result.boxes.second?.x, 205);
+});
+
+test("repeat: hug 容器拿不到确定宽度，退化成一条并警告", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "repeat", mode: "auto-fill", min: 120, grow: true }],
+    rows: [{ type: "fixed", size: 50 }],
+    widthMode: "hug",
+    heightMode: "hug",
+  });
+  const first = node("first", "root");
+  first.layout = { ...defaultLayout(), width: 20, height: 10 };
+
+  const result = computePageLayout(documentWith(root, [first]), "page:1", { viewport: { width: 800, height: 600 } });
+  // 一条 120px 的轨道：hug 宽度就是 120。
+  assert.equal(result.boxes.root?.width, 120);
+  assert.ok(result.warnings.some(warning => warning.code === "grid-auto-repeat"));
+  assert.equal(result.warnings.filter(warning => warning.code === "grid-auto-repeat").length, 1);
+});
+
+test("repeat: 顺序填充使用展开后的列数，不会把子节点全堆在第一列", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "repeat", mode: "auto-fill", min: 80 }],
+    rows: [{ type: "fixed", size: 40 }],
+    columnGap: 0,
+    width: 320,
+  });
+  // 320 ÷ 80 = 4 条；第 5 个子节点落到第二行（隐式轨道）。
+  const children = ["a", "b", "c", "d", "e"].map(id => {
+    const child = node(id, "root");
+    child.layout = { ...defaultLayout(), width: 10, height: 10 };
+    return child;
+  });
+
+  const result = computePageLayout(documentWith(root, children), "page:1", { viewport: { width: 800, height: 600 } });
+  assert.equal(result.boxes.d?.x, 240);
+  assert.equal(result.boxes.e?.x, 0);
+  assert.equal(result.boxes.e?.y, 40);
+});
+
+test("repeat: 与固定轨道混排时，只有 repeat 段被展开", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "fixed", size: 50 }, { type: "repeat", mode: "auto-fill", min: 100 }],
+    rows: [{ type: "fixed", size: 40 }],
+    columnGap: 0,
+    width: 350,
+  });
+  // 剩余 300 → 3 条 100px；列起点分别是 0 / 50 / 150 / 250。
+  const children = ["a", "b", "c"].map(id => {
+    const child = node(id, "root");
+    child.layout = { ...defaultLayout(), width: 10, height: 10 };
+    return child;
+  });
+
+  const result = computePageLayout(documentWith(root, children), "page:1", { viewport: { width: 800, height: 600 } });
+  assert.equal(result.boxes.a?.x, 0);
+  assert.equal(result.boxes.b?.x, 50);
+  assert.equal(result.boxes.c?.x, 150);
+});
+
+test("expandRepeatTracks: 条数先扣掉同轴其它显式轨道", () => {
+  const result = expandRepeatTracks(
+    [{ type: "fixed", size: 200 }, { type: "repeat", mode: "auto-fill", min: 100 }],
+    { available: 400, gap: 0, itemCount: 4 },
+  );
+  // 400 - 200 = 200 → 只放得下 2 条（CSS 同样按「剩余空间」算条数）。
+  assert.equal(result.tracks.length, 3);
+  assert.deepEqual(result.tracks[0], { type: "fixed", size: 200 });
+});
+
+test("expandRepeatTracks: 尺寸未知时退化成一条固定轨道（即使 grow）", () => {
+  const result = expandRepeatTracks(
+    [{ type: "repeat", mode: "auto-fit", min: 140, grow: true }],
+    { available: undefined, gap: 10, itemCount: 5 },
+  );
+  assert.equal(result.degraded, true);
+  // 退化成 fixed 而不是 fraction：hug 容器下 fraction 分不到空间会塌成 0 宽。
+  assert.deepEqual(result.tracks, [{ type: "fixed", size: 140 }]);
+});
+
+test("expandRepeatTracks: 条数有上限，避免极窄最小宽度产生上千条轨道", () => {
+  const result = expandRepeatTracks([{ type: "repeat", mode: "auto-fill", min: 1 }], {
+    available: 10_000,
+    gap: 0,
+    itemCount: 1,
+  });
+  assert.equal(result.tracks.length, 24);
 });

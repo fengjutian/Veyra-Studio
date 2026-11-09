@@ -364,9 +364,9 @@ function areaRowCss(row: string): string {
 /**
  * Grid 轨道 → CSS 轨道写法。
  *
- * 五种轨道类型与 CSS Grid 的 `grid-template-columns/rows` 一一对应：
- * `fixed` → px、`fraction` → fr、`auto` → auto、
- * `min-content` / `max-content` → 同名关键字。
+ * 五种固定轨道与 CSS Grid 一一对应：`fixed` → px、`fraction` → fr、`auto` → auto、
+ * `min-content` / `max-content` → 同名关键字；
+ * `repeat` → `repeat(auto-fill|auto-fit, …)`，与画布同一套条数公式。
  */
 function gridTrackCss(track: GridTrack): string {
   switch (track.type) {
@@ -380,6 +380,11 @@ function gridTrackCss(track: GridTrack): string {
       return "min-content";
     case "max-content":
       return "max-content";
+    case "repeat":
+      // `min` 是条数的换算基准，`grow` 决定剩余空间是否均分给轨道。
+      return track.grow
+        ? `repeat(${track.mode}, minmax(${px(track.min)}, 1fr))`
+        : `repeat(${track.mode}, ${px(track.min)})`;
   }
 }
 

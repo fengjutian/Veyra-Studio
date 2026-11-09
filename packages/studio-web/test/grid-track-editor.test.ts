@@ -5,6 +5,8 @@ import type { ReactElement } from "react";
 import type { GridTrack } from "@ufira/design-schema";
 import {
   addGridTrack,
+  isContentGridTrack,
+  isResizableGridTrack,
   layoutGridTracks,
   removeGridTrack,
   resizeGridTrack,
@@ -14,6 +16,7 @@ import {
   setGridTrackCount,
   type GridTrackModel,
 } from "../src/grid-track-model";
+import { gridTrackBaseWidths } from "@ufira/design-layout";
 
 /**
  * Grid 可视化轨道编辑的回归测试。
@@ -390,4 +393,31 @@ test("相邻两条都是内容轨道时手柄不可用", () => {
   paint(react.createElement(Harness, { initial: [{ type: "auto" }, { type: "auto" }], onUpdate: () => undefined }));
   const handle = container.querySelector('button[aria-label^="调整轨道"]') as HTMLButtonElement;
   assert.equal(handle.disabled, true);
+});
+
+/* ------------------------- 自动重复轨道（repeat） ------------------------- */
+
+test("自动重复轨道在编辑期只显示一条最小宽度的占位，且不可拖拽", () => {
+  const repeat: GridTrack = { type: "repeat", mode: "auto-fill", min: 140, grow: true };
+  const model: GridTrackModel = { tracks: [repeat], gutter: 0, margin: 0, containerWidth: 400 };
+  const layout = layoutGridTracks(model);
+
+  // 真实条数由容器宽度在布局时展开；编辑器里只有一个占位。
+  assert.deepEqual(layout.widths, [140]);
+  assert.equal(layout.slack, 260);
+  assert.equal(isResizableGridTrack(repeat), false);
+  assert.equal(isContentGridTrack(repeat), false);
+});
+
+test("自动重复轨道不能拖拽改宽，给出明确诊断", () => {
+  const model: GridTrackModel = {
+    tracks: [{ type: "repeat", mode: "auto-fill", min: 140, grow: true }],
+    gutter: 0,
+    margin: 0,
+    containerWidth: 400,
+  };
+  const result = resizeGridTrack(model, 0, 220);
+  assert.equal(result.diagnostics[0]?.code, "track-not-resizable");
+  // 宽度一个字都不动：条数由容器宽度在布局时决定，编辑器不越权。
+  assert.deepEqual(result.widths, [140]);
 });

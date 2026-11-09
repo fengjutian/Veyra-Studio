@@ -365,6 +365,8 @@ function createGridTrack(type: GridTrack["type"]): GridTrack {
     case "auto": return { type: "auto" };
     case "min-content": return { type: "min-content" };
     case "max-content": return { type: "max-content" };
+    // 自动重复轨道的默认值取「能放两列就打底」的常见宽度。
+    case "repeat": return { type: "repeat", mode: "auto-fill", min: 120, grow: true };
   }
 }
 

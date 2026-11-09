@@ -315,6 +315,9 @@ export function gridTrackBaseWidths(tracks: GridTrack[], options: GridTrackBaseO
   return tracks.map((track, index) => {
     if (track.type === "fixed") return Math.max(0, track.size);
     if (track.type === "fraction") return 0;
+    // 自动重复轨道在编辑期只显示一条最小宽度的占位：真实条数由容器宽度决定，
+    // 展开由求解器在布局时完成（`expandRepeatTracks`）。
+    if (track.type === "repeat") return Math.max(minWidth, track.min);
     return Math.max(minWidth, options.contentWidths?.[index] ?? minWidth);
   });
 }
@@ -517,4 +520,98 @@ export function ensureTracks(tracks: GridTrack[], cells: GridCellInput[], axis: 
   const extended = tracks.slice();
   while (extended.length < limit) extended.push({ type: "auto" });
   return extended;
+}
+
+/* ------------------------------------------------------------------------ *
+ * 自动重复轨道（`repeat(auto-fill|auto-fit, …)`）
+ *
+ * CSS 的 `repeat()` 在布局时才展开成具体条数，这里同样在求解前展开。
+ * 展开放在求解器**之前**而不是求解器内部，是因为条数取决于「可用尺寸」，
+ * 而求解器拿到的已经是轨道声明；让求解器认识 repeat 会把它变成两件事。
+ *
+ * 展开后的轨道只有 `fixed` 与 `fraction` 两种：
+ * - `grow: false` → 每条 `fixed(min)`；
+ * - `grow: true`  → 每条 `fraction(1)`，剩余空间在轨道之间均分
+ *   （对应 `minmax(min, 1fr)`）。
+ *
+ * 已知退化：`hug` 容器的可用尺寸由内容决定，而内容又由轨道数决定——
+ * 这个循环没有不动点。此时**只展开一条**并上报 `degraded`，由调用方给警告。
+ * ------------------------------------------------------------------------ */
+
+/**
+ * 自动重复轨道的条数上限。
+ *
+ * 与属性面板的轨道数上限一致：再多的轨道既画不清也没法编辑，
+ * 而且 1px 级的容器宽度抖动会让条数在临界点反复跳变。
+ */
+export const MAX_AUTO_REPEAT_TRACKS = 24;
+
+/** 展开自动重复轨道的参数。 */
+export interface ExpandRepeatTrackOptions {
+  /**
+   * 该轴的可用尺寸（内容区，含间隙占位）。
+   *
+   * `undefined` 表示尺寸未知（hug 容器）：只能退化成一条。
+   */
+  available: number | undefined;
+  /** 轨道之间的间隙。 */
+  gap: number;
+  /** 该轴上预计要放的子节点数；`auto-fit` 用它收起多余的空轨道。 */
+  itemCount: number;
+}
+
+/** 展开结果。 */
+export interface ExpandRepeatTrackResult {
+  /** 展开后的轨道声明；没有 `repeat` 时原样返回。 */
+  tracks: GridTrack[];
+  /** 是否有 `repeat` 轨道因为可用尺寸未知而退化成一条。 */
+  degraded: boolean;
+}
+
+/**
+ * 把自动重复轨道展开成具体的固定/比例轨道。
+ *
+ * 条数公式与 CSS 一致：`n` 条轨道 + `n-1` 个间隙 ≤ 可用尺寸
+ * → `n = ⌊(available + gap) ÷ (min + gap)⌋`，至少 1 条。
+ */
+export function expandRepeatTracks(tracks: GridTrack[], options: ExpandRepeatTrackOptions): ExpandRepeatTrackResult {
+  if (!tracks.some(track => track.type === "repeat")) return { tracks, degraded: false };
+
+  const gap = Math.max(0, options.gap);
+  const expanded: GridTrack[] = [];
+  let degraded = false;
+
+  // 条数不是「整条容器 ÷ 最小宽度」，而是先扣掉同一轴上其它轨道占掉的尺寸
+  // （与 CSS 一致）：`[fixed 200, repeat(min 100)]` 在 400px 里只能放 2 条。
+  const others = tracks.filter(track => track.type !== "repeat");
+  const othersBase = others.reduce((sum, track) => sum + (track.type === "fixed" ? Math.max(0, track.size) : 0), 0);
+  const othersGaps = others.length * gap;
+
+  for (const track of tracks) {
+    if (track.type !== "repeat") {
+      expanded.push(track);
+      continue;
+    }
+    const min = Math.max(1, track.min);
+    let count = 1;
+    if (options.available === undefined) {
+      degraded = true;
+    } else {
+      const room = Math.max(0, options.available - othersBase - othersGaps + gap);
+      count = Math.floor(room / (min + gap));
+      count = Math.min(Math.max(1, count), MAX_AUTO_REPEAT_TRACKS);
+    }
+    // auto-fit 把空轨道收起来：条数不超过这一轴上的子节点数，
+    // 剩下的空间才会被现有轨道吃满（auto-fill 会留下空轨道）。
+    if (track.mode === "auto-fit") count = Math.min(count, Math.max(1, Math.floor(options.itemCount)));
+
+    // 尺寸未知时没有「剩余空间」可均分，退化成固定最小宽度；
+    // 否则 hug 容器会因为 fraction 轨道分到 0 而塌成 0 宽。
+    const grow = Boolean(track.grow) && options.available !== undefined;
+    for (let index = 0; index < count; index++) {
+      expanded.push(grow ? { type: "fraction", weight: 1 } : { type: "fixed", size: min });
+    }
+  }
+
+  return { tracks: expanded, degraded };
 }

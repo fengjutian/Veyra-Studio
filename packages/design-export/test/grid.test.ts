@@ -130,3 +130,40 @@ test("grid: SVG 导出对命名区域的定位与行列号一致", () => {
   assert.match(svg, /data-node-id="first"[\s\S]*?<rect x="0" y="0" width="40"/);
   assert.match(svg, /data-node-id="second"[\s\S]*?<rect x="110" y="0" width="40"/);
 });
+
+test("grid: 自动重复轨道导出成 CSS repeat()", () => {
+  const document = gridDocument();
+  document.nodes.root!.layout.grid = {
+    columns: [{ type: "repeat", mode: "auto-fill", min: 120, grow: true }],
+    rows: [{ type: "fixed", size: 50 }],
+    columnGap: 10,
+    rowGap: 0,
+  };
+  const html = exportPageToHtml(document, { pageId: PAGE_ID, viewport: VIEWPORT }).html;
+  // grow → minmax(min, 1fr)；条数交给浏览器按同一公式展开。
+  assert.match(html, /grid-template-columns:repeat\(auto-fill, minmax\(120px, 1fr\)\)/);
+});
+
+test("grid: auto-fit 与固定最小宽度导出成对应的 CSS 写法", () => {
+  const document = gridDocument();
+  document.nodes.root!.layout.grid = {
+    columns: [{ type: "repeat", mode: "auto-fit", min: 80 }],
+    rows: [{ type: "fixed", size: 50 }],
+    columnGap: 0,
+    rowGap: 0,
+  };
+  const html = exportPageToHtml(document, { pageId: PAGE_ID, viewport: VIEWPORT }).html;
+  assert.match(html, /grid-template-columns:repeat\(auto-fit, 80px\)/);
+});
+
+test("grid: 自动重复轨道导出没有诊断", () => {
+  const document = gridDocument();
+  document.nodes.root!.layout.grid = {
+    columns: [{ type: "repeat", mode: "auto-fill", min: 120, grow: true }],
+    rows: [{ type: "fixed", size: 50 }],
+    columnGap: 10,
+    rowGap: 0,
+  };
+  const result = exportPageToHtml(document, { pageId: PAGE_ID, viewport: VIEWPORT });
+  assert.deepEqual(result.diagnostics, []);
+});

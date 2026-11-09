@@ -29,12 +29,15 @@ export type SizeMode = "fixed" | "fill" | "hug";
 /**
  * Grid 轨道。
  *
- * 五种类型对应 CSS Grid 的 `grid-template-columns/rows` 里的五种轨道尺寸：
+ * 前五种类型对应 CSS Grid 的 `grid-template-columns/rows` 里的轨道尺寸：
  * - `fixed` — 固定像素；
  * - `fraction` — 比例权重（`1fr` / `2fr`），按剩余空间分配；
  * - `auto` — 按内容撑开（既不是最小也不是最大，取内容的固有尺寸）；
  * - `min-content` — 按内容最小尺寸；
  * - `max-content` — 按内容最大尺寸。
+ *
+ * 第六种是**自动重复轨道**，对应 CSS 的 `repeat(auto-fill|auto-fit, …)`：
+ * 轨道数量由容器可用尺寸推导，而不是写死。
  *
  * 语义对齐 Penpot 的 grid-track，见 `docs/figma-gap-roadmap.md`。
  */
@@ -43,7 +46,18 @@ export type GridTrack =
   | { type: "fraction"; weight: number }
   | { type: "auto" }
   | { type: "min-content" }
-  | { type: "max-content" };
+  | { type: "max-content" }
+  /**
+   * 自动重复轨道（`repeat(auto-fill|auto-fit, minmax(min, 1fr))`）。
+   *
+   * 轨道条数 = ⌊(可用尺寸 + gap) ÷ (min + gap)⌋，至少 1 条。
+   * - `auto-fill`：条数只由容器决定，放不满时右侧留空轨道；
+   * - `auto-fit`：条数再被「这一轴上有几个子节点」夹住，空轨道被收起，
+   *   于是剩余空间全部给到子节点（Figma 里「自动铺满」的常见效果）。
+   * - `grow`：轨道在最小宽度之上继续均分剩余空间（相当于 `minmax(min, 1fr)`）；
+   *   关掉就是 `repeat(…, min)`，右侧留白。
+   */
+  | { type: "repeat"; mode: "auto-fill" | "auto-fit"; min: number; grow?: boolean };
 
 /** 子节点在 Grid 容器里占据的单元格区间（行列均从 1 开始计数）。 */
 export interface GridCellPlacement {

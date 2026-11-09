@@ -730,6 +730,7 @@ function GridTrackEditor({
               <option value="auto">自适应</option>
               <option value="min-content">最小内容</option>
               <option value="max-content">最大内容</option>
+              <option value="repeat">自动重复</option>
             </select>
             {track.type === "fixed" && (
               <input
@@ -744,6 +745,43 @@ function GridTrackEditor({
                   if (Number.isFinite(size) && size >= 0) replace(index, { type: "fixed", size });
                 }}
               />
+            )}
+            {track.type === "repeat" && (
+              <>
+                <input
+                  type="number"
+                  className="grid-track-size"
+                  value={track.min}
+                  min={1}
+                  disabled={disabled}
+                  aria-label={`${label} ${index + 1} 最小宽度`}
+                  title="自动重复轨道的最小宽度（px）"
+                  onChange={event => {
+                    const min = Number(event.target.value);
+                    // 最小宽度必须为正：0 会让轨道条数变成无穷多。
+                    if (Number.isFinite(min) && min > 0) replace(index, { ...track, min });
+                  }}
+                />
+                <select
+                  className="grid-track-type"
+                  value={track.mode}
+                  disabled={disabled}
+                  aria-label={`${label} ${index + 1} 自动模式`}
+                  onChange={event => replace(index, { ...track, mode: event.target.value as "auto-fill" | "auto-fit" })}>
+                  <option value="auto-fill">auto-fill</option>
+                  <option value="auto-fit">auto-fit</option>
+                </select>
+                <label className="grid-track-grow" style={{ fontSize: 11, display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(track.grow)}
+                    disabled={disabled}
+                    aria-label={`${label} ${index + 1} 均分剩余空间`}
+                    onChange={event => replace(index, { ...track, grow: event.target.checked })}
+                  />
+                  均分
+                </label>
+              </>
             )}
             {track.type === "fraction" && (
               <input
@@ -798,6 +836,8 @@ function defaultTrackOf(type: GridTrack["type"]): GridTrack {
       return { type: "min-content" };
     case "max-content":
       return { type: "max-content" };
+    case "repeat":
+      return { type: "repeat", mode: "auto-fill", min: 120, grow: true };
   }
 }
 

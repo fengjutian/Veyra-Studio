@@ -33,7 +33,13 @@ export interface TextMeasurer {
 
 export interface LayoutWarning {
   nodeId: NodeId;
-  code: "fill-in-hug" | "overflow" | "text-overflow";
+  /**
+   * - `fill-in-hug`：hug 容器里的 fill 子节点没有确定尺寸；
+   * - `overflow`：子节点/轨道超出容器；
+   * - `text-overflow`：文本需要的行数超过盒高；
+   * - `grid-auto-repeat`：自动重复轨道需要确定的容器尺寸（hug 容器退化成一条）。
+   */
+  code: "fill-in-hug" | "overflow" | "text-overflow" | "grid-auto-repeat";
   message: string;
 }
 

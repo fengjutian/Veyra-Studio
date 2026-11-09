@@ -63,6 +63,13 @@ const gridTrackSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("auto") }),
   z.object({ type: z.literal("min-content") }),
   z.object({ type: z.literal("max-content") }),
+  // 最小宽度必须为正：0 会让「可用尺寸 ÷ 最小宽度」变成无穷多条轨道。
+  z.object({
+    type: z.literal("repeat"),
+    mode: z.enum(["auto-fill", "auto-fit"]),
+    min: z.number().finite().positive(),
+    grow: z.boolean().optional(),
+  }),
 ]);
 
 const gridCellSchema = z.object({

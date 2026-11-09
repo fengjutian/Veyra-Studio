@@ -1,11 +1,26 @@
 import { parseGridAreaTemplate, resolveGap, resolveGridCellRect, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
-import { assignCellsByOrder, ensureTracks, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
+import { assignCellsByOrder, ensureTracks, expandRepeatTracks, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
 
 const ZERO_PADDING = { top: 0, right: 0, bottom: 0, left: 0 };
 
 const defaultTextMeasurer: TextMeasurer = createEstimateTextMeasurer();
+
+/**
+ * 轨道声明 → 求解输入。
+ *
+ * 自动重复轨道应当在求解前由 `expandRepeatTracks` 展开；万一漏网，
+ * 按内容轨道处理（至少不会让整篇文档排不出来）。
+ */
+function toGridTrackInput(track: GridTrack, contentSizes: { width: number; height: number }[] | undefined): GridTrackInput {
+  return {
+    type: track.type === "repeat" ? "auto" : track.type,
+    size: track.type === "fixed" ? track.size : undefined,
+    weight: track.type === "fraction" ? track.weight : undefined,
+    contentSizes,
+  };
+}
 
 export function computePageLayout(documentInput: DesignDocument, pageId: string, options: LayoutOptions): LayoutResult {
   const document = validateDocument(documentInput);
@@ -118,21 +133,20 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     rowGap: number,
     children: { node: DesignNode; size: Size }[],
   ): Size => {
-    const cells = gridCells(node, children);
+    // hug 容器的可用尺寸由内容决定，而自动重复轨道的条数又依赖可用尺寸——
+    // 这个循环没有不动点，因此这里退化成「每条 repeat 只展开一条」。
+    const columnTracks = expandRepeatTracks(columns, { available: undefined, gap: columnGap, itemCount: children.length }).tracks;
+    const rowTracks = expandRepeatTracks(rows, { available: undefined, gap: rowGap, itemCount: children.length }).tracks;
+    const cells = gridCells(node, children, columnTracks);
     // 子节点超出已声明的轨道数时补出隐式轨道（CSS Grid 语义），
     // 否则它们会被钳到最后一格造成重叠。
-    const resolvedColumns = ensureTracks(columns, cells, "columns");
-    const resolvedRows = ensureTracks(rows, cells, "rows");
+    const resolvedColumns = ensureTracks(columnTracks, cells, "columns");
+    const resolvedRows = ensureTracks(rowTracks, cells, "rows");
     const columnContents = trackContentSizes(cells, resolvedColumns, "columns");
     const rowContents = trackContentSizes(cells, resolvedRows, "rows");
 
     const toInput = (tracks: GridTrack[], contents: Map<number, { width: number; height: number }[]>): GridTrackInput[] =>
-      tracks.map((track, index) => ({
-        type: track.type,
-        size: track.type === "fixed" ? track.size : undefined,
-        weight: track.type === "fraction" ? track.weight : undefined,
-        contentSizes: contents.get(index),
-      }));
+      tracks.map((track, index) => toGridTrackInput(track, contents.get(index)));
 
     const columnInput = toInput(resolvedColumns, columnContents);
     const rowInput = toInput(resolvedRows, rowContents);
@@ -158,11 +172,16 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
    *
    * 有显式 `cells` 用显式的；没有就按顺序填格子。
    */
-  const gridCells = (node: DesignNode, children: { node: DesignNode; size: Size }[]): GridCellInput[] => {
+  const gridCells = (
+    node: DesignNode,
+    children: { node: DesignNode; size: Size }[],
+    columns: GridTrack[],
+  ): GridCellInput[] => {
     const grid = node.layout.grid;
     const explicit = grid?.cells;
-    const columnCount = grid?.columns.length ?? 1;
-    const rowCount = grid?.rows.length ?? 1;
+    // 顺序填充要用**展开后**的列数：只有一条 repeat 轨道时按 1 列排会把
+    // 所有子节点堆到第一列，与画布看到的网格对不上。
+    const columnCount = columns.length || 1;
 
     if (!explicit || !Object.keys(explicit).length) {
       const ordered = assignCellsByOrder(
@@ -242,18 +261,39 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
       const grid = node.layout.grid;
       if (!grid) return;
       const gridChildren = node.childIds.map(id => ({ node: document.nodes[id]!, size: intrinsic(id) }));
-      const cells = gridCells(node, gridChildren);
-      const resolvedColumns = ensureTracks(grid.columns, cells, "columns");
-      const resolvedRows = ensureTracks(grid.rows, cells, "rows");
+      // 自动重复轨道的条数取决于容器可用尺寸。hug 容器的尺寸是**结果**，
+      // 拿不到确定值，只能退化成一条并明确告诉用户。
+      const columnExpansion = expandRepeatTracks(grid.columns, {
+        available: node.layout.widthMode === "hug" ? undefined : contentWidth,
+        gap: grid.columnGap,
+        itemCount: node.childIds.length,
+      });
+      const rowExpansion = expandRepeatTracks(grid.rows, {
+        available: node.layout.heightMode === "hug" ? undefined : contentHeight,
+        gap: grid.rowGap,
+        itemCount: Math.ceil(node.childIds.length / Math.max(1, columnExpansion.tracks.length)),
+      });
+      if (columnExpansion.degraded) {
+        warnings.push({
+          nodeId: node.id,
+          code: "grid-auto-repeat",
+          message: `Automatic columns on ${node.id} need a definite width; a hug container falls back to a single track`,
+        });
+      }
+      if (rowExpansion.degraded) {
+        warnings.push({
+          nodeId: node.id,
+          code: "grid-auto-repeat",
+          message: `Automatic rows on ${node.id} need a definite height; a hug container falls back to a single track`,
+        });
+      }
+      const cells = gridCells(node, gridChildren, columnExpansion.tracks);
+      const resolvedColumns = ensureTracks(columnExpansion.tracks, cells, "columns");
+      const resolvedRows = ensureTracks(rowExpansion.tracks, cells, "rows");
       const columnContents = trackContentSizes(cells, resolvedColumns, "columns");
       const rowContents = trackContentSizes(cells, resolvedRows, "rows");
       const toInput = (tracks: GridTrack[], contents: Map<number, { width: number; height: number }[]>): GridTrackInput[] =>
-        tracks.map((track, index) => ({
-          type: track.type,
-          size: track.type === "fixed" ? track.size : undefined,
-          weight: track.type === "fraction" ? track.weight : undefined,
-          contentSizes: contents.get(index),
-        }));
+        tracks.map((track, index) => toGridTrackInput(track, contents.get(index)));
 
       const solved = solveGrid({
         columns: toInput(resolvedColumns, columnContents),
