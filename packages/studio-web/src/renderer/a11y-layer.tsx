@@ -72,6 +72,9 @@ export function CanvasA11yLayer({ document, pageId, selectedIds, onSelect, onDel
         <li
           key={item.id}
           ref={element => { refs.current[index] = element; }}
+          // 稳定标识：可访问性自动化靠它把「AX 树里的节点」「Tab 落点」「画布节点」
+          // 三边对上。少了它，焦点顺序变了也只能靠肉眼比文本。
+          data-node-id={item.id}
           role="option"
           aria-selected={selectedIds.includes(item.id)}
           aria-level={item.level + 1}
