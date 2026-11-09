@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -1429,14 +1429,16 @@ function App() {
    * 先问属性名（默认取节点名），再一次性提交「声明属性 + 绑定字段」两条命令——
    * 中途失败不会留下「有属性没绑定」的半成品。
    */
-  const exposeComponentProperty = (field: "text" | "visible") => void run(async () => {
+  const exposeComponentProperty = (field: ComponentPropertyField) => void run(async () => {
     if (!selected) return;
     const componentId = findOwningComponentId(document, selected.id);
     if (!componentId) { setMessage("请先选中组件内部的节点"); return; }
     if (field === "text" && selected.type !== "text") { setMessage("只有文本节点能暴露为文本属性"); return; }
+    if (field === "fontSize" && selected.type !== "text") { setMessage("只有文本节点能暴露为字号属性"); return; }
+    if (field === "instance" && selected.type !== "instance") { setMessage("只有实例节点能暴露为实例交换属性"); return; }
     const name = await askText({
-      title: field === "text" ? "暴露为文本属性" : "暴露为布尔属性",
-      description: field === "text" ? "实例可以用这个属性改这段文字。" : "实例可以用这个属性开关这个节点的可见性。",
+      title: PROPERTY_EXPOSE_TITLES[field],
+      description: PROPERTY_EXPOSE_DESCRIPTIONS[field],
       label: "属性名",
       defaultValue: selected.name,
       validate: value => value.trim() ? undefined : "属性名不能为空",
@@ -1445,9 +1447,7 @@ function App() {
     const trimmed = name.trim();
     const propertyId = newPropertyId();
     // 属性是判别联合：类型与默认值必须成对给出，不能靠条件表达式推断。
-    const property = field === "text"
-      ? { id: propertyId, name: trimmed, type: "text" as const, defaultValue: selected.type === "text" ? selected.text : "" }
-      : { id: propertyId, name: trimmed, type: "boolean" as const, defaultValue: true };
+    const property = buildExposedProperty(propertyId, trimmed, field, selected);
     await execute([
       { type: "component.property.set", payload: { componentId, property } },
       { type: "component.property.bind", payload: { componentId, propertyId, nodeId: selected.id, field } },
@@ -1460,7 +1460,7 @@ function App() {
     setMessage("已删除组件属性");
   });
   /** 解除属性与节点的绑定。 */
-  const unbindComponentProperty = (componentId: string, propertyId: string, nodeId: string, field: "text" | "visible") => void run(async () => {
+  const unbindComponentProperty = (componentId: string, propertyId: string, nodeId: string, field: ComponentPropertyField) => void run(async () => {
     await execute([{ type: "component.property.unbind", payload: { componentId, propertyId, nodeId, field } }]);
     setMessage("已解除组件属性绑定");
   });
@@ -2114,6 +2114,47 @@ function validateColor(value: string): string | undefined {
   return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(value.trim())
     ? undefined
     : "请输入 #RGB、#RRGGBB 或 #RRGGBBAA 形式的颜色值";
+}
+
+/** 「暴露为 XX 属性」对话框的标题。 */
+const PROPERTY_EXPOSE_TITLES: Record<ComponentPropertyField, string> = {
+  text: "暴露为文本属性",
+  visible: "暴露为布尔属性",
+  fill: "暴露为颜色属性",
+  fontSize: "暴露为字号属性",
+  instance: "暴露为实例交换属性",
+};
+
+/** 「暴露为 XX 属性」对话框的说明。 */
+const PROPERTY_EXPOSE_DESCRIPTIONS: Record<ComponentPropertyField, string> = {
+  text: "实例可以用这个属性改这段文字。",
+  visible: "实例可以用这个属性开关这个节点的可见性。",
+  fill: "实例可以用这个属性改这个节点的填充色。",
+  fontSize: "实例可以用这个属性改这段文字的字号。",
+  instance: "实例可以用这个属性把内部实例换成另一个组件。",
+};
+
+/**
+ * 按绑定字段造一条属性声明。
+ *
+ * 默认值取自**当前节点**：暴露出来的属性一开始就该是这个节点现在的样子，
+ * 否则实例会先显示成别的值再被改回来。
+ */
+function buildExposedProperty(propertyId: string, name: string, field: ComponentPropertyField, node: DesignNode): ComponentProperty {
+  switch (field) {
+    case "text":
+      return { id: propertyId, name, type: "text", defaultValue: node.type === "text" ? node.text : "" };
+    case "visible":
+      return { id: propertyId, name, type: "boolean", defaultValue: true };
+    case "fill": {
+      const fill = node.appearance.fills?.find(paint => paint.type === "solid");
+      return { id: propertyId, name, type: "color", defaultValue: fill && fill.type === "solid" ? fill.color : "#000000" };
+    }
+    case "fontSize":
+      return { id: propertyId, name, type: "number", defaultValue: node.type === "text" ? node.fontSize : 16 };
+    case "instance":
+      return { id: propertyId, name, type: "instance-swap", defaultValue: node.type === "instance" ? node.componentId : "" };
+  }
 }
 function downloadFile(name: string, content: string, type: string): void { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
 

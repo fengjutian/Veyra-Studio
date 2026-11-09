@@ -4,10 +4,13 @@ import {
   createDocument,
   defaultAppearance,
   defaultLayout,
+  effectiveComponentProperties,
   isInsideSubtree,
   propertyTargets,
   resolvePropertyValue,
+  sharedPropertyTypeConflicts,
   validateDocument,
+  validatePropertyValue,
   type DesignDocument,
   type DesignNode,
 } from "../src/index";
@@ -196,4 +199,171 @@ test("resolvePropertyValue prefers the explicit instance value", () => {
 
   const untouched = { ...instance, propValues: {} };
   assert.equal(resolvePropertyValue(document, untouched, property), "确定");
+});
+
+test("accepts the three new property types", () => {
+  const document = componentDocument();
+  document.components["component:button"]!.properties = [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" },
+    { id: "prop:size", name: "字号", type: "number", defaultValue: 18 },
+    { id: "prop:icon", name: "图标", type: "instance-swap", defaultValue: "component:icon" },
+  ];
+  document.components["component:icon"] = { id: "component:icon", name: "Icon", rootNodeId: "icon-root" };
+  document.nodes["icon-root"] = frame("icon-root", "page:1", { type: "component" });
+  document.pages["page:1"]!.childIds.push("icon-root");
+
+  document.nodes["label"]!.componentPropertyBindings = { fontSize: "prop:size" };
+  document.nodes["box"]!.componentPropertyBindings = { fill: "prop:tint" };
+  document.nodes["instance:1"] = {
+    ...frame("instance:1", "page:1"),
+    type: "instance",
+    componentId: "component:button",
+    overrides: {},
+    propValues: { "prop:tint": "#00ff00", "prop:size": 24, "prop:icon": "component:icon" },
+  } as DesignNode;
+  document.pages["page:1"]!.childIds.push("instance:1");
+
+  assert.doesNotThrow(() => validateDocument(document));
+});
+
+test("rejects an instance value whose type does not match the new property types", () => {
+  const document = componentDocument();
+  document.components["component:button"]!.properties = [
+    { id: "prop:size", name: "字号", type: "number", defaultValue: 18 },
+  ];
+  document.nodes["instance:1"] = {
+    ...frame("instance:1", "page:1"),
+    type: "instance",
+    componentId: "component:button",
+    overrides: {},
+    propValues: { "prop:size": "big" as unknown as number },
+  } as DesignNode;
+  document.pages["page:1"]!.childIds.push("instance:1");
+  assert.throws(() => validateDocument(document), /must be a finite number/);
+});
+
+test("rejects a color value that is not a hex color", () => {
+  const document = componentDocument();
+  document.components["component:button"]!.properties = [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" },
+  ];
+  document.nodes["instance:1"] = {
+    ...frame("instance:1", "page:1"),
+    type: "instance",
+    componentId: "component:button",
+    overrides: {},
+    propValues: { "prop:tint": "red" },
+  } as DesignNode;
+  document.pages["page:1"]!.childIds.push("instance:1");
+  assert.throws(() => validateDocument(document), /must be a #rgb or #rrggbb color/);
+});
+
+test("rejects an instance-swap value that points to a missing component", () => {
+  const document = componentDocument();
+  document.components["component:button"]!.properties = [
+    { id: "prop:icon", name: "图标", type: "instance-swap", defaultValue: "" },
+  ];
+  document.nodes["instance:1"] = {
+    ...frame("instance:1", "page:1"),
+    type: "instance",
+    componentId: "component:button",
+    overrides: {},
+    propValues: { "prop:icon": "component:ghost" },
+  } as DesignNode;
+  document.pages["page:1"]!.childIds.push("instance:1");
+  assert.throws(() => validateDocument(document), /points to a component that does not exist/);
+});
+
+test("rejects a binding whose field does not match the new property types", () => {
+  const document = componentDocument();
+  document.components["component:button"]!.properties = [
+    { id: "prop:size", name: "字号", type: "number", defaultValue: 18 },
+  ];
+  document.nodes["box"]!.componentPropertyBindings = { fontSize: "prop:size" };
+  assert.throws(() => validateDocument(document), /fontSize binding requires a text node/);
+});
+
+test("validatePropertyValue accepts the documented shapes", () => {
+  const color = { id: "p", name: "主色", type: "color" as const, defaultValue: "#000000" };
+  assert.equal(validatePropertyValue(color, "#abc"), undefined);
+  assert.equal(validatePropertyValue(color, "#abcdef"), undefined);
+  assert.match(validatePropertyValue(color, "#abcdefgh") ?? "", /must be a #rgb or #rrggbb color/);
+
+  const size = { id: "p", name: "字号", type: "number" as const, defaultValue: 16 };
+  assert.equal(validatePropertyValue(size, 12), undefined);
+  assert.match(validatePropertyValue(size, Number.NaN) ?? "", /must be a finite number/);
+});
+
+test("merges the variant set shared declarations with the component's own ones", () => {
+  const document = componentDocument();
+  document.componentSets = {
+    "set:1": {
+      id: "set:1",
+      name: "按钮变体",
+      properties: ["size"],
+      componentProperties: [
+        { id: "prop:tint", name: "主色", type: "color", defaultValue: "#111111" },
+        { id: "prop:label", name: "文字", type: "text", defaultValue: "确定" },
+      ],
+    },
+  };
+  document.components["component:button"]!.variantSetId = "set:1";
+  document.components["component:button"]!.variant = { size: "md" };
+  document.components["component:button"]!.properties = [
+    // 同名 id：组件自己的声明优先（覆盖整条定义）。
+    { id: "prop:label", name: "文字", type: "text", defaultValue: "提交" },
+    // 只有组件自己有的：追加在继承来的声明之后。
+    { id: "prop:own", name: "自有", type: "boolean", defaultValue: true },
+  ];
+
+  const merged = effectiveComponentProperties(document, "component:button");
+  assert.deepEqual(merged.map(property => property.id), ["prop:tint", "prop:label", "prop:own"]);
+  assert.equal(merged[1]!.defaultValue, "提交");
+  assert.deepEqual(sharedPropertyTypeConflicts(document, "component:button"), []);
+});
+
+test("reports a component that changes the type of a shared property", () => {
+  const document = componentDocument();
+  document.componentSets = {
+    "set:1": {
+      id: "set:1",
+      name: "按钮变体",
+      properties: ["size"],
+      componentProperties: [{ id: "prop:tint", name: "主色", type: "color", defaultValue: "#111111" }],
+    },
+  };
+  document.components["component:button"]!.variantSetId = "set:1";
+  document.components["component:button"]!.variant = { size: "md" };
+  document.components["component:button"]!.properties = [
+    { id: "prop:tint", name: "主色", type: "text", defaultValue: "x" },
+  ];
+  assert.deepEqual(sharedPropertyTypeConflicts(document, "component:button"), ["prop:tint"]);
+  assert.throws(() => validateDocument(document), /changes the type of shared property prop:tint/);
+});
+
+test("a shared property is visible to the instance even without a local declaration", () => {
+  const document = componentDocument();
+  document.componentSets = {
+    "set:1": {
+      id: "set:1",
+      name: "按钮变体",
+      properties: ["size"],
+      componentProperties: [{ id: "prop:tint", name: "主色", type: "color", defaultValue: "#111111" }],
+    },
+  };
+  document.components["component:button"]!.variantSetId = "set:1";
+  document.components["component:button"]!.variant = { size: "md" };
+  document.nodes["instance:1"] = {
+    ...frame("instance:1", "page:1"),
+    type: "instance",
+    componentId: "component:button",
+    overrides: {},
+    propValues: { "prop:tint": "#00ff00" },
+  } as DesignNode;
+  document.pages["page:1"]!.childIds.push("instance:1");
+  assert.doesNotThrow(() => validateDocument(document));
+
+  const property = { id: "prop:tint", name: "主色", type: "color" as const, defaultValue: "#111111" };
+  const instance = document.nodes["instance:1"] as unknown as Extract<DesignNode, { type: "instance" }>;
+  assert.equal(resolvePropertyValue(document, instance, property), "#00ff00");
 });

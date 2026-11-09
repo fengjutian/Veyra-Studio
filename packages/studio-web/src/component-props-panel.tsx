@@ -1,4 +1,4 @@
-import type { ComponentPropertyField, DesignDocument } from "@ufira/design-schema";
+import type { ComponentPropertyField, ComponentPropertyType, DesignDocument } from "@ufira/design-schema";
 import { componentPropertyViews, type ComponentPropertyView } from "./component-props";
 
 /**
@@ -10,6 +10,24 @@ import { componentPropertyViews, type ComponentPropertyView } from "./component-
  * 绑定目标就是当前选中的节点——和 Figma 的
  * 「选中图层 → Create component property」一致：先选图层，再暴露。
  */
+
+/** 属性类型的显示名。 */
+const PROPERTY_TYPE_LABELS: Record<ComponentPropertyType, string> = {
+  text: "文本",
+  boolean: "布尔",
+  "instance-swap": "实例交换",
+  color: "颜色",
+  number: "数字",
+};
+
+/** 绑定字段的显示名。 */
+const PROPERTY_FIELD_LABELS: Record<ComponentPropertyField, string> = {
+  text: "文本",
+  visible: "可见性",
+  fill: "填充色",
+  fontSize: "字号",
+  instance: "内部实例",
+};
 
 export interface ComponentPropsPanelProps {
   document: DesignDocument;
@@ -43,6 +61,9 @@ export function ComponentPropsPanel({ document, componentId, selectedNodeId, can
       <div className="instance-actions">
         <button type="button" disabled={disabled || !canExpose} onClick={() => onExpose("text")}>暴露为文本属性</button>
         <button type="button" disabled={disabled || !canExpose} onClick={() => onExpose("visible")}>暴露为布尔属性</button>
+        <button type="button" disabled={disabled || !canExpose} onClick={() => onExpose("fill")}>暴露为颜色属性</button>
+        <button type="button" disabled={disabled || !canExpose} onClick={() => onExpose("fontSize")}>暴露为字号属性</button>
+        <button type="button" disabled={disabled || !canExpose} onClick={() => onExpose("instance")}>暴露为实例交换属性</button>
       </div>
       {!canExpose && <p className="empty-hint">选中组件内部的节点，才能把它暴露成属性。</p>}
       {selectedNodeId && !canExpose && null}
@@ -61,11 +82,12 @@ function PropertyRow({
   onRemove(propertyId: string): void;
   onUnbind(propertyId: string, nodeId: string, field: ComponentPropertyField): void;
 }) {
-  const fieldLabel = property.field === "text" ? "文本" : property.field === "visible" ? "可见性" : undefined;
+  const fieldLabel = property.field ? PROPERTY_FIELD_LABELS[property.field] : undefined;
+  const typeLabel = PROPERTY_TYPE_LABELS[property.type];
   return (
     <div className="component-prop-row">
       <span className="component-prop-name" title={property.name}>{property.name}</span>
-      <span className="component-prop-meta">{property.type === "text" ? "文本" : "布尔"}</span>
+      <span className="component-prop-meta">{typeLabel}{property.shared ? "（共享）" : ""}</span>
       <span className="component-prop-target" title={property.targetName ?? "未绑定"}>
         {property.targetName && fieldLabel ? `${property.targetName} · ${fieldLabel}` : "未绑定"}
       </span>

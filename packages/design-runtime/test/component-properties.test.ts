@@ -311,3 +311,150 @@ test("rejects an instance value whose type does not match the property", () => {
     /must be a string/,
   );
 });
+
+test("applies a color property to the bound node's fill", () => {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:tint", nodeId: "box", field: "fill" } },
+  ]));
+  instantiate(runtime, 5);
+  runtime.execute(envelope(6, [
+    { type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:tint", value: "#00ff00" } },
+  ]));
+  const copy = runtime.snapshot().nodes["instance:1--box"]!;
+  const fill = copy.appearance.fills?.[0];
+  assert.equal(fill?.type === "solid" ? fill.color : "", "#00ff00");
+});
+
+test("applies a number property to the bound text node's font size", () => {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:size", name: "字号", type: "number", defaultValue: 18 } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:size", nodeId: "label", field: "fontSize" } },
+  ]));
+  instantiate(runtime, 5);
+  runtime.execute(envelope(6, [
+    { type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:size", value: 32 } },
+  ]));
+  const copy = runtime.snapshot().nodes["instance:1--label"]!;
+  assert.equal(copy.type === "text" ? copy.fontSize : 0, 32);
+});
+
+test("swaps the inner instance when an instance-swap property changes", () => {
+  const runtime = propertyRuntime();
+  // 组件里放一个内部实例（图标）。
+  runtime.execute(envelope(3, [{ type: "node.create", payload: { node: frame("icon-root", "page:1") } }]));
+  runtime.execute(envelope(4, [{ type: "component.create", payload: { id: "component:icon", nodeId: "icon-root", name: "Icon" } }]));
+  runtime.execute(envelope(5, [
+    { type: "node.create", payload: { node: { ...frame("icon", "page:1"), type: "instance", componentId: "component:icon", overrides: {} } } },
+  ]));
+  runtime.execute(envelope(6, [{ type: "node.reparent", payload: { id: "icon", parentId: "root", index: 2 } }]));
+  runtime.execute(envelope(7, [
+    { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:icon", name: "图标", type: "instance-swap", defaultValue: "component:icon" } } },
+  ]));
+  runtime.execute(envelope(8, [
+    { type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:icon", nodeId: "icon", field: "instance" } },
+  ]));
+  // 另一个可替换的组件。
+  runtime.execute(envelope(9, [{ type: "node.create", payload: { node: frame("star-root", "page:1") } }]));
+  runtime.execute(envelope(10, [{ type: "component.create", payload: { id: "component:star", nodeId: "star-root", name: "Star" } }]));
+
+  instantiate(runtime, 11);
+  runtime.execute(envelope(12, [
+    { type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:icon", value: "component:star" } },
+  ]));
+  const copy = runtime.snapshot().nodes["instance:1--icon"]!;
+  assert.equal(copy.type === "instance" ? copy.componentId : "", "component:star");
+});
+
+test("rejects binding a number property to a field that is not a number", () => {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:size", name: "字号", type: "number", defaultValue: 18 } } },
+  ]));
+  assert.throws(
+    () => runtime.execute(envelope(4, [{ type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:size", nodeId: "box", field: "fontSize" } }])),
+    /is not a text node and cannot bind fontSize/,
+  );
+});
+
+test("rejects an instance-swap value that points to a missing component", () => {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:icon", name: "图标", type: "instance-swap", defaultValue: "" } } },
+  ]));
+  instantiate(runtime, 4);
+  assert.throws(
+    () => runtime.execute(envelope(5, [{ type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:icon", value: "component:ghost" } }])),
+    /points to a component that does not exist/,
+  );
+});
+
+test("a variant set shares one property declaration with all of its members", () => {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.setCreate", payload: { set: { id: "set:1", name: "按钮", properties: ["size"] } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.setVariant", payload: { id: "component:button", variantSetId: "set:1", variant: { size: "md" } } },
+  ]));
+  runtime.execute(envelope(5, [
+    { type: "component.setProperty.set", payload: { setId: "set:1", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" } } },
+  ]));
+  const snapshot = runtime.snapshot();
+  assert.deepEqual(snapshot.componentSets!["set:1"]!.componentProperties, [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" },
+  ]);
+  // 成员组件自己没有声明，但共享声明对它有效。
+  assert.deepEqual(snapshot.components["component:button"]!.properties, undefined);
+});
+
+test("rejects a member that changes the type of a shared property", () => {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.setCreate", payload: { set: { id: "set:1", name: "按钮", properties: ["size"] } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.setVariant", payload: { id: "component:button", variantSetId: "set:1", variant: { size: "md" } } },
+  ]));
+  runtime.execute(envelope(5, [
+    { type: "component.setProperty.set", payload: { setId: "set:1", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" } } },
+  ]));
+  assert.throws(
+    () => runtime.execute(envelope(6, [
+      { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:tint", name: "主色", type: "text", defaultValue: "x" } } },
+    ])),
+    /shared by the variant set/,
+  );
+});
+
+test("removing a shared property clears the bindings and values of members", () => {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.setCreate", payload: { set: { id: "set:1", name: "按钮", properties: ["size"] } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.setVariant", payload: { id: "component:button", variantSetId: "set:1", variant: { size: "md" } } },
+  ]));
+  runtime.execute(envelope(5, [
+    { type: "component.setProperty.set", payload: { setId: "set:1", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" } } },
+  ]));
+  runtime.execute(envelope(6, [
+    { type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:tint", nodeId: "box", field: "fill" } },
+  ]));
+  instantiate(runtime, 7);
+  runtime.execute(envelope(8, [
+    { type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:tint", value: "#00ff00" } },
+  ]));
+  runtime.execute(envelope(9, [
+    { type: "component.setProperty.remove", payload: { setId: "set:1", propertyId: "prop:tint" } },
+  ]));
+  const snapshot = runtime.snapshot();
+  assert.equal(snapshot.nodes["box"]!.componentPropertyBindings?.fill, undefined);
+  assert.deepEqual((snapshot.nodes["instance:1"] as { propValues?: unknown }).propValues, {});
+});
