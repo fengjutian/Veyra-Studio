@@ -23,6 +23,8 @@ const dom = new JSDOM(
     <button id="by-title" title="标题文字"></button>
     <input id="by-placeholder" placeholder="占位文字" />
     <label for="by-label">包裹标签</label><input id="by-label" />
+    <label id="select-label">对齐<select id="by-select"><option>左对齐</option><option>居中</option></select></label>
+    <button id="early" tabindex="3">提前</button>
     <button id="disabled-one" disabled>禁用</button>
     <button id="hidden-one" style="display:none">隐藏</button>
     <div id="inert-host" inert><button id="inert-one">惰性</button></div>
@@ -37,7 +39,7 @@ win.Element.prototype.getClientRects = function () {
   return [{ width: 10, height: 10, top: 0, left: 0, right: 10, bottom: 10 }];
 };
 win.eval(
-  `${PAGE_HELPERS}\nwindow.__nodeKeyOf = nodeKeyOf; window.__accessibleNameOf = accessibleNameOf; window.__isTabbable = isTabbable; window.__domTextOf = domTextOf;`,
+  `${PAGE_HELPERS}\nwindow.__nodeKeyOf = nodeKeyOf; window.__accessibleNameOf = accessibleNameOf; window.__isTabbable = isTabbable; window.__domTextOf = domTextOf; window.__firstInTabOrder = firstInTabOrder; window.__ancestorKeysOf = ancestorKeysOf;`,
 );
 
 // 不关窗口的话 jsdom 会把事件循环吊住，整个测试文件要等十几秒才退出。
@@ -81,6 +83,27 @@ test("可访问名再取可见文字、标题、占位符", () => {
 
 test("可访问名可以来自包裹它的 label", () => {
   assert.equal(accessibleNameOf("by-label"), "包裹标签");
+});
+
+test("label 的文本不含被标注控件自己的内容", () => {
+  // HTML-AAM：<label>对齐<select><option>左对齐</option>…</select></label>
+  // 的可访问名是「对齐」，不是「对齐左对齐居中右对齐」。
+  assert.equal(accessibleNameOf("by-select"), "对齐");
+});
+
+test("Tab 顺序的第一个元素是正 tabindex 的那个", () => {
+  // HTML 规定正 tabindex 排在所有 tabindex=0 的元素**前面**。
+  // 用 DOM 顺序当遍历起点会直接跳过它们。
+  const first = win.__firstInTabOrder();
+  assert.equal(first?.id, "early");
+});
+
+test("祖先链给的是内容键（重渲染后仍然稳定）", () => {
+  const label = win.document.getElementById("select-label");
+  const keys = win.__ancestorKeysOf(win.document.getElementById("by-select"));
+  assert.ok(Array.isArray(keys));
+  // 最近一层祖先的键由它自己的可访问名派生，而不是节点身份。
+  assert.equal(keys[0], win.__domTextOf(label));
 });
 
 test("什么都没有时可访问名是空串（这正是缺陷信号）", () => {

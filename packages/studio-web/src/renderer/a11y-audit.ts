@@ -74,8 +74,14 @@ export interface FocusVisit {
    */
   ancestorKeys: string[];
   tabIndex: number;
-  /** 聚焦时是否有可见的焦点指示（outline / box-shadow / 边框 / 背景的变化）。 */
-  focusIndicator: boolean;
+  /**
+   * 聚焦时是否有可见的焦点指示（outline / box-shadow / 边框 / 背景的变化）。
+   *
+   * `undefined` = **未知**：采集时拿不到这个元素「聚焦前」的样式基准（元素是
+   * 遍历途中才出现或才变得可 Tab 的）。未知不是缺陷——把未知当成「没变化」，
+   * 就会把属性面板那批刚渲染出来的输入框全报一遍（实测的假阳性）。
+   */
+  focusIndicator: boolean | undefined;
 }
 
 /** AX 树里的一个节点（已过滤掉 ignored 的）。 */
@@ -320,9 +326,9 @@ export function auditA11y(input: A11yAuditInput): AuditIssue[] {
     });
   }
 
-  // ⑧ 焦点可见性。
+  // ⑧ 焦点可见性。只在**基准拿得到**时判定：基准未知（undefined）不代表没有指示。
   for (const visit of focus) {
-    if (!visit.focusIndicator) {
+    if (visit.focusIndicator === false) {
       issues.push({
         code: "no-focus-indicator",
         severity: "warning",

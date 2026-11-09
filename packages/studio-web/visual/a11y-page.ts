@@ -99,7 +99,7 @@ function accessibleNameOf(el) {
   const labels = el.labels;
   if (labels && labels.length) {
     const text = Array.prototype.map.call(labels, function (label) {
-      return (label.textContent || "").replace(/\s+/g, " ").trim();
+      return labelTextWithoutControl(label, el);
     }).filter(Boolean).join(" ");
     if (text) return text;
   }
@@ -114,6 +114,38 @@ function accessibleNameOf(el) {
   return "";
 }
 
+/*
+ * 标签文本：**不含**被标注控件自己的内容。
+ *
+ * HTML-AAM 规定：控件的可访问名来自包裹它的 <label> 的文本，但要排除控件自身
+ * 的文本贡献。真实例子：<label>对齐<select><option>左对齐</option>…</select></label>
+ * 的可访问名是「对齐」，不是「对齐左对齐居中右对齐」。直接取 label 的 textContent
+ * 会把选项文字也算进去——实测基线里 prop.align 的名字就是这么多出来一截。
+ *
+ * 不能靠克隆 label 再删控件：游离树上 <select>.labels 是空的，删不掉。
+ * 所以直接遍历 label 的子节点，碰到控件本身（或是它的祖先）就跳过它的文本。
+ */
+function labelTextWithoutControl(label, control) {
+  const parts = [];
+  const walk = function (node) {
+    for (const child of Array.prototype.slice.call(node.childNodes)) {
+      if (child === control) continue;
+      if (child.nodeType === 3) {
+        parts.push(child.textContent || "");
+        continue;
+      }
+      if (child.nodeType !== 1) continue;
+      if (child.contains && child.contains(control)) {
+        walk(child);
+        continue;
+      }
+      parts.push(child.textContent || "");
+    }
+  };
+  walk(label);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
 function isTabbable(el) {
   if (el.tabIndex < 0) return false;
   if (el.hasAttribute("disabled")) return false;
@@ -123,6 +155,59 @@ function isTabbable(el) {
   if (style.display === "none" || style.visibility === "hidden") return false;
   if (!el.getClientRects().length) return false;
   return true;
+}
+
+/*
+ * Tab 顺序里的第一个可聚焦元素。
+ *
+ * 不能用「DOM 顺序第一个」：HTML 规定正 tabindex 的元素排在**所有** tabindex=0
+ * 的元素**前面**（按 tabindex 升序）。用 DOM 顺序当起点会直接跳过它们——
+ * 上一轮就是因此漏掉了阴性对照里的 tabindex=3 元素，连带报出两条假的
+ * 「键盘到不了」。
+ */
+function firstInTabOrder() {
+  const items = [];
+  let index = 0;
+  for (const el of Array.from(document.querySelectorAll("*"))) {
+    index += 1;
+    if (!isTabbable(el)) continue;
+    items.push({ el, tabIndex: el.tabIndex, index });
+  }
+  items.sort((left, right) => {
+    const leftGroup = left.tabIndex > 0 ? 0 : 1;
+    const rightGroup = right.tabIndex > 0 ? 0 : 1;
+    if (leftGroup !== rightGroup) return leftGroup - rightGroup;
+    if (leftGroup === 0 && left.tabIndex !== right.tabIndex) return left.tabIndex - right.tabIndex;
+    return left.index - right.index;
+  });
+  return items.length ? items[0].el : null;
+}
+
+/*
+ * 增量样式快照：把「初始扫描之后才变得可 Tab 的元素」的聚焦前样式补上。
+ *
+ * 为什么需要：真实界面会边走边变——选中画布节点后属性面板才渲染出输入框，
+ * 画布的隐藏 listbox 也会把 roving tabindex 挪到当前选项上。这些元素在遍历
+ * 开始时还不存在（或还不可 Tab），采集不到「聚焦前」的样式；判定焦点指示
+ * 时没有基准，就只能报出并不存在的缺陷（实测把属性面板的输入框全报了一遍）。
+ *
+ * 每次按 Tab 之前补一次：补到的元素此刻还没被聚焦，样式就是它的「聚焦前」状态。
+ */
+function styleSnapshotForNewElements() {
+  if (!window.__auditStyledNodes) window.__auditStyledNodes = new WeakSet();
+  const items = [];
+  for (const el of Array.from(document.querySelectorAll("*"))) {
+    if (window.__auditStyledNodes.has(el)) continue;
+    if (el.tabIndex < 0) continue;   // 便宜的过滤：绝大多数元素到不了下一步
+    if (!isTabbable(el)) continue;
+    // 当前聚焦的元素不能当基准：它此刻的样式**就是**聚焦后的样子，采进去
+    // 会把「有焦点环」误判成「聚焦前后没变化」。跳过它（也不记进集合，
+    // 等它失去焦点、仍然可 Tab 时再采）。
+    if (el === document.activeElement) continue;
+    window.__auditStyledNodes.add(el);
+    items.push({ nodeKey: nodeKeyOf(el), contentKey: contentKeyOf(el), style: focusStyleSignature(el) });
+  }
+  return items;
 }
 
 /*
@@ -151,9 +236,11 @@ function focusStyleSignature(el) {
  */
 export function domFocusableExpression(): string {
   return `(() => {
+  if (!window.__auditStyledNodes) window.__auditStyledNodes = new WeakSet();
   const items = [];
   for (const el of Array.from(document.querySelectorAll("*"))) {
     if (!isTabbable(el)) continue;
+    window.__auditStyledNodes.add(el);
     items.push({
       nodeKey: nodeKeyOf(el),
       contentKey: contentKeyOf(el),
@@ -164,10 +251,17 @@ export function domFocusableExpression(): string {
       tabIndex: el.tabIndex,
       text: domTextOf(el),
       style: focusStyleSignature(el),
+      // 当前是否聚焦：聚焦着的元素不能当「聚焦前」的基准。
+      focused: el === document.activeElement,
     });
   }
   return items;
 })()`;
+}
+
+/** 增量补采「刚变得可 Tab 的元素」的聚焦前样式。 */
+export function styleSnapshotExpression(): string {
+  return `(() => styleSnapshotForNewElements())()`;
 }
 
 /** 读当前焦点落点。body / 无焦点时返回 null。 */
@@ -175,6 +269,7 @@ export function focusVisitExpression(): string {
   return `(() => {
   const el = document.activeElement;
   if (!el || el === document.body || el === document.documentElement) return null;
+  const s = getComputedStyle(el);
   return {
     nodeKey: nodeKeyOf(el),
     contentKey: contentKeyOf(el),
@@ -186,6 +281,10 @@ export function focusVisitExpression(): string {
     name: accessibleNameOf(el),
     tabIndex: el.tabIndex,
     style: focusStyleSignature(el),
+    // 正向证据：此刻有没有可见的描边 / 阴影。没有「聚焦前」基准时，
+    // 靠它判断「至少看得见一个环」。
+    outlineVisible: s.outlineStyle !== "none" && parseFloat(s.outlineWidth) > 0,
+    shadowVisible: !!s.boxShadow && s.boxShadow !== "none",
   };
 })()`;
 }

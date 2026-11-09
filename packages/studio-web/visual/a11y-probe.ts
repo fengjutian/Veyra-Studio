@@ -38,7 +38,7 @@ import {
   type FocusVisit,
 } from "../src/renderer/a11y-audit";
 import { findBrowser } from "../../design-export/visual/browser";
-import { AX_ELEMENT_FUNCTION, PAGE_HELPERS, domFocusableExpression, focusVisitExpression } from "./a11y-page";
+import { AX_ELEMENT_FUNCTION, PAGE_HELPERS, domFocusableExpression, focusVisitExpression, styleSnapshotExpression } from "./a11y-page";
 import { launchHeadlessBrowser, type CdpPage } from "./cdp";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -172,8 +172,14 @@ interface RawElement {
   tabIndex: number;
   text: string;
   style: string;
+  /** 采集时这个元素是否正处于聚焦状态（聚焦中的元素不能当「聚焦前」基准）。 */
+  focused?: boolean;
   /** 可访问名（焦点落点才有；DOM 扫描那边用 contentKey 代替）。 */
   name?: string;
+  /** 此刻是否有可见描边（正向证据）。 */
+  outlineVisible?: boolean;
+  /** 此刻是否有可见阴影（正向证据）。 */
+  shadowVisible?: boolean;
 }
 
 /**
@@ -213,6 +219,20 @@ export async function waitForStableDom(page: CdpPage, options: { attempts?: numb
   return items;
 }
 
+/**
+ * 等界面把焦点落定再读。
+ *
+ * Radix 的分段栏是「焦点代理」：Tab 落上去后它会把焦点转交给选中的标签页。
+ * 这个转交发生在事件处理里，不一定在我们读 activeElement 之前完成——读早了
+ * 就会把分段栏本身当成一个焦点落点，而它并不负责显示焦点环（真正显示的是标签
+ * 页），于是报出一条并不存在的「聚焦时看不到变化」。
+ */
+export async function settleFocus(page: CdpPage): Promise<void> {
+  await page.evaluate<boolean>(
+    `new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`,
+  );
+}
+
 /** 采集一页的键盘遍历与可访问性树。 */
 export async function collectPage(page: CdpPage): Promise<Collection> {
   await injectPageHelpers(page);
@@ -244,12 +264,47 @@ export async function collectPage(page: CdpPage): Promise<Collection> {
   //    选中它，属性面板随之启用一批控件，用遍历后的状态对账会凭空多出一堆
   //    「键盘到不了」的假缺陷。
   const domItems = await waitForStableDom(page);
-  const styleByNodeKey = new Map(domItems.map(item => [item.nodeKey, item.style]));
+
+  // 焦点落点的角色以 **AX** 为准（读屏念的就是它）：DOM 的 role 属性对原生控件
+  //   是空的（<button> 没有 role="button"），只看它会把按钮记成「无角色」。
+  //   先按节点身份找（最准），找不到再按内容键找（重渲染后节点换了还能认领）。
+  const axRoleByNodeKey = new Map<string, string>();
+  const axRoleByKey = new Map<string, string>();
+  for (const node of axNodes) {
+    if (!node.role) continue;
+    if (!axRoleByNodeKey.has(node.nodeKey)) axRoleByNodeKey.set(node.nodeKey, node.role);
+    if (!axRoleByKey.has(node.key)) axRoleByKey.set(node.key, node.role);
+  }
+
+  // 基准只取「此刻没有聚焦」的元素：聚焦中的元素采到的是聚焦后的样式，
+  // 拿它当「聚焦前」基准会把有焦点环误判成没变化。
+  const styleByNodeKey = new Map(
+    domItems.filter(item => !item.focused).map(item => [item.nodeKey, item.style] as const),
+  );
   const styleByKey = new Map<string, string>();
   for (const item of domItems) {
+    if (item.focused) continue;
     if (!styleByKey.has(item.contentKey)) styleByKey.set(item.contentKey, item.style);
   }
   const domFocusableOrder = domItems.map(item => item.contentKey);
+
+  /**
+   * 补采「刚变得可 Tab 的元素」的聚焦前样式。
+   *
+   * 界面在遍历途中会变：选中画布节点后属性面板才渲染出输入框，画布的隐藏
+   * listbox 也会把 roving tabindex 挪到当前选项上。这些元素在初始扫描时还
+   * 不存在（或还不可 Tab），没有「聚焦前」的基准就判不出焦点指示——只能
+   * 报出并不存在的缺陷。所以在每次按 Tab 之前补一次。
+   */
+  const captureNewStyles = async (): Promise<void> => {
+    const fresh = await page.evaluate<{ nodeKey: string; contentKey: string; style: string }[]>(
+      styleSnapshotExpression(),
+    );
+    for (const item of fresh) {
+      if (!styleByNodeKey.has(item.nodeKey)) styleByNodeKey.set(item.nodeKey, item.style);
+      if (!styleByKey.has(item.contentKey)) styleByKey.set(item.contentKey, item.style);
+    }
+  };
 
   // ③ 真实 Tab 遍历：按到底为止（焦点回到 body）或超过 DOM 里的可聚焦元素数就停。
   //    起点必须显式摆正：Chrome 的「顺序焦点起点」不会因为 blur 重置，上一轮
@@ -260,11 +315,18 @@ export async function collectPage(page: CdpPage): Promise<Collection> {
   const readVisit = async (): Promise<FocusVisit | undefined> => {
     const visit = await page.evaluate<RawElement | null>(focusVisitExpression());
     if (!visit) return undefined;
-    const baseline = styleByNodeKey.get(visit.nodeKey) ?? styleByKey.get(visit.contentKey);
+    const viaNode = styleByNodeKey.get(visit.nodeKey);
+    const baseline = viaNode ?? styleByKey.get(visit.contentKey);
+    if (process.env.A11Y_DEBUG_FOCUS && baseline === visit.style) {
+      console.log(
+        `  [focus-debug] key="${visit.contentKey}" tag=${visit.tag} 来源=${viaNode !== undefined ? "节点身份" : "内容键回退"} 签名=${visit.style}`,
+      );
+    }
     return {
       order: focusSequence.length + 1,
       tag: visit.tag,
-      role: visit.role,
+      // 角色以 AX 为准（读屏念的），回退到 DOM 的 role 属性。
+      role: axRoleByNodeKey.get(visit.nodeKey) ?? axRoleByKey.get(visit.contentKey) ?? visit.role ?? "",
       // 名称用页面侧的近似算法（aria-label → aria-labelledby → label → 文字 → 标题
       // → 占位符）。它是标准算法、且不依赖任何跨时刻的关联，所以稳定。
       name: visit.name ?? "",
@@ -273,17 +335,25 @@ export async function collectPage(page: CdpPage): Promise<Collection> {
       nodeKey: visit.nodeKey,
       ancestorKeys: visit.ancestorKeys,
       tabIndex: visit.tabIndex,
-      focusIndicator: baseline === undefined ? false : baseline !== visit.style,
+      // 拿不到「聚焦前」基准时是**未知**，不是「没变化」——把未知当成缺陷，
+      // 就会把属性面板那批刚渲染出来的输入框全报一遍（实测的假阳性）。
+      // 但若此刻能看到描边或阴影，那是**正向证据**：至少看得见一个环。
+      focusIndicator: baseline === undefined
+        ? (visit.outlineVisible || visit.shadowVisible ? true : undefined)
+        : baseline !== visit.style,
     };
   };
 
   await page.evaluate(
-    `(() => { for (const el of Array.from(document.querySelectorAll("*"))) { if (isTabbable(el)) { el.focus(); return true; } } return false; })()`,
+    `(() => { const el = firstInTabOrder(); if (el) { el.focus(); return true; } return false; })()`,
   );
+  await settleFocus(page);
   const first = await readVisit();
   if (first) focusSequence.push(first);
   for (let step = 0; step < limit; step += 1) {
+    await captureNewStyles();
     await page.pressKey("Tab");
+    await settleFocus(page);
     const visit = await readVisit();
     if (!visit) break;
     focusSequence.push(visit);
@@ -380,6 +450,11 @@ async function main(): Promise<void> {
     const summary = summarizeIssues(issues);
 
     console.log(`焦点落点 ${collection.focusSequence.length} 个，AX 交互节点 ${collection.axNodes.length} 个。`);
+    if (process.env.A11Y_DEBUG_FOCUS) {
+      for (const visit of collection.focusSequence) {
+        console.log(`    ${visit.order}. [${visit.auditId}] tag=${visit.tag} role=${visit.role || "（无）"} name="${visit.name}" key="${visit.key}"`);
+      }
+    }
     for (const issue of issues) console.log(`  ${formatIssue(issue)}`);
     if (summary.errors) {
       failures.push(`正常样本报出 ${summary.errors} 个错误（应当是 0）`);
@@ -390,6 +465,16 @@ async function main(): Promise<void> {
     await waitForReady(defectPage);
     const defectCollection = await collectPage(defectPage);
     const defectIssues = auditA11y(toAuditInput(defectCollection));
+    if (process.env.A11Y_DEBUG_FOCUS) {
+      console.log("  ── 阴性对照的 Tab 落点 ──");
+      for (const visit of defectCollection.focusSequence) {
+        console.log(`    ${visit.order}. [${visit.auditId}] tag=${visit.tag} role=${visit.role || "（无）"} tabIndex=${visit.tabIndex} key="${visit.key}"`);
+      }
+      console.log("  ── 阴性对照的 DOM 顺序 ──");
+      defectCollection.domFocusableOrder.forEach((key, index) => console.log(`    ${index + 1}. ${key}`));
+      console.log("  ── 阴性对照遍历后的 DOM 顺序 ──");
+      defectCollection.domFocusableAfter?.forEach((key, index) => console.log(`    ${index + 1}. ${key}`));
+    }
     const defectCodes = new Set(defectIssues.map(issue => issue.code));
     const missing = EXPECTED_DEFECT_CODES.filter(code => !defectCodes.has(code));
     if (missing.length) {

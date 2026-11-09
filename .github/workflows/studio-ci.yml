@@ -84,9 +84,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:studio-core
+      - run: npm run build:studio-web
       # 规则不绑定平台也不绑定字体，所以能当阻断门禁；基线比对不跑——AX 树的细节
       # 会随 Chrome 版本漂移，那是本地 `npm run visual:a11y:check` 的活。
       - run: npm run visual:a11y:check -- --no-baseline --require-browser
+      # 整应用走查：对着**构建产物**跑真实界面（顶栏、图层面板、五个检查器分段），
+      # 组件级 harness 覆盖不到的交互都在这里。分段栏切换必须用真实鼠标事件，
+      # 否则 Radix 收不到 mousedown，五个分段其实查的是同一个界面。
+      - run: npm run visual:a11y:app -- --require-browser
 
   visual:
     name: 视觉回归（参考，不阻断）

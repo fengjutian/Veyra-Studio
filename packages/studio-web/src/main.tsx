@@ -2314,7 +2314,7 @@ function App() {
           </section>
           <section className="inspector-section">
             <h2>AI 安全编辑</h2>
-            <textarea value={prompt} onChange={event => setPrompt(event.target.value)} />
+            <textarea aria-label="AI 指令" placeholder="描述你想让 AI 做的修改…" value={prompt} onChange={event => setPrompt(event.target.value)} />
             <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
             {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
             {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}

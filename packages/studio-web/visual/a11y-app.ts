@@ -113,19 +113,40 @@ async function waitForCanvasNodes(page: CdpPage, timeoutMs = 20_000): Promise<nu
   throw new Error("导入之后画布结构里仍没有节点（导入没生效？）");
 }
 
-/** 切到某个检查器分段。 */
+/**
+ * 切到某个检查器分段。
+ *
+ * 必须用**真实的鼠标事件**：Radix 的 Tabs.Trigger 是在 `mousedown` 上激活的
+ * （为了不让 Tab 焦点先跑掉），脚本调用 `.click()` 只派发 click，React 收不到
+ * mousedown，分段根本没切换——上一轮五个分段的焦点落点数一模一样，等于只走查了
+ * 属性面板。
+ */
 async function switchPanel(page: CdpPage, label: string): Promise<void> {
-  const clicked = await page.evaluate<boolean>(
+  const point = await page.evaluate<{ x: number; y: number } | null>(
     `(() => {
        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
        const target = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
-       if (!target) return false;
-       target.click();
-       return true;
+       if (!target) return null;
+       const rect = target.getBoundingClientRect();
+       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
      })()`,
   );
-  if (!clicked) throw new Error(`找不到检查器分段「${label}」`);
-  await sleep(400);
+  if (!point) throw new Error(`找不到检查器分段「${label}」`);
+  const base = { x: point.x, y: point.y, button: "left", clickCount: 1 };
+  await page.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...base, button: "none", buttons: 0 });
+  await page.send("Input.dispatchMouseEvent", { type: "mousePressed", ...base, buttons: 1 });
+  await page.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...base, buttons: 0 });
+  await sleep(500);
+}
+
+/** 确认分段真的切过去了：选中项的文字要跟目标分段一致。 */
+async function readActivePanel(page: CdpPage): Promise<string> {
+  return page.evaluate<string>(
+    `(() => {
+       const tab = document.querySelector('[role="tab"][aria-selected="true"]');
+       return tab ? (tab.textContent || "").trim() : "";
+     })()`,
+  );
 }
 
 async function main(): Promise<void> {
@@ -159,6 +180,10 @@ async function main(): Promise<void> {
 
     for (const panel of PANELS) {
       if (panel.id !== "properties") await switchPanel(page, panel.label);
+      const active = await readActivePanel(page);
+      if (!active.startsWith(panel.label)) {
+        throw new Error(`分段没切到「${panel.label}」（当前是「${active}」）——不能拿没切换的界面凑合`);
+      }
       const collection = await collectPage(page);
       const panelIssues = auditA11y(toAuditInput(collection));
       issues.push(...panelIssues);
