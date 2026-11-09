@@ -17,10 +17,13 @@ export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
  * 支持插入的图片格式。
  *
  * 这份清单必须和 `design-export` 的资源 URL 白名单一致：导出器只接受
- * `data:image/(png|jpeg|gif|webp)`，插进来的格式如果导出不了，用户会拿到一张
- * 只有空框的交付物，所以不如在插入时就说清楚。
+ * `data:image/(png|jpeg|gif|webp|svg+xml)`，插进来的格式如果导出不了，用户会拿到
+ * 一张只有空框的交付物，所以不如在插入时就说清楚。
+ *
+ * SVG 走 `<img src="data:image/svg+xml;base64,…">` 与画布 `drawImage`，
+ * 两者都**不执行脚本**，所以外部 SVG 里的 `<script>` 不会跑起来。
  */
-export const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export const SUPPORTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"] as const;
 
 export function isSupportedImageType(type: string): boolean {
   return (SUPPORTED_IMAGE_TYPES as readonly string[]).includes(type.toLowerCase());
@@ -55,20 +58,59 @@ export function fitImageBox(size: { width: number; height: number }, max = IMAGE
 /**
  * 读取图片的原始像素尺寸。
  *
- * 浏览器用 `createImageBitmap`；不可用或解码失败时退回一个固定尺寸，
- * 让插入流程继续走完，用户随后可以在属性面板里改宽高。
+ * 浏览器用 `createImageBitmap`；SVG 常常没有像素级固有尺寸（只有 viewBox），
+ * 这时从文本里解析；都拿不到就退回一个固定尺寸，让插入流程继续走完。
  */
 export async function readImageSize(file: Blob, fallback = { width: 240, height: 160 }): Promise<{ width: number; height: number }> {
   const create = (globalThis as { createImageBitmap?: (source: Blob) => Promise<{ width: number; height: number; close?: () => void }> }).createImageBitmap;
-  if (!create) return fallback;
-  try {
-    const bitmap = await create(file);
-    const size = { width: bitmap.width, height: bitmap.height };
-    bitmap.close?.();
-    return size.width > 0 && size.height > 0 ? size : fallback;
-  } catch {
-    return fallback;
+  if (create) {
+    try {
+      const bitmap = await create(file);
+      const size = { width: bitmap.width, height: bitmap.height };
+      bitmap.close?.();
+      if (size.width > 0 && size.height > 0) return size;
+    } catch {
+      // 解码失败（含没有固有尺寸的 SVG）继续往下走文本解析。
+    }
   }
+  if (file.type === "image/svg+xml") {
+    const text = await file.text().catch(() => "");
+    const size = svgIntrinsicSize(text);
+    if (size) return size;
+  }
+  return fallback;
+}
+
+/**
+ * 从 SVG 文本里读固有尺寸。
+ *
+ * 优先 `width`/`height`（支持 px 与无单位），其次 `viewBox` 的宽高；
+ * 百分比尺寸没有确定像素值，忽略。解析失败返回 `undefined`，不猜。
+ */
+export function svgIntrinsicSize(text: string): { width: number; height: number } | undefined {
+  const tag = /<svg\b[^>]*>/i.exec(text)?.[0];
+  if (!tag) return undefined;
+  const attribute = (name: string): string | undefined => new RegExp(`${name}\\s*=\\s*["']([^"']+)["']`, "i").exec(tag)?.[1];
+  const pixels = (value: string | undefined): number | undefined => {
+    if (!value) return undefined;
+    const match = /^\s*([\d.]+)\s*(px)?\s*$/i.exec(value);
+    if (!match) return undefined;
+    const size = Number(match[1]);
+    return Number.isFinite(size) && size > 0 ? size : undefined;
+  };
+  const width = pixels(attribute("width"));
+  const height = pixels(attribute("height"));
+  if (width && height) return { width, height };
+
+  const viewBox = attribute("viewBox") ?? attribute("viewbox");
+  if (viewBox) {
+    const parts = viewBox.trim().split(/[\s,]+/).map(Number);
+    if (parts.length === 4 && parts[2]! > 0 && parts[3]! > 0) {
+      // 只缺一边时用 viewBox 的另一边补上（等比）。
+      return { width: width ?? parts[2]!, height: height ?? parts[3]! };
+    }
+  }
+  return undefined;
 }
 
 /** `fit` 到 CSS 背景的映射；画布和导出的语义因此一致。 */
@@ -83,7 +125,7 @@ export function imageBackgroundStyle(fit: ImageNode["fit"]): { backgroundSize: s
 /** 插入前的文件校验；返回错误文案，通过则返回 undefined。 */
 export function imageFileError(file: File, byteLength: number): string | undefined {
   if (!file.type.startsWith("image/")) return "只能插入图片文件";
-  if (!isSupportedImageType(file.type)) return "导出只支持 PNG、JPEG、GIF、WebP，暂不能插入这个格式";
+  if (!isSupportedImageType(file.type)) return "导出只支持 PNG、JPEG、GIF、WebP、SVG，暂不能插入这个格式";
   if (!byteLength) return "图片内容为空";
   if (byteLength > MAX_IMAGE_BYTES) return `图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024} MB，请先压缩再插入`;
   return undefined;

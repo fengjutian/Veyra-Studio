@@ -462,7 +462,8 @@ function finiteSize(size: { width: number; height: number }): boolean {
 }
 
 function safeAssetUrl(url: string): boolean {
-  return /^(https?:|data:image\/(?:png|jpeg|gif|webp);|blob:|\/|\.\.?\/)/i.test(url);
+  // `svg+xml` 里的 `+` 必须转义，否则正则会把 `data:image/svg` 后面当成任意 `+` 重复。
+  return /^(https?:|data:image\/(?:png|jpeg|gif|webp|svg\+xml);|blob:|\/|\.\.?\/)/i.test(url);
 }
 
 function cssTokenValue(value: string | number): string {

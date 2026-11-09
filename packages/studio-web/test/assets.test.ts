@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AssetMetadata } from "@ufira/design-schema";
 import type { ProjectRepository } from "@ufira/design-persistence";
-import { assetIdForHash, fitImageBox, imageBackgroundStyle, imageFileError, readImageSize, sha256Hex } from "../src/assets";
+import { assetIdForHash, fitImageBox, imageBackgroundStyle, imageFileError, readImageSize, sha256Hex, svgIntrinsicSize } from "../src/assets";
 import { loadAssetUrl, resetAssetUrlCache } from "../src/asset-url";
 
 const png = (bytes: number[]): File => new File([new Uint8Array(bytes)], "pixel.png", { type: "image/png" });
@@ -28,15 +28,31 @@ test("fit 映射成保持画布与导出一致的背景样式", () => {
   assert.equal(imageBackgroundStyle("cover").backgroundRepeat, "no-repeat");
 });
 
-test("非图片、空文件和超大文件都被挡在插入之前", () => {
+test("非图片、不支持的格式、空文件和超大文件都被挡在插入之前", () => {
   assert.match(imageFileError(new File(["text"], "a.txt", { type: "text/plain" }), 4) ?? "", /只能插入图片文件/);
-  assert.match(imageFileError(new File(["<svg/>"], "a.svg", { type: "image/svg+xml" }), 4) ?? "", /PNG、JPEG、GIF、WebP/);
+  assert.match(imageFileError(new File([new Uint8Array([1])], "a.bmp", { type: "image/bmp" }), 4) ?? "", /PNG、JPEG、GIF、WebP、SVG/);
   assert.match(imageFileError(png([]), 0) ?? "", /内容为空/);
   assert.match(imageFileError(png([1]), 21 * 1024 * 1024) ?? "", /20 MB/);
   assert.equal(imageFileError(png([1]), 1), undefined);
+  // SVG 和位图一样可以插入：导出器会把它内联成 data URL。
+  assert.equal(imageFileError(new File(["<svg/>"], "a.svg", { type: "image/svg+xml" }), 6), undefined);
 });
 
-test("拿不到图片尺寸时退回固定尺寸，而不是让插入失败", async () => {
+test("SVG 的固有尺寸：优先 width/height，其次 viewBox", () => {
+  assert.deepEqual(svgIntrinsicSize('<svg width="120" height="80"></svg>'), { width: 120, height: 80 });
+  assert.deepEqual(svgIntrinsicSize("<svg width='120px' height='80px'></svg>"), { width: 120, height: 80 });
+  assert.deepEqual(svgIntrinsicSize('<svg viewBox="0 0 64 32"></svg>'), { width: 64, height: 32 });
+  // 只有一边有像素尺寸时，另一边从 viewBox 补。
+  assert.deepEqual(svgIntrinsicSize('<svg width="128" viewBox="0 0 64 32"></svg>'), { width: 128, height: 32 });
+  // 百分比没有确定像素值，不猜。
+  assert.equal(svgIntrinsicSize('<svg width="100%" height="100%" viewBox="0 0 0 0"></svg>'), undefined);
+  assert.equal(svgIntrinsicSize("not an svg"), undefined);
+});
+
+test("SVG 文件读不出像素尺寸时退回文本解析，位图退回落尺寸", async () => {
+  const svg = new File(['<svg viewBox="0 0 64 40"></svg>'], "icon.svg", { type: "image/svg+xml" });
+  assert.deepEqual(await readImageSize(svg), { width: 64, height: 40 });
+  // 没有 createImageBitmap 时位图只能退回固定尺寸。
   assert.deepEqual(await readImageSize(png([1, 2, 3])), { width: 240, height: 160 });
 });
 

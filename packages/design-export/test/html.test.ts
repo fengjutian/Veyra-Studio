@@ -59,6 +59,21 @@ test("rejects unsafe image URLs and reports the degradation", () => {
   assert.equal(result.diagnostics[0].support, "unsupported");
 });
 
+test("accepts SVG image assets as data URLs", () => {
+  const document = createDocument("doc:1", "Demo");
+  const image: DesignNode = { ...frame("image"), type: "image", assetId: "asset:svg", fit: "contain" };
+  document.assets["asset:svg"] = { id: "asset:svg", hash: "a".repeat(64), mimeType: "image/svg+xml", byteLength: 10 };
+  document.pages["page:1"].childIds = [image.id];
+  document.nodes[image.id] = image;
+  const result = exportPageToHtml(document, {
+    pageId: "page:1",
+    viewport: { width: 800, height: 600 },
+    resolveAsset: () => "data:image/svg+xml;base64,PHN2Zy8+",
+  });
+  assert.match(result.html, /src="data:image\/svg\+xml;base64,PHN2Zy8/);
+  assert.deepEqual(result.diagnostics, []);
+});
+
 test("reports unsupported vectors and approximated instances", () => {
   const document = createDocument("doc:1", "Demo");
   const component = frame("component");

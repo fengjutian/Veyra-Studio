@@ -481,7 +481,8 @@ function finiteSize(size: { width: number; height: number }): boolean {
 }
 
 function safeAssetUrl(url: string): boolean {
-  return /^(https?:|data:image\/(?:png|jpeg|gif|webp);|blob:|\/|\.\.?\/)/i.test(url);
+  // 与 HTML 导出同一份白名单；`svg+xml` 的 `+` 要转义。
+  return /^(https?:|data:image\/(?:png|jpeg|gif|webp|svg\+xml);|blob:|\/|\.\.?\/)/i.test(url);
 }
 
 function num(value: number): string {
