@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { LIST_MARKER_GAP, TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveParagraphs, resolveRadius, resolveStroke, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
+import { LIST_MARKER_GAP, TEXT_DEFAULTS, absolutePath, applyTypographyToken, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveParagraphs, resolveRadius, resolveStroke, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -65,12 +65,16 @@ function resolveBoxes(
 }
 
 function renderTokenStyles(document: DesignDocument, tokenVariables: Record<string, string>): string {
-  const entries = Object.entries(document.tokens);
+  // 字体 token 是复合值，没有单一 CSS 变量；它只在文本节点上展开。
+  const entries = Object.entries(document.tokens).filter(([, token]) => {
+    const value = token.value;
+    return typeof value === "string" || typeof value === "number";
+  });
   if (!entries.length) return "";
   // tokenVariables 里已经带 `--` 前缀（和 HTML 导出共用同一套命名），这里不能再补一次，
   // 否则会写出 `----color-primary` 这种声明，`var(--color-primary)` 就取不到值了。
   const declarations = entries
-    .map(([name, token]) => `    ${tokenVariables[name]}: ${escapeXml(cssTokenValue(token.value))};`)
+    .map(([name, token]) => `    ${tokenVariables[name]}: ${escapeXml(cssTokenValue(token.value as string | number))};`)
     .join("\n");
   return `  <style>\n  :root {\n${declarations}\n  }\n  </style>`;
 }
@@ -375,13 +379,15 @@ function nodeStyle(document: DesignDocument, node: DesignNode, tokenVariables: R
     declarations.push(`stroke-width:${num(node.appearance.strokeWidth ?? 1)}`);
   }
   if (node.type === "text") {
-    declarations.push(`font-family:${cssFontFamily(node.fontFamily)}`);
-    declarations.push(`font-size:${num(node.fontSize)}`);
-    const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+    // 字体 token 先落成具体值：SVG 产物里不写绑定。
+    const text = applyTypographyToken(document, node) as typeof node;
+    declarations.push(`font-family:${cssFontFamily(text.fontFamily)}`);
+    declarations.push(`font-size:${num(text.fontSize)}`);
+    const fontWeight = text.fontWeight ?? TEXT_DEFAULTS.fontWeight;
     if (fontWeight !== TEXT_DEFAULTS.fontWeight) declarations.push(`font-weight:${fontWeight}`);
-    const fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
+    const fontStyle = text.fontStyle ?? TEXT_DEFAULTS.fontStyle;
     if (fontStyle !== TEXT_DEFAULTS.fontStyle) declarations.push(`font-style:${fontStyle}`);
-    const letterSpacing = node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
+    const letterSpacing = text.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
     if (letterSpacing !== TEXT_DEFAULTS.letterSpacing) declarations.push(`letter-spacing:${num(letterSpacing)}`);
     declarations.push("stroke:none");
   }

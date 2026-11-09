@@ -19,7 +19,9 @@ export interface TokenPanelProps {
 const BINDABLE: Record<TokenValue["type"], Array<keyof PropertyBindings>> = {
   color: ["fill", "stroke"],
   number: ["radius", "spacing"],
-  string: ["typography"],
+  typography: ["typography"],
+  // 早期标量类型没有渲染语义，不提供绑定入口。
+  string: [],
 };
 
 const PROPERTY_LABELS: Record<keyof PropertyBindings, string> = {
@@ -29,6 +31,15 @@ const PROPERTY_LABELS: Record<keyof PropertyBindings, string> = {
   spacing: "间距",
   radius: "圆角",
 };
+
+/** token 值的一行预览；复合值（字体）拼成可读的一段。 */
+function tokenPreview(token: TokenValue): string {
+  if (token.type === "typography") {
+    const { fontFamily, fontSize, lineHeight, fontWeight } = token.value;
+    return `${fontFamily} ${fontSize}px${lineHeight ? `/${lineHeight}` : ""}${fontWeight ? ` · ${fontWeight}` : ""}`;
+  }
+  return String(token.value);
+}
 
 /**
  * Token 面板。
@@ -57,8 +68,8 @@ export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUp
             <div className="token-panel-row" key={name}>
               {token.type === "color"
                 ? <span className="token-swatch" style={{ background: String(token.value) }} />
-                : <span className="token-swatch token-swatch-value">{String(token.value)}</span>}
-              <span className="token-panel-name" title={`${name}: ${String(token.value)}`}>{name}</span>
+                : <span className="token-swatch token-swatch-value">{tokenPreview(token)}</span>}
+              <span className="token-panel-name" title={`${name}: ${tokenPreview(token)}`}>{name}</span>
               <select
                 className="token-bind-select"
                 aria-label={`绑定 ${name}`}

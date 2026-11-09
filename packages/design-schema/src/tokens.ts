@@ -1,4 +1,4 @@
-import type { CornerRadii, DesignDocument, DesignNode, Paint, TokenValue } from "./types";
+import type { CornerRadii, DesignDocument, DesignNode, Paint, TokenValue, TypographyValue } from "./types";
 
 /**
  * Token 解析。
@@ -76,4 +76,45 @@ export function resolveCornerRadii(document: DesignDocument, node: DesignNode): 
 /** 自动布局间距：`spacing` 绑定优先，否则用节点自己的 gap。 */
 export function resolveGap(document: DesignDocument, node: DesignNode): number {
   return tokenNumber(document, node.bindings?.spacing) ?? node.layout.gap ?? 0;
+}
+
+/** 字体 token 的值；绑的不是 typography token 时返回 `undefined`。 */
+export function tokenTypography(document: DesignDocument, name: string | undefined): TypographyValue | undefined {
+  const token = resolveToken(document, name);
+  return token?.type === "typography" ? token.value : undefined;
+}
+
+/**
+ * 节点上的字体样式（token 绑定生效时）。
+ *
+ * 只有文本节点有意义——字体样式不是布局属性，绑在容器上没有任何东西可覆盖，
+ * 因此 schema 也会拒绝这种绑定。
+ */
+export function resolveTypography(document: DesignDocument, node: DesignNode): TypographyValue | undefined {
+  if (node.type !== "text") return undefined;
+  return tokenTypography(document, node.bindings?.typography);
+}
+
+/**
+ * 套用字体 token：返回一个文字样式已被覆盖的节点副本。
+ *
+ * token 里**省略的字段不覆盖**节点值——这样「只统一字号」和「统一整套文字样式」
+ * 都能用同一种 token 表达。没有绑定（或绑定失效）时原样返回同一个对象，
+ * 调用方可以据此跳过无谓的深拷贝。
+ *
+ * 画布场景、布局测量与 HTML/SVG 导出都在这里汇合，避免三处各写一套覆盖逻辑。
+ */
+export function applyTypographyToken(document: DesignDocument, node: DesignNode): DesignNode {
+  if (node.type !== "text") return node;
+  const typography = resolveTypography(document, node);
+  if (!typography) return node;
+  return {
+    ...node,
+    fontFamily: typography.fontFamily,
+    fontSize: typography.fontSize,
+    lineHeight: typography.lineHeight ?? node.lineHeight,
+    fontWeight: typography.fontWeight ?? node.fontWeight,
+    fontStyle: typography.fontStyle ?? node.fontStyle,
+    letterSpacing: typography.letterSpacing ?? node.letterSpacing,
+  };
 }

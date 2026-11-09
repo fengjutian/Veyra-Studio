@@ -1,4 +1,4 @@
-import { TEXT_DEFAULTS, type DesignDocument, type DocumentFont } from "@ufira/design-schema";
+import { TEXT_DEFAULTS, applyTypographyToken, type DesignDocument, type DocumentFont, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import { base64FromBytes } from "./base64";
 
@@ -72,9 +72,11 @@ export function collectExportFonts(
     if (!node) return;
     if (keep && !keep.has(nodeId)) return;
     if (node.type === "text") {
-      const family = node.fontFamily;
-      const weight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
-      const style = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
+      // 字体 token 生效后的族名/字重/字形才是导出物真正要用的字体。
+      const text = applyTypographyToken(document, node) as TextNode;
+      const family = text.fontFamily;
+      const weight = text.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+      const style = text.fontStyle ?? TEXT_DEFAULTS.fontStyle;
       const key = `${family} ${weight} ${style}`;
       if (!found.has(key)) found.set(key, { family, weight, style });
     }

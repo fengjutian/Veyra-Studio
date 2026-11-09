@@ -1,4 +1,4 @@
-import { parseGridAreaTemplate, resolveGap, resolveGridCellRect, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
+import { applyTypographyToken, parseGridAreaTemplate, resolveGap, resolveGridCellRect, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
 import { assignCellsByOrder, ensureTracks, expandRepeatTracks, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
@@ -38,7 +38,9 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
   const intrinsic = (nodeId: NodeId): Size => {
     const cached = intrinsicCache.get(nodeId);
     if (cached) return cached;
-    const node = document.nodes[nodeId];
+    // 字体 token 在这一层生效：测量看到的已经是覆盖后的样式，
+    // 因此 hug 宽高会跟着 token 走，而不是只看节点自身的字号。
+    const node = document.nodes[nodeId] ? applyTypographyToken(document, document.nodes[nodeId]!) : undefined;
     if (!node) return { width: 0, height: 0 };
     let content: Size;
     if (node.type === "text") {
@@ -223,7 +225,7 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
   };
 
   const layoutNode = (nodeId: NodeId, x: number, y: number, availableWidth: number, availableHeight: number, forced?: Partial<Size>): void => {
-    const node = document.nodes[nodeId];
+    const node = applyTypographyToken(document, document.nodes[nodeId]!);
     const width = forced?.width ?? resolveDimension(node, "width", availableWidth);
     // A hugging text height depends on the width it actually got, which is only
     // known here — so measure against the resolved width instead of the cached intrinsic.

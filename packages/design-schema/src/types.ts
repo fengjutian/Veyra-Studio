@@ -528,10 +528,31 @@ export interface ComponentSetDefinition {
   componentProperties?: ComponentProperty[];
 }
 
-export interface TokenValue {
-  type: "color" | "number" | "string";
-  value: string | number;
+/**
+ * 字体（typography）token 的值。
+ *
+ * 对应设计系统里的一条「文字样式」：族名、字号、行高、字重、字形、字距。
+ * 除 `fontFamily` / `fontSize` 外都可省略——省略的字段不覆盖节点自身的值，
+ * 于是「只统一字号」和「整套文字样式」都能用同一种 token 表达。
+ */
+export interface TypographyValue {
+  fontFamily: string;
+  fontSize: number;
+  lineHeight?: number;
+  fontWeight?: number;
+  fontStyle?: "normal" | "italic";
+  letterSpacing?: number;
 }
+
+/**
+ * 设计 token。
+ *
+ * `color` / `number` / `string` 是早期的三种标量；`typography` 是复合值，
+ * 绑定到文本节点后**覆盖**节点的文字样式（见 `resolveTypography()`）。
+ */
+export type TokenValue =
+  | { type: "color" | "number" | "string"; value: string | number }
+  | { type: "typography"; value: TypographyValue };
 
 export interface AssetMetadata {
   id: AssetId;

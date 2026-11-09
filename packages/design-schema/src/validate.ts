@@ -80,6 +80,8 @@ export function validateDocument(input: unknown): DesignDocument {
       const token = document.tokens[tokenName];
       if (!token) issues.push(`node ${nodeId} ${property} binding references missing token ${tokenName}`);
       else if (!bindingAccepts(property, token.type)) issues.push(`node ${nodeId} ${property} binding cannot use ${token.type} token ${tokenName}`);
+      // 字体样式只对文本节点有意义；绑在容器上不会生效，早报比静默忽略好。
+      else if (property === "typography" && node.type !== "text") issues.push(`node ${nodeId} typography binding requires a text node`);
     }
   }
 
@@ -214,7 +216,8 @@ export function validateDocument(input: unknown): DesignDocument {
 function bindingAccepts(property: string, tokenType: string): boolean {
   if (property === "fill" || property === "stroke") return tokenType === "color";
   if (property === "spacing" || property === "radius") return tokenType === "number";
-  if (property === "typography") return tokenType === "string";
+  // 字体绑定只认 typography token：`string` 是早期的标量类型，没有渲染语义。
+  if (property === "typography") return tokenType === "typography";
   return true;
 }
 

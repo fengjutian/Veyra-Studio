@@ -418,10 +418,24 @@ export const designDocumentSchema = z.object({
     weight: z.number().int().min(100).max(900).optional(),
     style: z.enum(["normal", "italic"]).optional(),
   })).optional(),
-  tokens: z.record(z.string(), z.object({
-    type: z.enum(["color", "number", "string"]),
-    value: z.union([z.string(), z.number()]),
-  })),
+  tokens: z.record(z.string(), z.union([
+    z.object({
+      type: z.enum(["color", "number", "string"]),
+      value: z.union([z.string(), z.number()]),
+    }),
+    z.object({
+      type: z.literal("typography"),
+      value: z.object({
+        fontFamily: z.string().min(1),
+        // 字号必须为正：0 会让文本测量退化成 0 宽、0 高。
+        fontSize: z.number().finite().positive(),
+        lineHeight: z.number().finite().nonnegative().optional(),
+        fontWeight: z.number().int().min(100).max(900).optional(),
+        fontStyle: z.enum(["normal", "italic"]).optional(),
+        letterSpacing: z.number().finite().optional(),
+      }),
+    }),
+  ])),
   assets: z.record(id, z.object({
     id,
     hash: z.string().min(1),

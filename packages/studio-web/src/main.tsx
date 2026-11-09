@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -74,6 +74,7 @@ import { DEFAULT_HISTORY_KEEP, storageUsageOverview, type StorageUsageOverview }
 import { StoragePanel } from "./storage-panel";
 import { DiskBackupPanel } from "./disk-backup-panel";
 import { DiskBackupRunner, type DiskBackupStatus } from "./disk-backup";
+import { askTypographyValue } from "./typography-form";
 import {
   backupDirectoryFromHandle,
   clearSavedBackupDirectory,
@@ -1234,11 +1235,14 @@ function App() {
   const createToken = () => void run(async () => {
     const type = await askChoice({
       title: "新增 Token",
-      description: "颜色 token 可以绑定填充/描边；数值 token 可以绑定圆角/自动布局间距。",
-      options: [{ value: "color", label: "颜色" }, { value: "number", label: "数值" }],
+      description: "颜色 token 绑定填充/描边；数值 token 绑定圆角/自动布局间距；字体 token 绑定文本节点的整套文字样式。",
+      options: [{ value: "color", label: "颜色" }, { value: "number", label: "数值" }, { value: "typography", label: "字体" }],
     });
     if (!type) return;
-    const name = (await askText({ title: "Token 名称", defaultValue: type === "color" ? "color.primary" : "space.md" }))?.trim();
+    const name = (await askText({
+      title: "Token 名称",
+      defaultValue: type === "color" ? "color.primary" : type === "number" ? "space.md" : "text.body",
+    }))?.trim();
     if (!name) return;
     if (type === "color") {
       const value = (await askText({ title: "颜色值", defaultValue: "#6366f1", validate: validateColor }))?.trim();
@@ -1246,11 +1250,23 @@ function App() {
       await execute([{ type: "token.upsert", payload: { name, token: { type: "color", value } } }]);
       return;
     }
+    if (type === "typography") {
+      const value = await askTypographyValue(askForm, { fontFamily: "Inter", fontSize: 14, lineHeight: 20, fontWeight: 400, letterSpacing: 0 });
+      if (!value) return;
+      await execute([{ type: "token.upsert", payload: { name, token: { type: "typography", value } } }]);
+      return;
+    }
     const value = (await askText({ title: "数值", defaultValue: "16", validate: validateNumber }))?.trim();
     if (!value) return;
     await execute([{ type: "token.upsert", payload: { name, token: { type: "number", value: Number(value) } } }]);
   });
-  const updateToken = (name: string, token: { type: "color" | "number"; value: string | number }) => void run(async () => {
+  const updateToken = (name: string, token: TokenValue) => void run(async () => {
+    if (token.type === "typography") {
+      const next = await askTypographyValue(askForm, token.value);
+      if (!next) return;
+      await execute([{ type: "token.upsert", payload: { name, token: { type: "typography", value: next } } }]);
+      return;
+    }
     const current = String(token.value);
     const value = token.type === "color"
       ? (await askText({ title: "颜色值", defaultValue: current, validate: validateColor }))?.trim()

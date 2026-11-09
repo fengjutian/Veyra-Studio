@@ -1,4 +1,4 @@
-import { LIST_INDENT_STEP, LIST_MARKER_WIDTH, MAX_LIST_INDENT, TEXT_DEFAULTS, absolutePath, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, resolveParagraphs, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
+import { LIST_INDENT_STEP, LIST_MARKER_WIDTH, MAX_LIST_INDENT, TEXT_DEFAULTS, absolutePath, applyTypographyToken, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, resolveParagraphs, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -310,15 +310,17 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
   }
 
   if (node.type === "text") {
-    declarations.push(`font-family:${cssString(node.fontFamily)}`, `font-size:${px(node.fontSize)}`, `line-height:${px(node.lineHeight)}`, "white-space:pre-wrap", "margin:0");
+    // 字体 token 在这里先落到具体值：导出物里不写绑定，只写它生效后的样式。
+    const text = applyTypographyToken(document, node) as typeof node;
+    declarations.push(`font-family:${cssString(text.fontFamily)}`, `font-size:${px(text.fontSize)}`, `line-height:${px(text.lineHeight)}`, "white-space:pre-wrap", "margin:0");
     // 只有偏离缺省值的样式才写进 CSS，旧文档的导出结果保持不变。
-    const fontWeight = node.fontWeight ?? TEXT_DEFAULTS.fontWeight;
+    const fontWeight = text.fontWeight ?? TEXT_DEFAULTS.fontWeight;
     if (fontWeight !== TEXT_DEFAULTS.fontWeight) declarations.push(`font-weight:${fontWeight}`);
-    const fontStyle = node.fontStyle ?? TEXT_DEFAULTS.fontStyle;
+    const fontStyle = text.fontStyle ?? TEXT_DEFAULTS.fontStyle;
     if (fontStyle !== TEXT_DEFAULTS.fontStyle) declarations.push(`font-style:${fontStyle}`);
-    const textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
+    const textAlign = text.textAlign ?? TEXT_DEFAULTS.textAlign;
     if (textAlign !== TEXT_DEFAULTS.textAlign) declarations.push(`text-align:${textAlign}`);
-    const letterSpacing = node.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
+    const letterSpacing = text.letterSpacing ?? TEXT_DEFAULTS.letterSpacing;
     if (letterSpacing !== TEXT_DEFAULTS.letterSpacing) declarations.push(`letter-spacing:${px(letterSpacing)}`);
   }
   if (node.type === "image") declarations.push(`object-fit:${node.fit}`);
@@ -405,7 +407,12 @@ function addSize(declarations: string[], axis: "width" | "height", mode: "fixed"
 }
 
 function buildCss(document: DesignDocument, options: HtmlExportOptions, tokenVariables: Record<string, string>): string {
-  const variables = Object.entries(document.tokens).map(([name, token]) => `  ${tokenVariables[name]}: ${cssTokenValue(token.value)};`).join("\n");
+  // 字体 token 是复合值，没有单一 CSS 变量可言——它只在文本节点上展开。
+  const variables = Object.entries(document.tokens).flatMap(([name, token]) => {
+    const value = token.value;
+    if (typeof value !== "string" && typeof value !== "number") return [];
+    return [`  ${tokenVariables[name]}: ${cssTokenValue(value)};`];
+  }).join("\n");
   // 页面里有混合模式时给页面加 isolation：混合只应该在页面内部发生，
   // 不然会跟页面外的背景（浏览器窗口底色）混在一起。
   // 没有混合模式的旧文档不加这一行，导出产物逐字不变。

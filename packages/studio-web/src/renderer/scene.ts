@@ -1,4 +1,5 @@
 import {
+  applyTypographyToken,
   resolveCornerRadii,
   resolveFills,
   resolveRadius,
@@ -14,6 +15,7 @@ import {
   type PathCommand,
   type ShadowSpec,
   type ParagraphStyleRun,
+  type TextNode,
   type TextRun,
 } from "@ufira/design-schema";
 
@@ -160,18 +162,21 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
   };
 
   if (node.type === "text") {
+    // 字体 token 覆盖在场景构建这一层生效：渲染器只认具体字号/族名，
+    // 不再回头查文档里的绑定。`applyTypographyToken` 只改文字样式，不改节点类型。
+    const text = applyTypographyToken(document, node) as TextNode;
     scene.text = {
-      value: node.text,
-      fontFamily: node.fontFamily,
-      fontSize: node.fontSize,
-      lineHeight: node.lineHeight,
-      fontWeight: node.fontWeight ?? 400,
-      fontStyle: node.fontStyle === "italic" ? "italic" : "normal",
-      align: node.textAlign === "center" || node.textAlign === "right" ? node.textAlign : "left",
-      letterSpacing: node.letterSpacing ?? 0,
+      value: text.text,
+      fontFamily: text.fontFamily,
+      fontSize: text.fontSize,
+      lineHeight: text.lineHeight,
+      fontWeight: text.fontWeight ?? 400,
+      fontStyle: text.fontStyle === "italic" ? "italic" : "normal",
+      align: text.textAlign === "center" || text.textAlign === "right" ? text.textAlign : "left",
+      letterSpacing: text.letterSpacing ?? 0,
       color: fill ?? "#111111",
-      ...(node.runs?.length ? { runs: node.runs } : {}),
-      ...(node.paragraphStyles?.length ? { paragraphStyles: node.paragraphStyles } : {}),
+      ...(text.runs?.length ? { runs: text.runs } : {}),
+      ...(text.paragraphStyles?.length ? { paragraphStyles: text.paragraphStyles } : {}),
     };
   }
   if (node.type === "image" && node.assetId) {

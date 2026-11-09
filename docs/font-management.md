@@ -88,7 +88,11 @@ collectMissingFonts(document, available) = 文本用到的族名 − available
   （**后续轮次已补**：HTML 导出会把文档声明过的字体内联成 `@font-face`——
   见 `font-inline.md`；超过 1 MB 的字体还会先做**子集化**再内联——
   见本文件 §7）；
-- 字体 token（typography token 的渲染语义）仍未实现，与本轮的"字体文件管理"是两件事；
+- 字体 token（typography token 的渲染语义）**已实现（2026-11-09）**：
+  `TokenValue` 新增 `typography` 复合值（族名 / 字号 / 行高 / 字重 / 字形 / 字距），
+  绑定到文本节点后覆盖文字样式，`applyTypographyToken()` 同时服务布局测量、
+  画布场景、HTML/SVG 导出与导出字体内联。它和「字体文件管理」是两件事：
+  前者统一样式，后者保证字形可用；
 - 缺失字体只做提示，不阻止导出——导出的交付物里同样会走回退字形。
 
 ## 7. 字体子集化（浏览器端 harfbuzz wasm）
