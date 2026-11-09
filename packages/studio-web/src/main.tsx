@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, applyTypographyToken, defaultAppearance, defaultLayout, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, applyTypographyToken, defaultAppearance, defaultLayout, lintDocument, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -73,6 +73,7 @@ import { readStorageEstimate, storagePercent, type StorageEstimate } from "./sto
 import { DEFAULT_HISTORY_KEEP, storageUsageOverview, type StorageUsageOverview } from "./storage-usage";
 import { StoragePanel } from "./storage-panel";
 import { DiskBackupPanel } from "./disk-backup-panel";
+import { LintPanel } from "./lint-panel";
 import { DiskBackupRunner, type DiskBackupStatus } from "./disk-backup";
 import { askTypographyValue } from "./typography-form";
 import { mergeAssetOrigin } from "./asset-origin";
@@ -272,6 +273,8 @@ function App() {
   // 顶栏项目下拉里的 revision 和「历史版本」的「当前」必须指向同一份存储状态，
   // 否则撤销后会出现「下拉说 r1、面板说 r2 当前」的自相矛盾。
   const snapshotProjectId = document?.id;
+  // 设计检查：纯函数、随文档变化重算；只提示，不写文档也不进事务。
+  const lintIssues = useMemo(() => (document ? lintDocument(document, { grid: 8 }) : []), [document]);
   useEffect(() => {
     if (autosave.state !== "saved" || !snapshotProjectId) return;
     let cancelled = false;
@@ -2013,6 +2016,10 @@ function App() {
           <section className="inspector-section">
             <h2>存储用量</h2>
             <StoragePanel estimate={storage} usage={storageUsage} disabled={busy} onRefresh={() => { refreshStorage(); refreshStorageUsage(); }} onExportBackup={exportJson} onTrimHistory={trimProjectHistory} onDeleteProject={deleteStorageProject} />
+          </section>
+          <section className="inspector-section">
+            <h2>设计检查</h2>
+            <LintPanel issues={lintIssues} disabled={busy} onSelect={nodeId => setSelectedIds([nodeId])} />
           </section>
           <section className="inspector-section">
             <h2>磁盘备份</h2>

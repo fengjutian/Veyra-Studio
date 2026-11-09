@@ -10,6 +10,7 @@ export * from "./paragraph-styles";
 export * from "./fonts";
 export * from "./schema";
 export * from "./validate";
+export * from "./lint";
 export * from "./migrate";
 export * from "./tokens";
 export * from "./paint";
