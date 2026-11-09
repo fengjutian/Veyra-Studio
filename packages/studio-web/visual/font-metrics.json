@@ -1,0 +1,115 @@
+{
+  "environment": {
+    "os": "win32",
+    "osRelease": "win32 10.0.26200",
+    "browser": "Chrome 156.0.0.0",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+    "generatedAt": "2026-11-09T06:53:39.080Z"
+  },
+  "cases": [
+    {
+      "id": "latin-400-14",
+      "text": "The quick brown fox jumps over the lazy dog",
+      "fontFamily": "Inter",
+      "fontSize": 14,
+      "fontWeight": 400,
+      "width": 301.718,
+      "height": 20,
+      "lines": 1
+    },
+    {
+      "id": "latin-700-14",
+      "text": "The quick brown fox jumps over the lazy dog",
+      "fontFamily": "Inter",
+      "fontSize": 14,
+      "fontWeight": 700,
+      "width": 318.309,
+      "height": 20,
+      "lines": 1
+    },
+    {
+      "id": "cjk-400-14",
+      "text": "设计系统里的排版基线",
+      "fontFamily": "Inter",
+      "fontSize": 14,
+      "fontWeight": 400,
+      "width": 140,
+      "height": 20,
+      "lines": 1
+    },
+    {
+      "id": "mixed-400-16",
+      "text": "混合 Mixed 文本 123",
+      "fontFamily": "Inter",
+      "fontSize": 16,
+      "fontWeight": 400,
+      "width": 153.531,
+      "height": 20,
+      "lines": 1
+    },
+    {
+      "id": "italic-400-16",
+      "text": "Italic metrics differ",
+      "fontFamily": "Inter",
+      "fontSize": 16,
+      "fontWeight": 400,
+      "fontStyle": "italic",
+      "width": 142.117,
+      "height": 20,
+      "lines": 1
+    },
+    {
+      "id": "spacing-05-16",
+      "text": "Letter spaced",
+      "fontFamily": "Inter",
+      "fontSize": 16,
+      "fontWeight": 400,
+      "letterSpacing": 0.5,
+      "width": 109.078,
+      "height": 20,
+      "lines": 1
+    },
+    {
+      "id": "wrap-latin-200",
+      "text": "Wrapping at two hundred pixels decides where the line breaks and therefore the height of a hugging text node.",
+      "fontFamily": "Inter",
+      "fontSize": 14,
+      "fontWeight": 400,
+      "availableWidth": 200,
+      "width": 196.041,
+      "height": 100,
+      "lines": 5
+    },
+    {
+      "id": "wrap-cjk-120",
+      "text": "中文换行的断点同样要稳定下来，否则画布和导出物会对不上。",
+      "fontFamily": "Inter",
+      "fontSize": 14,
+      "fontWeight": 400,
+      "availableWidth": 120,
+      "width": 112,
+      "height": 80,
+      "lines": 4
+    },
+    {
+      "id": "serif-400-18",
+      "text": "Serif family metrics",
+      "fontFamily": "Georgia",
+      "fontSize": 18,
+      "fontWeight": 400,
+      "width": 155.417,
+      "height": 20,
+      "lines": 1
+    },
+    {
+      "id": "mono-400-13",
+      "text": "monospace 0123456789",
+      "fontFamily": "monospace",
+      "fontSize": 13,
+      "fontWeight": 400,
+      "width": 140,
+      "height": 20,
+      "lines": 1
+    }
+  ]
+}

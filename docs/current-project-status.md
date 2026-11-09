@@ -587,6 +587,14 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   **省略的字段不覆盖**节点值。`applyTypographyToken()` 是唯一入口，布局测量、
   画布场景、HTML/SVG 导出与导出字体内联都在这里汇合；schema 拒绝把字体 token
   绑到非文本节点、也拒绝用颜色/数值 token 充当字体；
+- **字体度量基线已建立**（2026-11-09）：`design-layout/src/font-baseline.ts` 定义固定
+  样例集（中英文混排、纯中文、字重、斜体、字距、固定宽度下的换行）与比较逻辑；
+  采集端 `studio-web/visual/font-baseline.ts` 用 esbuild + headless Chrome 跑
+  **编辑器同一条测量路径**（`createBrowserTextMeasurer()`），结果写进 DOM 再读回。
+  基线文件记录**平台指纹**（系统 / 浏览器 / 采样时间），换机器时差异是可解释的。
+  判定纪律：宽度容差 0.5px、**换行点零容差**、**非有限值一律算差异**（含 NaN 的
+  基线曾被判成"完全一致"，因为 `NaN === NaN`）。仓库里目前只有 Windows + Chrome
+  这一份基线，其余平台要各自采集。规格见 `font-baseline.md`；
 - **导出物内联字体**：HTML 交付物会把**文档声明过**的字体文件内联成
   `@font-face`（data URI），因此对方机器上没装这个字体也不会走回退字形——
   「画完了、交出去、字变了」这个断链被接上了。规则：只有 `document.fonts` 里
