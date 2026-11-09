@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDocument, CURRENT_SCHEMA_VERSION } from "@ufira/design-schema";
+import { encryptBackupText } from "../src/backup-crypto";
 import {
   detectImportConflict,
   planBatchImport,
@@ -213,4 +214,13 @@ test("a batch import flags a file that is another version of an existing project
 
   assert.equal(result.plans[0]?.conflict?.kind, "id");
   assert.equal(result.plans[0]?.document.id !== "project:1", true);
+});
+
+test("批量导入：加密备份不混进批量，要求单独导入", async () => {
+  const envelope = await encryptBackupText(JSON.stringify(createDocument("project:1", "x", "page:1")), "pw");
+  const result = readImportSource("enc.json", envelope);
+
+  assert.ok("reason" in result);
+  assert.match(result.reason, /加密备份/);
+  assert.match(result.reason, /单独导入/);
 });

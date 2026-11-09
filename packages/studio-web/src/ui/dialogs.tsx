@@ -24,6 +24,8 @@ export interface PromptRequest {
   defaultValue?: string;
   placeholder?: string;
   confirmLabel?: string;
+  /** 密码类输入：渲染成 password 框（不遮挡、不进浏览器自动填充建议）。 */
+  secret?: boolean;
   /** 返回错误文案表示校验不通过；返回 undefined 表示通过。 */
   validate?: (value: string) => string | undefined;
 }
@@ -227,6 +229,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                     <input
                       ref={inputRef}
                       className="dialog-input"
+                      type={promptRequest.secret ? "password" : "text"}
                       value={draft}
                       placeholder={promptRequest.placeholder}
                       onChange={event => { setDraft(event.target.value); setError(undefined); }}
@@ -235,6 +238,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                 : <input
                   ref={inputRef}
                   className="dialog-input"
+                  type={promptRequest?.secret ? "password" : "text"}
                   value={draft}
                   placeholder={promptRequest?.placeholder}
                   onChange={event => { setDraft(event.target.value); setError(undefined); }}

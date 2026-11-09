@@ -1,4 +1,5 @@
 import { MigrationError, migrateDocument, type DesignDocument, type MigrationSuccess } from "@ufira/design-schema";
+import { isEncryptedBackupText } from "./backup-crypto";
 
 export interface ImportDocumentOptions {
   /** 目标项目 id；copy 模式下不传则新生成一个。 */
@@ -132,6 +133,11 @@ export interface BatchImportSource {
  * 批量导入时不能让一个坏文件把整批都拖垮，所以解析失败单独成一条失败记录。
  */
 export function readImportSource(fileName: string, text: string): BatchImportSource | BatchImportFailure {
+  // 批量导入不处理加密备份：批里每个文件可能用不同密码，逐个弹窗问密码会让
+  // 「一次拖十个文件」变成十轮问答。明确提示单独导入。
+  if (isEncryptedBackupText(text)) {
+    return { fileName, reason: "这是加密备份，请单独导入该文件并输入密码" };
+  }
   try {
     return { fileName, raw: JSON.parse(text) };
   } catch (error) {

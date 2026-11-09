@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, applyTypographyToken, defaultAppearance, defaultLayout, lintDocument, normalizePath, supportsBooleanOperand, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -75,6 +75,8 @@ import { StoragePanel } from "./storage-panel";
 import { DiskBackupPanel } from "./disk-backup-panel";
 import { LintPanel } from "./lint-panel";
 import { DiskBackupRunner, type DiskBackupStatus } from "./disk-backup";
+import { parentContentOrigin, planCanvasReparent } from "./canvas-reparent";
+import { encryptBackupText, supportsBackupEncryption, isEncryptedBackupText, decryptBackupText, BackupDecryptError } from "./backup-crypto";
 import { askTypographyValue } from "./typography-form";
 import { mergeAssetOrigin } from "./asset-origin";
 import {
@@ -183,9 +185,19 @@ function App() {
   const diskBackupSupported = useMemo(() => supportsDiskBackup(), []);
   const diskBackupRunner = useRef<DiskBackupRunner | null>(null);
   if (!diskBackupRunner.current) diskBackupRunner.current = new DiskBackupRunner();
+  // 磁盘备份的加密状态。密码只留在内存里（ref）：不进 state、不进 localStorage /
+  // IndexedDB、不进备份文件——没有服务端就没有找回通道，忘记就是永久丢失。
+  const [diskBackupEncrypted, setDiskBackupEncrypted] = useState(false);
+  const diskBackupPassword = useRef<string | undefined>(undefined);
   const [storage, setStorage] = useState<StorageEstimate>();
   // 逐项目的存储占用与清理清单。
   const [storageUsage, setStorageUsage] = useState<StorageUsageOverview>();
+  // 当前主题：视图状态，不进文档、不涨 revision；切换只影响预览与导出。
+  const [activeThemeId, setActiveThemeId] = useState<string>();
+  // 主题合并后的文档：画布、对比度、场景都读它。
+  const themedDocument = useMemo(() => (document ? applyThemeTokens(document, activeThemeId) : undefined), [document, activeThemeId]);
+  const themedTokens = useMemo(() => (document ? themeTokenMap(document, activeThemeId) : {}), [document, activeThemeId]);
+  const activeTheme = document ? findTheme(document, activeThemeId) : undefined;
   // 最近一次导出的诊断与格式，面板据此列出可定位的问题。
   const [exportReport, setExportReport] = useState<{ format: ExportFormat; diagnostics: ExportDiagnostic[] }>();
   // 隔离预览：弹窗里渲染导出器真实产物。
@@ -413,10 +425,10 @@ function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [syncCanvasViewport]);
-  const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch);
+  const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch, activeThemeId);
   const hitTestScene = useMemo(
-    () => (document && activePageId) ? buildScene(document, activePageId, canvasLayout.boxes) : [],
-    [document, activePageId, canvasLayout.boxes],
+    () => (themedDocument && activePageId) ? buildScene(themedDocument, activePageId, canvasLayout.boxes) : [],
+    [themedDocument, activePageId, canvasLayout.boxes],
   );
   // 路径编辑的目标：命令换成绝对场景坐标，编辑期的一切计算都在这个坐标系里做。
   const pathEditTarget = useMemo<PathEditTarget | undefined>(() => {
@@ -439,7 +451,7 @@ function App() {
   // 资源面板和画布共用同一份使用情况与缺失集合。
   const assetUsage = useMemo(() => document ? collectAssetUsage(document) : [], [document]);
   // 对比度检查只依赖文档颜色，不需要渲染，因此可以随文档变化实时计算。
-  const contrastIssues = useMemo(() => document ? collectContrastIssues(document) : [], [document]);
+  const contrastIssues = useMemo(() => themedDocument ? collectContrastIssues(themedDocument) : [], [themedDocument]);
   const missingIds = useMemo(() => missingAssetIds(missingAssets), [missingAssets]);
   const transactionRows = useMemo(() => {
     // 回退的起点：保留的历史版本 + 重建基线。基线让日志里早于最老快照的那些
@@ -472,7 +484,7 @@ function App() {
     pointOf: event => pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom),
     layoutOf: id => document?.nodes[id]?.layout,
     rotationOf: id => document?.nodes[id]?.layout.rotation,
-    onCommit: changes => patchLayouts(changes),
+    onCommit: (changes, dropContainerId) => commitCanvasMove(changes, dropContainerId),
     onMarquee: ids => setSelectedIds(ids),
     onDraw: (rect, info) => createNodeFromDraw(info.tool, rect, info),
   });
@@ -673,6 +685,25 @@ function App() {
     setDiskBackupDirectory(undefined);
     setDiskBackup({ state: "disabled" });
     setMessage("已断开磁盘备份");
+  });
+  /**
+   * 开启磁盘备份加密。
+   *
+   * 密码只进内存：写盘的每一步都用它派生密钥（PBKDF2），密文里只留 salt 与 IV。
+   * 已经写出的明文备份不会被追溯加密——加密只对**之后**的写入生效。
+   */
+  const enableDiskBackupEncryption = (password: string) => void run(async () => {
+    diskBackupPassword.current = password;
+    diskBackupRunner.current?.setEncoder({ encode: plain => encryptBackupText(plain, password) });
+    setDiskBackupEncrypted(true);
+    setMessage("磁盘备份已加密：之后写出的备份是密文");
+  });
+  /** 关闭加密：新写出的备份恢复明文，已写出的文件不动。 */
+  const disableDiskBackupEncryption = () => void run(async () => {
+    diskBackupPassword.current = undefined;
+    diskBackupRunner.current?.setEncoder(undefined);
+    setDiskBackupEncrypted(false);
+    setMessage("已关闭磁盘备份加密（新写出的备份恢复明文，已有文件不变）");
   });
   const restoreBackup = (row: BackupSummary) => void run(async () => {
     const confirmation = backupRestoreConfirmation(row);
@@ -1029,6 +1060,44 @@ function App() {
     }
   };
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
+  /**
+   * 画布拖动的提交：换父级 + 坐标换算。
+   *
+   * 布局里的 x/y 是**相对父级内容盒**的局部坐标，画布给的却是页面坐标，提交前
+   * 必须换算：页面层的原点是 (0,0)，所以页面直接子节点的老行为逐字不变；容器的
+   * 原点是它的内容盒左上角（嵌套节点由此被修正——此前写进去的是绝对坐标）。
+   *
+   * 落点容器与当前父级不同时额外发一条 `node.reparent`；规则与拒绝原因集中在
+   * `canvas-reparent.ts`（不拖进自己的子树、不拖进自动布局容器等）。
+   */
+  const commitCanvasMove = (changes: Array<{ id: string; layout: DesignNode["layout"] }>, dropContainerId?: string) => {
+    const current = documentRef.current;
+    if (!current || !changes.length) { patchLayouts(changes); return; }
+    const ids = changes.map(change => change.id);
+    const boxes = Object.fromEntries(changes.map(change => [change.id, { x: change.layout.x, y: change.layout.y }]));
+    const crossesContainer = Boolean(dropContainerId) && ids.some(id => current.nodes[id]?.parentId !== dropContainerId);
+    if (crossesContainer && dropContainerId) {
+      const plan = planCanvasReparent({
+        document: current,
+        draggedIds: ids,
+        containerId: dropContainerId,
+        boxes,
+        containerOrigin: parentContentOrigin(current, hitTestScene, dropContainerId),
+      });
+      // 拒绝时不动文档，只把原因说清楚——比默默挪回去有用。
+      if ("commands" in plan) {
+        void run(() => execute(plan.commands));
+        return;
+      }
+      setMessage(plan.reason);
+      return;
+    }
+    const local = changes.map(change => {
+      const origin = parentContentOrigin(current, hitTestScene, current.nodes[change.id]?.parentId);
+      return { id: change.id, layout: { ...change.layout, x: change.layout.x - origin.x, y: change.layout.y - origin.y } };
+    });
+    patchLayouts(local);
+  };
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints" | "overflow">>) => selected && patchNode(selected.id, patchValue);
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
   const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
@@ -1060,13 +1129,13 @@ function App() {
   const exportScopeLabel = exportTarget.nodeIds ? "（选区）" : "（整页）";
   const exportHtml = () => void run(async () => {
     // 带资源的导出：图片节点在 HTML 里要落成 data URL，否则只会剩一个空框。
-    const result = await project.exportHtmlWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds });
+    const result = await project.exportHtmlWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
     downloadFile(`${exportFilename}.html`, result.document, "text/html");
     setExportReport({ format: "html", diagnostics: result.diagnostics });
     setMessage(`HTML 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
   });
   const exportSvg = () => void run(async () => {
-    const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds });
+    const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
     downloadFile(`${exportFilename}.svg`, result.svg, "image/svg+xml");
     setExportReport({ format: "svg", diagnostics: result.diagnostics });
     setMessage(`SVG 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
@@ -1075,13 +1144,13 @@ function App() {
     const snapshot = project.snapshot();
     // 图片写成 data URL 之后画布不会被外部资源污染，PNG 才能读回像素。
     const resolveAsset = await createAssetResolver(repository, snapshot, page.id, exportTarget.nodeIds);
-    const result = await exportPageToPng(snapshot, { pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, scale: 2, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, resolveAsset });
+    const result = await exportPageToPng(snapshot, { pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, scale: 2, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, resolveAsset, themeId: activeThemeId });
     downloadDataUrl(`${exportFilename}.png`, result.dataUrl);
     setExportReport({ format: "png", diagnostics: result.diagnostics });
     setMessage(`PNG 已导出${exportScopeLabel} · ${result.width}×${result.height}`);
   });
   // 预览和下载走同一个导出入口，看到的就是交付物本身。
-  const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds });
+  const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
   const previewHtml = () => void run(async () => {
     const result = await project.exportHtmlWithAssets(exportOptions());
     setExportReport({ format: "html", diagnostics: result.diagnostics });
@@ -1120,9 +1189,37 @@ function App() {
     });
     return name?.trim() || undefined;
   };
+  /**
+   * 读导入文件的原文；加密备份先要密码。
+   *
+   * 密码错了可以重试（弹窗再问一次），但不限次数——用户可能压根不知道这个文件
+   * 是加密的，一直猜密码没有意义。返回 undefined 表示用户放弃。
+   */
+  const readImportedText = async (text: string): Promise<string | undefined> => {
+    if (!isEncryptedBackupText(text)) return text;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const password = await askText({
+        title: "这份备份是加密的",
+        description: "输入导出这份备份时设置的密码。密码不对可以再试。",
+        label: "密码",
+        secret: true,
+        confirmLabel: "解密",
+      });
+      if (!password) return undefined;
+      try {
+        return await decryptBackupText(text, password);
+      } catch (error) {
+        if (!(error instanceof BackupDecryptError)) throw error;
+        setMessage(error.message);
+      }
+    }
+    return undefined;
+  };
   /** 导入一个文件：可能是新项目，也可能覆盖同一个项目的另一个版本。 */
   const importSingle = async (file: File) => {
-    const raw = JSON.parse(await file.text());
+    const plain = await readImportedText(await file.text());
+    if (plain === undefined) { setMessage("已取消导入"); return; }
+    const raw = JSON.parse(plain);
     const existing = await repository.listProjects();
     const taken = existing.map(item => item.name);
     const probe = prepareImportedDocument(raw);
@@ -1255,7 +1352,53 @@ function App() {
       setPlanning(false); setBusy(false); setStreamText("");
     }
   };
+  /** 写 token：主题激活时写成该主题的覆盖，否则改基础值。 */
+  const applyToken = async (name: string, token: TokenValue) => {
+    if (activeTheme && activeThemeId) {
+      await execute([{ type: "theme.upsert", payload: { theme: { ...activeTheme, tokens: { ...activeTheme.tokens, [name]: token } } } }]);
+      return;
+    }
+    await execute([{ type: "token.upsert", payload: { name, token } }]);
+  };
+  /** 新增主题：先建空主题再切过去，之后在 token 面板里改值就是写覆盖。 */
+  const createTheme = () => void run(async () => {
+    const values = await askForm({
+      title: "新增主题",
+      description: "主题只覆盖已有 token 的值，不新建 token；建好后在「设计 Tokens」里改值即为覆盖。",
+      fields: [{ key: "name", label: "主题名称", defaultValue: `主题 ${(document.themes?.length ?? 0) + 1}` }],
+      validate: input => (input.name?.trim() ? undefined : "主题名称不能为空"),
+    });
+    if (!values) return;
+    const theme = { id: `theme:${crypto.randomUUID()}`, name: values.name.trim(), tokens: {} };
+    await execute([{ type: "theme.upsert", payload: { theme } }]);
+    setActiveThemeId(theme.id);
+    setMessage(`已新增主题「${theme.name}」`);
+  });
+  const deleteActiveTheme = () => void run(async () => {
+    if (!activeThemeId) return;
+    if (!await askConfirm({
+      title: "删除主题",
+      description: `删除主题「${activeTheme?.name ?? activeThemeId}」？只删除它的覆盖值，基础 token 不受影响。`,
+      confirmLabel: "删除",
+      destructive: true,
+    })) return;
+    await execute([{ type: "theme.delete", payload: { id: activeThemeId } }]);
+    setActiveThemeId(undefined);
+    setMessage("主题已删除");
+  });
+  /** 去掉某个 token 在当前主题下的覆盖，回到基础值。 */
+  const resetThemeOverride = (name: string) => void run(async () => {
+    if (!activeTheme) return;
+    const tokens = { ...activeTheme.tokens };
+    delete tokens[name];
+    await execute([{ type: "theme.upsert", payload: { theme: { ...activeTheme, tokens } } }]);
+    setMessage(`「${name}」已恢复基础值`);
+  });
   const createToken = () => void run(async () => {
+    if (activeThemeId) {
+      setMessage("当前在主题模式：主题只能覆盖已有 token，请先切回「基础」再新增");
+      return;
+    }
     const type = await askChoice({
       title: "新增 Token",
       description: "颜色 token 绑定填充/描边；数值 token 绑定圆角/自动布局间距；字体 token 绑定文本节点；别名 token 指向另一个 token（语义分层）。",
@@ -1270,13 +1413,13 @@ function App() {
     if (type === "color") {
       const value = (await askText({ title: "颜色值", defaultValue: "#6366f1", validate: validateColor }))?.trim();
       if (!value) return;
-      await execute([{ type: "token.upsert", payload: { name, token: { type: "color", value } } }]);
+      await applyToken(name, { type: "color", value });
       return;
     }
     if (type === "typography") {
       const value = await askTypographyValue(askForm, { fontFamily: "Inter", fontSize: 14, lineHeight: 20, fontWeight: 400, letterSpacing: 0 });
       if (!value) return;
-      await execute([{ type: "token.upsert", payload: { name, token: { type: "typography", value } } }]);
+      await applyToken(name, { type: "typography", value });
       return;
     }
     if (type === "alias") {
@@ -1292,18 +1435,18 @@ function App() {
         },
       }))?.trim();
       if (!target) return;
-      await execute([{ type: "token.upsert", payload: { name, token: { type: "alias", value: target } } }]);
+      await applyToken(name, { type: "alias", value: target });
       return;
     }
     const value = (await askText({ title: "数值", defaultValue: "16", validate: validateNumber }))?.trim();
     if (!value) return;
-    await execute([{ type: "token.upsert", payload: { name, token: { type: "number", value: Number(value) } } }]);
+    await applyToken(name, { type: "number", value: Number(value) });
   });
   const updateToken = (name: string, token: TokenValue) => void run(async () => {
     if (token.type === "typography") {
       const next = await askTypographyValue(askForm, token.value);
       if (!next) return;
-      await execute([{ type: "token.upsert", payload: { name, token: { type: "typography", value: next } } }]);
+      await applyToken(name, { type: "typography", value: next });
       return;
     }
     if (token.type === "alias") {
@@ -1319,7 +1462,7 @@ function App() {
         },
       }))?.trim();
       if (!target || target === token.value) return;
-      await execute([{ type: "token.upsert", payload: { name, token: { type: "alias", value: target } } }]);
+      await applyToken(name, { type: "alias", value: target });
       return;
     }
     const current = String(token.value);
@@ -1327,7 +1470,7 @@ function App() {
       ? (await askText({ title: "颜色值", defaultValue: current, validate: validateColor }))?.trim()
       : (await askText({ title: "数值", defaultValue: current, validate: validateNumber }))?.trim();
     if (!value || value === current) return;
-    await execute([{ type: "token.upsert", payload: { name, token: { type: token.type, value: token.type === "color" ? value : Number(value) } } }]);
+    await applyToken(name, { type: token.type, value: token.type === "color" ? value : Number(value) });
   });
   const bindToken = (property: "fill" | "stroke" | "typography" | "spacing" | "radius", name: string) => {
     if (!selected) return;
@@ -1800,7 +1943,7 @@ function App() {
                 <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
               </div>
               <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}${canvasDrag.hoverRotate && tool === "select" ? " rotate-hover" : ""}${pathEditId && pathEdit.hoverSegment ? " segment-hover" : ""}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : pathEditId ? pathEdit.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } handleCanvasDoubleClick(event); }}>
-                <CanvasSurface repository={repository} projectId={document.id} document={document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+                <CanvasSurface repository={repository} projectId={document.id} document={themedDocument ?? document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
               {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
                 <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>
@@ -2031,10 +2174,53 @@ function App() {
               onEnable={enableDiskBackup}
               onDisable={disableDiskBackup}
               onBackupNow={backupToDiskNow}
+              encrypted={diskBackupEncrypted}
+              encryptionSupported={supportsBackupEncryption()}
+              onEnableEncryption={enableDiskBackupEncryption}
+              onDisableEncryption={disableDiskBackupEncryption}
             />
           </section>
           <section className="inspector-section">
-            <TokenPanel tokens={document.tokens} bindings={selected?.bindings} disabled={busy} canBind={Boolean(selected)} onCreate={createToken} onUpdate={updateToken} onBind={bindToken} onUnbind={unbindToken} onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))} />
+            <h2>主题</h2>
+            <div className="theme-panel">
+              <label className="field">
+                <span className="field-label">当前主题</span>
+                <select
+                  value={activeThemeId ?? ""}
+                  disabled={busy}
+                  onChange={event => setActiveThemeId(event.target.value || undefined)}
+                >
+                  <option value="">基础（{document.tokens ? Object.keys(document.tokens).length : 0} 个 token）</option>
+                  {(document.themes ?? []).map(theme => (
+                    <option key={theme.id} value={theme.id}>{theme.name}（{Object.keys(theme.tokens).length} 项覆盖）</option>
+                  ))}
+                </select>
+              </label>
+              <div className="storage-actions">
+                <button disabled={busy} onClick={createTheme}>新增主题</button>
+                <button disabled={busy || !activeThemeId} onClick={deleteActiveTheme}>删除当前主题</button>
+              </div>
+              <p className="empty-hint">
+                切换主题只影响预览与导出，不改基础 token。选中主题后，
+                在下方「设计 Tokens」里改值会写成该主题的覆盖；「恢复基础值」可以撤销覆盖。
+              </p>
+            </div>
+          </section>
+          <section className="inspector-section">
+            <TokenPanel
+              tokens={themedTokens}
+              bindings={selected?.bindings}
+              disabled={busy}
+              canBind={Boolean(selected)}
+              onCreate={createToken}
+              onUpdate={updateToken}
+              onBind={bindToken}
+              onUnbind={unbindToken}
+              onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))}
+              overridden={activeThemeId ? name => isTokenOverridden(document, activeThemeId, name) : undefined}
+              onResetOverride={activeThemeId ? resetThemeOverride : undefined}
+              themeName={findTheme(document, activeThemeId)?.name}
+            />
           </section>
           <section className="inspector-section">
             <h2>图片资源</h2>

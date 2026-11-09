@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { DesignNode } from "@ufira/design-schema";
 import { isClickDraw, isDrawTool, rectFromDrag, type DrawToolId, type ToolId } from "../tools";
+import { findDropContainerInScene } from "../canvas-reparent";
 import { hitTest, type HitPoint } from "./hit-test";
 import { angleDegrees, boxCenter, hitTestHandleRotated, hitTestRotationHandle, normalizeAngle, resizeRotatedBox, ROTATE_HANDLE_GAP, ROTATE_HANDLE_RADIUS, snapAngle, toLocalPoint, toRadians } from "./rotation";
 import { selectedBoxes, selectionBounds, type HandleId } from "./selection";
@@ -29,7 +30,7 @@ export interface CanvasDragOptions {
   layoutOf(id: string): DesignNode["layout"] | undefined;
   /** 节点的旋转角（角度制）；省略按 0 处理。 */
   rotationOf?(id: string): number | undefined;
-  onCommit(changes: Array<{ id: string; layout: DesignNode["layout"] }>): void;
+  onCommit(changes: Array<{ id: string; layout: DesignNode["layout"] }>, dropContainerId?: string): void;
   /** 框选结束；空数组表示清空选择。 */
   onMarquee?(ids: string[]): void;
   /**
@@ -52,6 +53,19 @@ export interface CanvasDragHandlers {
   onPointerMove(event: React.PointerEvent<HTMLDivElement>): void;
   onPointerUp(event: React.PointerEvent<HTMLDivElement>): void;
   onPointerCancel(event: React.PointerEvent<HTMLDivElement>): void;
+}
+
+/**
+ * 被拖节点的预览包围盒中心。
+ *
+ * 用它判定落点容器：节点本身会跟着指针走，指针永远在节点上，靠指针判定只会命中
+ * 自己；节点的**中心**进入另一个容器，才是「放进去了」的直观含义。
+ */
+function previewCenter(ids: string[], boxes: Record<string, SceneBox>): { x: number; y: number } | undefined {
+  const list = ids.map(id => boxes[id]).filter((box): box is SceneBox => Boolean(box));
+  if (!list.length) return undefined;
+  const bounds = selectionBounds(list);
+  return bounds ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } : undefined;
 }
 
 export function useCanvasDrag(options: CanvasDragOptions): {
@@ -87,6 +101,8 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   const gestureRef = useRef<Gesture | null>(null);
   const movedRef = useRef(false);
   const consumedRef = useRef(false);
+  // 本次拖放的落点容器（跨容器拖拽用）；undefined 表示落在页面层。
+  const dropContainerRef = useRef<string | undefined>(undefined);
 
 
   /** 指针是否落在当前选中节点的旋转手柄上（屏幕像素阈值）。 */
@@ -112,6 +128,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     // 不能把下一次正常点击一起吞掉（否则拖完再点别的节点会没反应）。
     movedRef.current = false;
     consumedRef.current = false;
+    dropContainerRef.current = undefined;
     const point = options.pointOf(event);
 
     // 图元工具优先于一切：在画布任意位置按下都开始绘制，不移动也不框选。
@@ -213,6 +230,12 @@ export function useCanvasDrag(options: CanvasDragOptions): {
         : { deltaX: 0, deltaY: 0, guides: [] };
       setGuides(snap.guides);
       updatePreview(offsetSubtreeBoxes(options.scene, gesture.ids, deltaX + snap.deltaX, deltaY + snap.deltaY));
+      // 落点容器：被拖集合的预览中心落进了哪个容器。判定用**几何包含**而不是命中
+      // 测试——被拖节点自己被排除在外，否则永远命中自己。
+      const center = previewCenter(gesture.ids, previewRef.current);
+      dropContainerRef.current = center
+        ? findDropContainerInScene(options.scene, center, new Set(gesture.ids))
+        : undefined;
     }
     else if (gesture.kind === "resize") {
       // 缩放发生在节点本地坐标系：先把起点和当前点都逆变换，再按本地增量算新盒子。
@@ -274,11 +297,12 @@ export function useCanvasDrag(options: CanvasDragOptions): {
         if (!target) continue;
         changes.push({ id, layout: { ...layout, x: box.x, y: box.y, width: box.width, height: box.height } });
       }
-      if (changes.length) options.onCommit(changes);
+      if (changes.length) options.onCommit(changes, dropContainerRef.current);
     }
     updatePreview({});
     setResizingId(undefined);
     setGuides([]);
+    dropContainerRef.current = undefined;
     marqueeRef.current = undefined;
     setMarquee(undefined);
   };

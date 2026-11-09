@@ -38,6 +38,18 @@ export interface BackupDirectoryPort {
   remove(name: string): Promise<void>;
 }
 
+/**
+ * 写盘前的编码步骤（目前只有加密）。
+ *
+ * 抽象成一个端口而不是把加密写进来：这个模块只管「什么时候写、写到哪、留几份」，
+ * 加密是另一件事（`backup-crypto.ts`），两者用这个接口解耦，纯逻辑层照样能在
+ * Node 里用假编码器跑完整行为测试。
+ */
+export interface BackupContentEncoder {
+  /** 把明文内容变成最终落盘的内容。 */
+  encode(plain: string): Promise<string>;
+}
+
 /** 备份状态。 */
 export type DiskBackupState =
   /** 已接上目录，但这次会话还没有写过。 */
@@ -139,11 +151,24 @@ export class DiskBackupRunner {
   private readonly now: () => Date;
   private readonly keep: number;
   private readonly minIntervalMs: number;
+  /** 编码步骤可以中途换（开/关加密），所以不是 readonly。 */
+  private encoder: BackupContentEncoder | undefined;
 
-  constructor(options: { now?: () => Date; keep?: number; minIntervalMs?: number } = {}) {
+  constructor(options: { now?: () => Date; keep?: number; minIntervalMs?: number; encoder?: BackupContentEncoder } = {}) {
     this.now = options.now ?? (() => new Date());
     this.keep = options.keep ?? DISK_BACKUP_RETENTION;
     this.minIntervalMs = options.minIntervalMs ?? DISK_BACKUP_MIN_INTERVAL_MS;
+    this.encoder = options.encoder;
+  }
+
+  /**
+   * 换掉编码步骤（开/关加密）。
+   *
+   * 换掉的是**已落盘文件的形态**，不是已写出的文件：目录里旧的明文备份不会被
+   * 追溯加密（要加密只能重新写一份），这一点在界面上要说清楚。
+   */
+  setEncoder(encoder: BackupContentEncoder | undefined): void {
+    this.encoder = encoder;
   }
 
   /** 当前备份目录（未启用时为 undefined）。 */
@@ -182,7 +207,11 @@ export class DiskBackupRunner {
 
     const fileName = backupFileName(document.id, document.revision, now);
     try {
-      await directory.write(fileName, JSON.stringify(document));
+      // 编码（加密）在写盘前发生：编码失败与写入失败一样，只落到 error 状态，
+      // 不推进 lastSavedAt —— 下一次自动保存会重试。
+      const plain = JSON.stringify(document);
+      const contents = this.encoder ? await this.encoder.encode(plain) : plain;
+      await directory.write(fileName, contents);
       const files = await directory.list();
       const stale = planBackupRotation(files, { keep: this.keep, projectId: document.id });
       for (const name of stale) await directory.remove(name);
