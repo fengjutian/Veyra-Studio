@@ -4,11 +4,14 @@ import { JSDOM } from "jsdom";
 import { PAGE_HELPERS } from "../visual/a11y-page";
 
 /**
- * 页面侧标识与可访问名规则的单测。
+ * 页面侧采集脚本的单测。
  *
- * 这段脚本会注入浏览器执行，三处采集（DOM 扫描、焦点落点、AX 节点回查）**共用**
- * 同一份规则——一旦它们对同一个元素算出不同的标识，交叉验证就全废了。所以规则
- * 本身要单测，而不是只靠端到端跑一遍。
+ * 这段脚本会注入浏览器执行，负责三件事：给元素一个**节点身份**、算出**可访问名**、
+ * 判断**能不能 Tab 到**。三处采集（DOM 扫描、焦点落点、AX 节点回查）共用它，
+ * 所以规则本身要单测，而不是只靠端到端跑一遍。
+ *
+ * 节点身份尤其关键：真实界面里几十个图标按钮的文字都是空串，按文字拼标识会
+ * 全部塌缩成同一个 id，交叉验证就成了拿苹果比橘子。
  */
 const dom = new JSDOM(
   `<!doctype html><html><body>
@@ -20,36 +23,46 @@ const dom = new JSDOM(
     <button id="by-title" title="标题文字"></button>
     <input id="by-placeholder" placeholder="占位文字" />
     <label for="by-label">包裹标签</label><input id="by-label" />
+    <button id="disabled-one" disabled>禁用</button>
+    <button id="hidden-one" style="display:none">隐藏</button>
+    <div id="inert-host" inert><button id="inert-one">惰性</button></div>
   </body></html>`,
   { runScripts: "outside-only" },
 );
 
 const win = dom.window as unknown as Record<string, any>;
-win.eval(`${PAGE_HELPERS}\nwindow.__auditIdOf = auditIdOf; window.__accessibleNameOf = accessibleNameOf;`);
+// jsdom 没有排版引擎，getClientRects 永远是空的——那会让所有元素都被判成
+// 「不可见」。这里补一个假的矩形，等价于「页面已经排好版」。
+win.Element.prototype.getClientRects = function () {
+  return [{ width: 10, height: 10, top: 0, left: 0, right: 10, bottom: 10 }];
+};
+win.eval(
+  `${PAGE_HELPERS}\nwindow.__nodeKeyOf = nodeKeyOf; window.__accessibleNameOf = accessibleNameOf; window.__isTabbable = isTabbable; window.__domTextOf = domTextOf;`,
+);
 
 // 不关窗口的话 jsdom 会把事件循环吊住，整个测试文件要等十几秒才退出。
 after(() => dom.window.close());
 
-function auditIdOf(id: string): string {
-  return win.__auditIdOf(win.document.getElementById(id));
+function nodeKeyOf(id: string): string {
+  return win.__nodeKeyOf(win.document.getElementById(id));
 }
 
 function accessibleNameOf(id: string): string {
   return win.__accessibleNameOf(win.document.getElementById(id));
 }
 
-test("标识优先级：data-audit-id > data-node-id > id", () => {
-  assert.equal(auditIdOf("by-aria"), "audit.first");
-  assert.equal(auditIdOf("by-node"), "node.second");
-  assert.equal(auditIdOf("by-text"), "#by-text");
+function isTabbable(id: string): boolean {
+  return win.__isTabbable(win.document.getElementById(id));
+}
+
+test("同一个元素永远拿到同一个节点身份", () => {
+  const key = nodeKeyOf("by-text");
+  assert.ok(key);
+  assert.equal(nodeKeyOf("by-text"), key);
 });
 
-test("没有稳定标识时退回「角色:文字」", () => {
-  const button = win.document.createElement("button");
-  button.setAttribute("role", "option");
-  button.textContent = "卡片";
-  win.document.body.appendChild(button);
-  assert.equal(win.__auditIdOf(button), "option:卡片");
+test("不同元素拿到不同节点身份", () => {
+  assert.notEqual(nodeKeyOf("by-text"), nodeKeyOf("by-title"));
 });
 
 test("可访问名优先取 aria-label", () => {
@@ -74,4 +87,24 @@ test("什么都没有时可访问名是空串（这正是缺陷信号）", () =>
   const button = win.document.createElement("button");
   win.document.body.appendChild(button);
   assert.equal(win.__accessibleNameOf(button), "");
+});
+
+test("文字里的连续空白会被压成一个空格", () => {
+  const block = win.document.createElement("div");
+  block.textContent = "  多个   空白  ";
+  win.document.body.appendChild(block);
+  assert.equal(win.__domTextOf(block), "多个 空白");
+});
+
+test("禁用、隐藏与 inert 里的元素不可 Tab", () => {
+  assert.equal(isTabbable("by-text"), true);
+  assert.equal(isTabbable("disabled-one"), false);
+  assert.equal(isTabbable("hidden-one"), false);
+  assert.equal(isTabbable("inert-one"), false);
+});
+
+test("普通 div 不可 Tab（没有 tabindex 就不在 Tab 序列里）", () => {
+  const block = win.document.createElement("div");
+  win.document.body.appendChild(block);
+  assert.equal(win.__isTabbable(block), false);
 });

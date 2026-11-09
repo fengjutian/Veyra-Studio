@@ -26,6 +26,8 @@ function visit(order: number, auditId: string, overrides: Partial<FocusVisit> = 
     role: "button",
     name: auditId,
     auditId,
+    // 默认「同名即同节点」，需要区分时单独传 nodeKey。
+    nodeKey: auditId,
     tabIndex: 0,
     focusIndicator: true,
     ...overrides,
@@ -110,6 +112,27 @@ test("焦点在同一个元素上反复打转会被抓出来", () => {
   const input = cleanInput();
   input.focusSequence = [input.focusSequence[0]!, input.focusSequence[0]!, input.focusSequence[1]!];
   assert.ok(codes(input).includes("focus-trap"));
+});
+
+test("同名但不同的元素不算焦点陷阱", () => {
+  const input = cleanInput();
+  // 真实界面里几十个图标按钮同名是常态：它们是不同节点，不是被困住。
+  input.focusSequence = [
+    visit(1, "button:删除", { nodeKey: "n1" }),
+    visit(2, "button:删除", { nodeKey: "n2" }),
+    visit(3, "button:删除", { nodeKey: "n3" }),
+  ];
+  input.domFocusableOrder = ["button:删除", "button:删除", "button:删除"];
+  input.axNodes = [];
+  assert.ok(!codes(input).includes("focus-trap"));
+});
+
+test("同名控件数量对不上才算键盘到不了", () => {
+  const input = cleanInput();
+  input.domFocusableOrder = ["tool.select", "canvas.option", "inspector.name", "button:删除", "button:删除"];
+  input.focusSequence = [visit(1, "tool.select"), visit(2, "button:删除", { nodeKey: "n1" })];
+  input.axNodes = [];
+  assert.ok(codes(input).includes("unreachable-by-keyboard"));
 });
 
 test("落点数量超过 DOM 可聚焦元素数量会被抓出来", () => {

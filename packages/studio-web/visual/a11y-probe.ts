@@ -30,6 +30,7 @@ import {
   compareA11yBaseline,
   formatIssue,
   summarizeIssues,
+  NO_NAME,
   type A11yBaseline,
   type A11yAuditInput,
   type AuditCode,
@@ -37,7 +38,7 @@ import {
   type FocusVisit,
 } from "../src/renderer/a11y-audit";
 import { findBrowser } from "../../design-export/visual/browser";
-import { AX_ELEMENT_FUNCTION, domFocusableExpression, focusVisitExpression } from "./a11y-page";
+import { AX_ELEMENT_FUNCTION, PAGE_HELPERS, domFocusableExpression, focusVisitExpression } from "./a11y-page";
 import { launchHeadlessBrowser, type CdpPage } from "./cdp";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -119,13 +120,17 @@ async function waitForReady(page: CdpPage): Promise<void> {
 }
 
 interface ElementInfo {
-  auditId: string;
+  nodeKey: string;
+  contentKey: string;
+  explicitId: string;
+  ancestorKeys: string[];
   tag: string;
   role: string;
   tabIndex: number;
+  text: string;
 }
 
-/** 把 AX 节点回查到 DOM 元素（拿稳定标识与 tabIndex）。 */
+/** 把 AX 节点回查到 DOM 元素（拿节点身份与 tabIndex）。 */
 async function resolveElement(page: CdpPage, backendNodeId: number): Promise<ElementInfo | null> {
   try {
     const resolved = await page.send<any>("DOM.resolveNode", { backendNodeId });
@@ -150,38 +155,70 @@ export interface Collection {
   domFocusableOrder: string[];
   arrowTraversal?: { visited: string[]; expected: string[] };
   userAgent: string;
+  /** 遍历前的 DOM 扫描原始记录（诊断用）。 */
+  domItems: RawElement[];
+  /** 遍历结束后的可聚焦元素内容键（稳定状态，用于对账）。 */
+  domFocusableAfter: string[];
+}
+
+/** 页面侧返回的原始事实。 */
+interface RawElement {
+  nodeKey: string;
+  contentKey: string;
+  explicitId: string;
+  ancestorKeys: string[];
+  tag: string;
+  role: string;
+  tabIndex: number;
+  text: string;
+  style: string;
+  /** 可访问名（焦点落点才有；DOM 扫描那边用 contentKey 代替）。 */
+  name?: string;
+}
+
+/**
+ * 标识：优先用作者写的显式标识，否则用内容键。
+ *
+ * 名称优先取 AX（浏览器算出来的可访问名，读屏念的就是它）——但**内容键**由
+ * 页面侧统一计算，两边都拿它去认领元素，所以重渲染不会让两侧对不上。
+ */
+export function semanticId(explicitId: string, contentKey: string): string {
+  const stable = (explicitId ?? "").trim();
+  return stable || (contentKey ?? "").trim() || NO_NAME;
+}
+
+/** 把页面侧辅助函数注入全局——三处采集共用同一份实现。 */
+export async function injectPageHelpers(page: CdpPage): Promise<void> {
+  await page.evaluate(PAGE_HELPERS);
+}
+
+/**
+ * 等界面稳定下来再采：连续两次扫描结果一致才算数。
+ *
+ * 真实界面会异步收敛——Radix 的 roving tabindex 会在重渲染后滞后一拍才把
+ * `tabindex` 从 0 改成 -1。急着采会抓到中间态，然后报出一堆并不存在的缺陷。
+ */
+export async function waitForStableDom(page: CdpPage, options: { attempts?: number; intervalMs?: number } = {}): Promise<RawElement[]> {
+  const attempts = options.attempts ?? 20;
+  const intervalMs = options.intervalMs ?? 120;
+  let previous = "";
+  let items: RawElement[] = [];
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    items = await page.evaluate<RawElement[]>(domFocusableExpression());
+    const signature = items.map(item => `${item.contentKey}#${item.tabIndex}`).join("|");
+    if (signature === previous) return items;
+    previous = signature;
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
+  }
+  return items;
 }
 
 /** 采集一页的键盘遍历与可访问性树。 */
 export async function collectPage(page: CdpPage): Promise<Collection> {
+  await injectPageHelpers(page);
   const userAgent = await page.evaluate<string>("navigator.userAgent");
-  const domItems = await page.evaluate<Array<{ auditId: string; tag: string; role: string; tabIndex: number; style: string }>>(
-    domFocusableExpression(),
-  );
 
-  // 聚焦前的样式签名：用来判断「聚焦时有没有可见变化」。
-  const baselineStyles = new Map(domItems.map(item => [item.auditId, item.style]));
-
-  // 真实 Tab 遍历：按到底为止（焦点回到 body）或超过 DOM 里的可聚焦元素数就停。
-  const focusSequence: FocusVisit[] = [];
-  const limit = Math.max(domItems.length + 4, 8);
-  for (let step = 0; step < limit; step += 1) {
-    await page.pressKey("Tab");
-    const visit = await page.evaluate<(FocusVisit & { style: string }) | null>(focusVisitExpression());
-    if (!visit) break;
-    const baseline = baselineStyles.get(visit.auditId);
-    focusSequence.push({
-      order: focusSequence.length + 1,
-      tag: visit.tag,
-      role: visit.role,
-      name: visit.name,
-      auditId: visit.auditId,
-      tabIndex: visit.tabIndex,
-      focusIndicator: baseline === undefined ? false : baseline !== visit.style,
-    });
-  }
-
-  // 可访问性树：过滤 ignored，再回查 DOM 拿标识。
+  // ① 可访问性树先采：可访问名与角色以它为准。
   const axNodes: AxNode[] = [];
   for (const node of await page.axTree()) {
     if (node.ignored) continue;
@@ -191,7 +228,10 @@ export async function collectPage(page: CdpPage): Promise<Collection> {
     axNodes.push({
       role: node.role,
       name: node.name,
-      auditId: info.auditId,
+      auditId: semanticId(info.explicitId, info.contentKey),
+      key: info.contentKey,
+      nodeKey: info.nodeKey,
+      ancestorKeys: info.ancestorKeys,
       tag: info.tag,
       // AX 的 focusable 包含 tabindex=-1 的元素（能 focus、不能 Tab）。
       // 只有 tabIndex>=0 的才算「键盘能到」，否则 roving tabindex 会误报。
@@ -199,21 +239,63 @@ export async function collectPage(page: CdpPage): Promise<Collection> {
     });
   }
 
-  // 可访问名与角色以 AX 为准（浏览器算出来的名字、角色才是读屏念的那个）。
-  const axNames = new Map<string, string>();
-  const axRoles = new Map<string, string>();
-  for (const node of axNodes) {
-    if (node.name.trim() && !axNames.has(node.auditId)) axNames.set(node.auditId, node.name);
-    if (node.role && !axRoles.has(node.auditId)) axRoles.set(node.auditId, node.role);
+  // ② DOM 扫描：哪些元素可以 Tab 到（先扫一遍拿「聚焦前」的样式签名，也拿对账基准）。
+  //    对账必须用**遍历前**的状态：遍历本身会改变界面——Tab 聚焦到画布节点就会
+  //    选中它，属性面板随之启用一批控件，用遍历后的状态对账会凭空多出一堆
+  //    「键盘到不了」的假缺陷。
+  const domItems = await waitForStableDom(page);
+  const styleByNodeKey = new Map(domItems.map(item => [item.nodeKey, item.style]));
+  const styleByKey = new Map<string, string>();
+  for (const item of domItems) {
+    if (!styleByKey.has(item.contentKey)) styleByKey.set(item.contentKey, item.style);
   }
-  for (const visit of focusSequence) {
-    const name = axNames.get(visit.auditId);
-    if (name) visit.name = name;
-    const role = axRoles.get(visit.auditId);
-    if (role) visit.role = role;
+  const domFocusableOrder = domItems.map(item => item.contentKey);
+
+  // ③ 真实 Tab 遍历：按到底为止（焦点回到 body）或超过 DOM 里的可聚焦元素数就停。
+  //    起点必须显式摆正：Chrome 的「顺序焦点起点」不会因为 blur 重置，上一轮
+  //    遍历停在哪儿，下一轮就从哪儿继续——后面几个面板于是只覆盖了半张界面。
+  //    所以先聚焦第一个可聚焦元素，再往后 Tab，序列才是完整的。
+  const focusSequence: FocusVisit[] = [];
+  const limit = Math.max(domItems.length + 4, 8);
+  const readVisit = async (): Promise<FocusVisit | undefined> => {
+    const visit = await page.evaluate<RawElement | null>(focusVisitExpression());
+    if (!visit) return undefined;
+    const baseline = styleByNodeKey.get(visit.nodeKey) ?? styleByKey.get(visit.contentKey);
+    return {
+      order: focusSequence.length + 1,
+      tag: visit.tag,
+      role: visit.role,
+      // 名称用页面侧的近似算法（aria-label → aria-labelledby → label → 文字 → 标题
+      // → 占位符）。它是标准算法、且不依赖任何跨时刻的关联，所以稳定。
+      name: visit.name ?? "",
+      auditId: semanticId(visit.explicitId, visit.contentKey),
+      key: visit.contentKey,
+      nodeKey: visit.nodeKey,
+      ancestorKeys: visit.ancestorKeys,
+      tabIndex: visit.tabIndex,
+      focusIndicator: baseline === undefined ? false : baseline !== visit.style,
+    };
+  };
+
+  await page.evaluate(
+    `(() => { for (const el of Array.from(document.querySelectorAll("*"))) { if (isTabbable(el)) { el.focus(); return true; } } return false; })()`,
+  );
+  const first = await readVisit();
+  if (first) focusSequence.push(first);
+  for (let step = 0; step < limit; step += 1) {
+    await page.pressKey("Tab");
+    const visit = await readVisit();
+    if (!visit) break;
+    focusSequence.push(visit);
   }
 
-  // 复合控件内的方向键遍历（画布的隐藏 listbox）。
+  // ④ 遍历之后再扫一次 DOM：拿**稳定状态**来对账。界面在遍历途中会变（选中节点
+  //    会让属性面板启用一批控件，Radix 的分段控件重渲染后 tabindex 会变），
+  //    只有「遍历前后都在」的控件才配谈「键盘到不了」。
+  const domAfter = await waitForStableDom(page);
+  const domFocusableAfter = domAfter.map(item => item.contentKey);
+
+  // ⑤ 复合控件内的方向键遍历（画布的隐藏 listbox）。
   const expected = await page.evaluate<string[]>(
     `Array.from(document.querySelectorAll('.canvas-a11y [role="option"]')).map(el => el.getAttribute("data-node-id") || "")`,
   );
@@ -222,8 +304,10 @@ export async function collectPage(page: CdpPage): Promise<Collection> {
     await page.evaluate(`(() => { const el = document.querySelector('.canvas-a11y [role="option"]'); if (el) el.focus(); return true; })()`);
     const visited: string[] = [];
     for (let step = 0; step < expected.length; step += 1) {
-      const visit = await page.evaluate<{ auditId: string } | null>(focusVisitExpression());
-      if (visit) visited.push(visit.auditId);
+      const nodeId = await page.evaluate<string | null>(
+        `(() => { const el = document.activeElement; return el ? (el.getAttribute("data-node-id") || "") : null; })()`,
+      );
+      if (nodeId !== null) visited.push(nodeId);
       if (step < expected.length - 1) await page.pressKey("ArrowDown");
     }
     arrowTraversal = { visited, expected };
@@ -232,17 +316,26 @@ export async function collectPage(page: CdpPage): Promise<Collection> {
   return {
     focusSequence,
     axNodes,
-    domFocusableOrder: domItems.map(item => item.auditId),
+    domFocusableOrder,
     ...(arrowTraversal ? { arrowTraversal } : {}),
     userAgent,
+    domItems,
+    domFocusableAfter,
   };
 }
 
-function toAuditInput(collection: Collection): A11yAuditInput {
+export function toAuditInput(collection: Collection): A11yAuditInput {
   return {
     focusSequence: collection.focusSequence,
     axNodes: collection.axNodes,
     domFocusableOrder: collection.domFocusableOrder,
+    domFocusableAfter: collection.domFocusableAfter,
+    domItems: collection.domItems.map(item => ({
+      nodeKey: item.nodeKey,
+      key: item.contentKey,
+      role: item.role,
+      ancestorKeys: item.ancestorKeys,
+    })),
     ...(collection.arrowTraversal ? { arrowTraversal: collection.arrowTraversal } : {}),
   };
 }
