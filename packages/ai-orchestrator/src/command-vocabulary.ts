@@ -49,7 +49,7 @@ export function isCommandType(value: unknown): value is CommandType {
 export function describeCommandVocabulary(): string {
   return [
     '- node.create: { node: <完整节点对象>, index?: number } —— 新节点的 childIds 必须为空',
-    '- node.patch: { id: "<节点 id>", patch: { name?, visible?, locked?, layout?, appearance? } } —— 整块替换，patch 里要写全被替换的字段',
+    '- node.patch: { id: "<节点 id>", patch: { name?, visible?, locked?, layout?, appearance? } } —— 整块替换，patch 里要写全被替换的字段；appearance 里颜色写在 fills（数组），没有 fill 字段',
     "- text.patch: { id: \"<文本节点 id>\", patch: { text?, fontFamily?, fontSize?, lineHeight?, fontWeight?, fontStyle?, textAlign?, letterSpacing?, runs? } } —— runs 是段内样式区间 [{ from, to, style: { fontWeight?, fontStyle?, color? } }]，偏移是 UTF-16 下标",
     "- text.paragraph.set: { id: \"<文本节点 id>\", from, to, style: { listType?: \"bullet\" | \"ordered\" | \"none\", indent?: 0-4 } } —— 段落样式：列表类型与缩进级别；from/to 是 UTF-16 下标，命令会自动吸附到段落边界（选区落在段中时整段生效）",
     '- node.delete: { id: "<节点 id>" }',
@@ -93,7 +93,24 @@ export function describeNodeTemplate(): string {
     '  "visible": true,',
     '  "locked": false,',
     '  "layout": { "mode": "absolute", "x": 48, "y": 48, "width": 240, "height": 140, "widthMode": "fixed", "heightMode": "fixed" },',
-    '  "appearance": { "opacity": 1, "fill": "#2563eb", "cornerRadius": 12 }',
+    '  "appearance": { "opacity": 1, "fills": [{ "type": "solid", "color": "#2563eb" }], "cornerRadius": 12 }',
     "}",
+  ].join("\n");
+}
+
+/**
+ * 颜色的写法。
+ *
+ * 单独拎出来是因为这里错过一次：节点模板曾经写成 `appearance.fill`，而真正的字段是
+ * `appearance.fills`（数组）。模型照着错模板建节点，节点**没有填充色**，画布上是空的；
+ * 它自己再去改颜色时又会用 `text.patch` 的顶层 `color` 字段——那也是不存在的。
+ * 两个错叠在一起，模型永远改不对颜色，只能反复提交无效改动，最后被判成震荡。
+ */
+export function describeColorUsage(): string {
+  return [
+    '颜色只能写在 appearance.fills 里："fills": [{ "type": "solid", "color": "#rrggbb" }]。',
+    "appearance 里没有 fill 字段（那是旧格式，运行时已不认）。",
+    "改整个节点或整段文字的颜色：用 node.patch 的 appearance（整块替换，要把 opacity 与 fills 写全）。",
+    '只改文字里的一段颜色：用 text.patch 的 runs，例如 "runs": [{ "from": 0, "to": 4, "style": { "color": "#1f2937" } }]；text.patch 的顶层没有 color 字段。',
   ].join("\n");
 }

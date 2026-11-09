@@ -230,6 +230,16 @@ button.icon-only{padding:5px;min-width:26px}
 .ai-settings select{width:100%;border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;padding:6px 7px;font-size:12px}
 .ai-provider{margin:0;font-size:11px;line-height:1.6;color:#c8ccd6}
 .ai-provider-known{color:#c4b5fd}
+/* 密钥环：每把密钥一行（打码显示），当前用的那把带徽标。 */
+.ai-keyring{list-style:none;margin:6px 0;padding:0;display:grid;gap:4px}
+.ai-key{display:flex;align-items:center;gap:6px;font-size:11px;color:#c8ccd6}
+.ai-key-masked{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.ai-key-badge{flex:none;font-size:10px;border:1px solid #3f4a3a;border-radius:999px;padding:0 6px;color:#9fd39f}
+.ai-key-active .ai-key-badge{border-color:#4a4327;color:#d8c26a}
+.ai-key button{flex:none;padding:2px 6px;font-size:11px}
+.ai-key-add{display:flex;gap:6px;align-items:center}
+.ai-key-add input{flex:1;min-width:0}
+.ai-key-add button{flex:none;padding:4px 8px;font-size:12px}
 
 .instance-actions{display:flex;gap:6px}
 .instance-actions button{padding:3px 6px;font-size:11px}

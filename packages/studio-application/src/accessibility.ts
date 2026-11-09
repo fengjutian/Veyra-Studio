@@ -1,4 +1,4 @@
-import { primaryFillColor, tokenColor, type DesignDocument, type DesignNode, type NodeId } from "@ufira/design-schema";
+import { primaryFillColor, tokenColor, type DesignDocument, type DesignNode, type NodeId, type TextNode } from "@ufira/design-schema";
 
 /**
  * 可访问性检查（当前覆盖对比度）。
@@ -92,18 +92,58 @@ export function effectiveBackground(document: DesignDocument, node: DesignNode):
   return PAGE_BACKGROUND;
 }
 
+/**
+ * 文本节点**实际渲染出来**的颜色分段。
+ *
+ * 节点级填充色是底色，段内样式（`runs`）按区间覆盖它——画布、导出、编辑器
+ * 都是这个语义（见 `renderer/scene.ts`）。所以对比度必须按段算：只看节点填充色
+ * 会漏判「底色浅但整段被 runs 改成深色」的文本。
+ *
+ * 漏判的后果不只是少报一条：编排循环会盯着这个假问题反复改，改多少遍那个
+ * 「问题」都在——真实 Provider 验收里就是这么撞上震荡的。
+ */
+function colorRanges(document: DesignDocument, node: TextNode): Array<{ color: string; from: number; to: number }> {
+  const length = Math.min(node.text.length, MAX_ANALYZED_CHARS);
+  const base = primaryFillColor(document, node);
+  const colors: string[] = new Array(length).fill(base ?? "");
+  for (const run of node.runs ?? []) {
+    if (!run.style?.color) continue;
+    const from = Math.max(0, Math.min(length, run.from));
+    const to = Math.max(from, Math.min(length, run.to));
+    for (let index = from; index < to; index += 1) colors[index] = run.style.color;
+  }
+  const ranges: Array<{ color: string; from: number; to: number }> = [];
+  for (let index = 0; index < length; index += 1) {
+    const last = ranges[ranges.length - 1];
+    if (last && last.color === colors[index]) last.to = index + 1;
+    else ranges.push({ color: colors[index]!, from: index, to: index + 1 });
+  }
+  return ranges;
+}
+
+/** 一次只分析这么多字符：超长文本按开头截断，避免一次检查变成 O(n²)。 */
+const MAX_ANALYZED_CHARS = 2000;
+
 /** 收集对比度不足的文本节点；结果按对比度从低到高，便于优先处理。 */
 export function collectContrastIssues(document: DesignDocument): ContrastIssue[] {
   const issues: ContrastIssue[] = [];
   for (const node of Object.values(document.nodes)) {
     if (node.type !== "text" || !node.text.trim()) continue;
-    const foreground = effectiveFill(document, node);
     const background = effectiveBackground(document, node);
-    const ratio = contrastRatio(foreground, background);
-    if (ratio === undefined) continue;
     const threshold = contrastThreshold(node.fontSize, node.fontWeight ?? 400);
-    if (ratio < threshold) {
-      issues.push({ nodeId: node.id, text: node.text, foreground: foreground ?? "", background, ratio, threshold });
+    for (const range of colorRanges(document, node)) {
+      if (!range.color) continue;
+      const ratio = contrastRatio(range.color, background);
+      if (ratio === undefined) continue;
+      if (ratio >= threshold) continue;
+      issues.push({
+        nodeId: node.id,
+        text: node.text.slice(range.from, range.to).replace(/\s+/g, " ").trim(),
+        foreground: range.color,
+        background,
+        ratio,
+        threshold,
+      });
     }
   }
   return issues.sort((left, right) => left.ratio - right.ratio);

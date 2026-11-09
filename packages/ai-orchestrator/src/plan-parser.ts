@@ -27,20 +27,24 @@ export class PlanEmptyError extends PlanParseError {
  * 把模型回复解析成命令计划。
  *
  * 模型经常把 JSON 包在 ```json 围栏里，或者在 JSON 前后加一段说明，所以这里
- * 不做严格的"整段就是 JSON"假设，而是扫描出第一个配平的 JSON 对象再解析。
+ * 不做严格的"整段就是 JSON"假设，而是**逐个候选**试：扫出所有配平的 JSON 对象，
+ * 一个能解析就用。
+ *
+ * 逐个试而不是只取第一个，是因为**推理模型**（MiniMax-M3 等）会在正文前面加一段
+ * `<think>…</think>` 推理，里面可能带花括号——只取第一个配平对象会取到推理里的
+ * 碎片，解析失败或解析出别的东西。候选顺序是：剥掉推理块之后 → 剥掉围栏之后 →
+ * 原文，所以正文里的真计划总是排在前面。
  */
 export function parsePlanResponse(raw: string): AiCommandPlan {
   const text = raw.trim();
   if (!text) throw new PlanParseError("模型没有返回任何内容");
 
-  const candidates = [stripFence(text), text];
+  const candidates = collectJsonCandidates(text);
   let parsed: unknown;
   let failure: string | undefined;
   for (const candidate of candidates) {
-    const json = extractJsonObject(candidate);
-    if (!json) continue;
     try {
-      parsed = JSON.parse(json) as unknown;
+      parsed = JSON.parse(candidate) as unknown;
       break;
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
@@ -52,18 +56,54 @@ export function parsePlanResponse(raw: string): AiCommandPlan {
   return normalizePlan(parsed);
 }
 
+/** 收集所有可能的 JSON 候选：先剥推理块、再剥围栏、最后原文，逐个变体扫配平对象。 */
+function collectJsonCandidates(text: string): string[] {
+  const variants = [stripReasoning(text), stripFence(text), text];
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  for (const variant of variants) {
+    for (const candidate of extractJsonObjects(variant)) {
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      candidates.push(candidate);
+    }
+  }
+  return candidates;
+}
+
+/**
+ * 剥掉推理块。
+ *
+ * 推理模型的正文长这样：`<think>先想一遍…</think>\n\n{计划}`。推理里可能带
+ * 花括号，所以必须**先剥掉**再找 JSON。未闭合的推理块说明回复被截断了——
+ * 后面不会再有正文，截掉即可。
+ */
+function stripReasoning(text: string): string {
+  const stripped = text.replace(/<(think|thinking|reasoning|thought)>[\s\S]*?<\/\1>/gi, "");
+  const opened = stripped.search(/<(think|thinking|reasoning|thought)>/i);
+  return opened === -1 ? stripped : stripped.slice(0, opened);
+}
+
 function stripFence(text: string): string {
   const match = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
   return match ? match[1] : text;
 }
 
-/** 扫描出第一个配平的 JSON 对象，字符串里的括号不算。 */
-function extractJsonObject(text: string): string | undefined {
-  for (let index = text.indexOf("{"); index !== -1; index = text.indexOf("{", index + 1)) {
+/** 扫出所有配平的 JSON 对象（不是只取第一个）。 */
+function extractJsonObjects(text: string): string[] {
+  const found: string[] = [];
+  let index = text.indexOf("{");
+  while (index !== -1) {
     const end = findObjectEnd(text, index);
-    if (end !== -1) return text.slice(index, end + 1);
+    if (end === -1) {
+      // 这个 `{` 没有配平（多半是推理里的碎片），换下一个继续找。
+      index = text.indexOf("{", index + 1);
+      continue;
+    }
+    found.push(text.slice(index, end + 1));
+    index = text.indexOf("{", end + 1);
   }
-  return undefined;
+  return found;
 }
 
 function findObjectEnd(text: string, start: number): number {

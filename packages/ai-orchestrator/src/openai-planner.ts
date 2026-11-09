@@ -52,6 +52,23 @@ export interface OpenAiCompatiblePlannerOptions {
   model: string;
   /** 可选：本地模型或免鉴权网关可以留空 */
   apiKey?: string;
+  /**
+   * 密钥环：多把密钥轮换用。
+   *
+   * 给了它就按环来用：请求遇到 401/403（密钥过期、被吊销、额度用尽）时**自动**
+   * 换下一把重试，而不是整个失败。轮换是密钥生命周期管理的一部分——服务端
+   * 换密钥不应该让客户端当场罢工。
+   */
+  apiKeys?: readonly string[];
+  /**
+   * 环的起点：先用哪一把。
+   *
+   * 界面上「当前使用第几把」必须真的生效——不给这个值的话环永远从第一把开始，
+   * 用户手动切到第 3 把也不起作用。下标按环的顺序算（也就是 `apiKeys` 的顺序）。
+   */
+  apiKeyIndex?: number;
+  /** 鉴权失败换钥时回调：界面可以提示「已切到第 2 把密钥」。 */
+  onKeyRotated?(index: number, total: number, reason: string): void;
   /** 注入 fetch 便于测试；默认用全局 fetch */
   fetch?: FetchLike;
   /** 覆盖默认 system 提示 */
@@ -91,6 +108,10 @@ export function createOpenAiCompatiblePlanner(options: OpenAiCompatiblePlannerOp
   const endpoint = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
   const retries = Math.max(0, Math.floor(options.retries ?? 2));
   const retryDelayMs = Math.max(0, options.retryDelayMs ?? 500);
+  // 密钥环：给 apiKeys 就按环用；只给 apiKey 就当环里的一把。
+  const ring: KeyRing = { keys: collectKeys(options), index: 0 };
+  // 环的起点按用户选中的那把算（越界就夹回第一把）。
+  if (ring.keys.length) ring.index = Math.min(Math.max(0, Math.trunc(options.apiKeyIndex ?? 0)), ring.keys.length - 1);
 
   return {
     async plan(request: AiPlanRequest): Promise<AiCommandPlan> {
@@ -107,14 +128,37 @@ export function createOpenAiCompatiblePlanner(options: OpenAiCompatiblePlannerOp
       if (options.jsonMode) body.response_format = { type: "json_object" };
       if (options.stream) body.stream = true;
 
-      const headers: Record<string, string> = { "Content-Type": "application/json", ...options.headers };
-      if (options.apiKey?.trim()) headers.Authorization = `Bearer ${options.apiKey.trim()}`;
-
       const signal = request.signal ?? options.signal;
-      const { raw, content } = await post(endpoint, headers, body, options, retries, retryDelayMs, signal, request.onDelta);
+      const { raw, content } = await post(endpoint, ring, body, options, retries, retryDelayMs, signal, request.onDelta);
       return parsePlanResponse(content ?? extractContent(raw));
     },
   };
+}
+
+/** 密钥环：当前用哪一把，以及环里的全部密钥。 */
+interface KeyRing {
+  keys: string[];
+  index: number;
+}
+
+/**
+ * 收集要用的密钥。
+ *
+ * `apiKeys` 是环；`apiKey` 是「当前这把」，它不在环里就放第一位（在环里就
+ * 不重复）。去重、去掉空串——免得环里混进一个空密钥导致无意义的换钥。
+ */
+function collectKeys(options: OpenAiCompatiblePlannerOptions): string[] {
+  const ring = [...(options.apiKeys ?? [])];
+  const single = options.apiKey?.trim();
+  if (single && !ring.includes(single)) ring.unshift(single);
+  return ring.map(key => key.trim()).filter((key, index, all) => key.length > 0 && all.indexOf(key) === index);
+}
+
+/** 按当前密钥拼请求头。 */
+function headersFor(key: string | undefined, options: OpenAiCompatiblePlannerOptions): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...options.headers };
+  if (key?.trim()) headers.Authorization = `Bearer ${key.trim()}`;
+  return headers;
 }
 
 interface PostResult {
@@ -126,7 +170,7 @@ interface PostResult {
 
 async function post(
   endpoint: string,
-  headers: Record<string, string>,
+  ring: KeyRing,
   body: Record<string, unknown>,
   options: OpenAiCompatiblePlannerOptions,
   retries: number,
@@ -140,13 +184,29 @@ async function post(
   const state = { emitted: false };
   const handleDelta = onDelta ? (delta: string, fullText: string) => { state.emitted = true; onDelta(delta, fullText); } : undefined;
 
-  for (let attempt = 0; ; attempt += 1) {
+  // 网络重试与换钥是两套预算：换钥不消耗网络重试次数，反之亦然。
+  let networkRetries = 0;
+  let keyOffset = 0;
+  for (;;) {
+    const key = ring.keys.length ? ring.keys[(ring.index + keyOffset) % ring.keys.length] : undefined;
     try {
-      return await postOnce(fetchImpl, endpoint, headers, body, options, signal, handleDelta, state);
+      const result = await postOnce(fetchImpl, endpoint, headersFor(key, options), body, options, signal, handleDelta, state);
+      // 请求成功了：记住这次用的是哪一把，下次接着用。
+      if (ring.keys.length) ring.index = (ring.index + keyOffset) % ring.keys.length;
+      return result;
     } catch (error) {
-      const canRetry = error instanceof AiProviderError && error.retryable && attempt < retries && !state.emitted;
+      // 鉴权失败：换下一把密钥再试。环里的密钥都用过还不行，就把错误抛出去。
+      const authFailure = error instanceof AiProviderError && (error.status === 401 || error.status === 403);
+      if (authFailure && keyOffset + 1 < ring.keys.length) {
+        keyOffset += 1;
+        const nextIndex = (ring.index + keyOffset) % ring.keys.length;
+        options.onKeyRotated?.(nextIndex, ring.keys.length, `鉴权失败（HTTP ${error.status}），已切到第 ${nextIndex + 1} 把密钥`);
+        continue;
+      }
+      const canRetry = error instanceof AiProviderError && error.retryable && networkRetries < retries && !state.emitted;
       if (!canRetry) throw error;
-      await wait(retryDelayMs * 2 ** attempt, signal);
+      await wait(retryDelayMs * 2 ** networkRetries, signal);
+      networkRetries += 1;
     }
   }
 }

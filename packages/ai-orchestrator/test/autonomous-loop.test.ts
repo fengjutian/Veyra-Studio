@@ -340,6 +340,55 @@ test("编排循环：每一轮都走事务，因此可以逐轮撤销", async ()
   );
 });
 
+test("编排循环：命令跑不通时把报错回喂给模型，让它改一版", async () => {
+  const project = await projectWithLowContrastText();
+  const requests: AiPlanRequest[] = [];
+  let calls = 0;
+  const editor = new SafeAiEditor(project, {
+    async plan(request) {
+      requests.push(request);
+      calls += 1;
+      if (calls === 1) {
+        // 字段写错了：text.patch 没有 color 这回事（颜色在 appearance.fills 里）。
+        return { summary: "改颜色", commands: [{ type: "text.patch", payload: { id: "text:low", patch: { color: "#1f2937" } } } as never] };
+      }
+      return { summary: "改深色", commands: [darkenText as never] };
+    },
+  });
+
+  const result = await runAutonomousLoop(editor, { goal: "修掉可访问性问题" });
+
+  assert.equal(result.stopReason, "converged");
+  assert.equal(calls, 2);
+  // 第二版计划必须收到「上一版为什么跑不通」。
+  const feedback = requests[1]?.selfCheck?.note ?? "";
+  assert.match(feedback, /没能执行/);
+  assert.match(feedback, /color/);
+});
+
+test("编排循环：结构审查拦下时把理由回喂给模型，让它重出一版", async () => {
+  const project = await projectWithLowContrastText();
+  const requests: AiPlanRequest[] = [];
+  let calls = 0;
+  const editor = new SafeAiEditor(project, {
+    async plan(request) {
+      requests.push(request);
+      calls += 1;
+      if (calls === 1) {
+        // 整篇还原：dry-run 能过，但结构审查一定拦（AI 不能用它覆盖人类改动）。
+        return { summary: "整篇还原", commands: [{ type: "history.restore", payload: { document: request.document } }] };
+      }
+      return { summary: "改深色", commands: [darkenText as never] };
+    },
+  });
+
+  const result = await runAutonomousLoop(editor, { goal: "修掉可访问性问题" });
+
+  assert.equal(result.stopReason, "converged");
+  assert.equal(calls, 2);
+  assert.match(requests[1]?.selfCheck?.note ?? "", /结构审查拦下/);
+});
+
 test("编排循环：审批钩子可以否决这次改动", async () => {
   const project = await projectWithLowContrastText();
   const editor = new SafeAiEditor(project, {

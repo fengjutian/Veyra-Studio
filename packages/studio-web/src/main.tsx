@@ -224,14 +224,21 @@ function App() {
   // 已提交事务：操作历史面板据此列出每一条可回退的步骤。
   const [transactions, setTransactions] = useState<TransactionEntry[]>([]);
   // 没启用真实模型就退回演示规划器：它只造一张固定卡片，不会理解用户需求。
+  // 密钥环交给规划器：鉴权失败时它会自己换下一把，并把新的下标回调上来。
   const planner = useMemo(() => aiSettingsComplete(aiSettings)
     ? createOpenAiCompatiblePlanner({
         baseUrl: aiSettings.baseUrl,
         model: aiSettings.model,
-        apiKey: aiSettings.apiKey || undefined,
+        apiKeys: aiSettings.apiKeys,
+        // 环的起点 = 面板上「使用中」的那把；自动换钥后由下面的回调同步回来。
+        apiKeyIndex: aiSettings.activeKeyIndex,
         stream: true,
         // 按端点能力决定要不要发 response_format；未收录的端点保守地关掉。
         jsonMode: describeProvider(aiSettings.baseUrl).capabilities.jsonMode,
+        onKeyRotated: (index, total, reason) => {
+          setAiSettings(current => ({ ...current, activeKeyIndex: index }));
+          setMessage(`密钥轮换：${reason}（共 ${total} 把）`);
+        },
       })
     : demoPlanner, [aiSettings]);
   const editor = useMemo(() => project ? new SafeAiEditor(project, planner) : undefined, [project, planner]);
@@ -2541,7 +2548,9 @@ function makeNode(type: "frame" | "text" | "rectangle" | "ellipse", parentId: st
   const id = `${type}:${crypto.randomUUID().slice(0, 8)}`;
   const names = { frame: "Frame", text: "文本", rectangle: "矩形", ellipse: "椭圆" } as const;
   const size = box ?? { x: 48, y: 48, width: type === "text" ? 160 : 240, height: type === "text" ? 48 : 140 };
-  const common = { id, name: names[type], parentId, childIds: [], visible: true, locked: false, layout: { ...defaultLayout(), x: size.x, y: size.y, width: size.width, height: size.height }, appearance: { ...defaultAppearance(), fill: type === "text" ? "#ffffff" : "#8b5cf6", cornerRadius: type === "ellipse" ? undefined : 12 } };
+  // 填充写在 fills 里（数组）。`appearance.fill` 是旧格式，运行时只认 fills ——
+  // 写成 fill 的节点画布上是没有颜色的。
+  const common = { id, name: names[type], parentId, childIds: [], visible: true, locked: false, layout: { ...defaultLayout(), x: size.x, y: size.y, width: size.width, height: size.height }, appearance: { ...defaultAppearance(), fills: [{ type: "solid" as const, color: type === "text" ? "#ffffff" : "#8b5cf6" }], cornerRadius: type === "ellipse" ? undefined : 12 } };
   if (type === "text") return { ...common, type: "text", text: "双击编辑文本", fontFamily: "Inter", fontSize: 20, lineHeight: 28 };
   return { ...common, type };
 }
@@ -2556,7 +2565,7 @@ function makeVectorNode(tool: VectorToolId, parentId: string, box: { x: number; 
   const names = { line: "直线", polygon: "多边形", star: "星形" } as const;
   const appearance = tool === "line"
     ? { ...defaultAppearance(), stroke: "#8b5cf6", strokeWidth: 2 }
-    : { ...defaultAppearance(), fill: "#8b5cf6" };
+    : { ...defaultAppearance(), fills: [{ type: "solid" as const, color: "#8b5cf6" }] };
   return {
     id: `vector:${crypto.randomUUID().slice(0, 8)}`,
     type: "vector",
@@ -2579,7 +2588,7 @@ function makeVectorNode(tool: VectorToolId, parentId: string, box: { x: number; 
  */
 function makePenNode(parentId: string, box: { x: number; y: number; width: number; height: number }, geometry: VectorGeometry, closed: boolean): DesignNode {
   const appearance = closed
-    ? { ...defaultAppearance(), fill: "#8b5cf6" }
+    ? { ...defaultAppearance(), fills: [{ type: "solid" as const, color: "#8b5cf6" }] }
     : { ...defaultAppearance(), stroke: "#8b5cf6", strokeWidth: 2 };
   return {
     id: `vector:${crypto.randomUUID().slice(0, 8)}`,
@@ -2647,7 +2656,7 @@ function makeImageNode(parentId: string, assetId: string, box: { width: number; 
   };
 }
 
-const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "演示规划器：创建一个蓝色卡片（未启用真实模型，需求未被理解）", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fill: "#2563eb", cornerRadius: 20 } } } }] }; } };
+const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "演示规划器：创建一个蓝色卡片（未启用真实模型，需求未被理解）", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fills: [{ type: "solid" as const, color: "#2563eb" }], cornerRadius: 20 } } } }] }; } };
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 

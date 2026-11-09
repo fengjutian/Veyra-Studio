@@ -133,6 +133,8 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "node.create": return createNode(document, command.payload.node, command.payload.index);
     case "node.patch": {
       const node = requireNode(document, command.payload.id);
+      rejectUnknownFields(command.payload.patch as unknown as Record<string, unknown>, NODE_PATCH_FIELDS, "node.patch");
+      prepareAppearance(command.payload.patch.appearance, "node.patch 的 appearance");
       if (command.payload.patch.slot !== undefined && typeof command.payload.patch.slot !== "boolean") throw new CommandError("Slot flag must be a boolean");
       if (command.payload.patch.overflow !== undefined) {
         const overflow = command.payload.patch.overflow;
@@ -168,6 +170,7 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       const node = requireNode(document, command.payload.id);
       if (node.type !== "text") throw new CommandError(`Node ${node.id} is not a text node`);
       const { patch } = command.payload;
+      rejectUnknownFields(patch as unknown as Record<string, unknown>, TEXT_PATCH_FIELDS, "text.patch");
       if (patch.fontFamily !== undefined && !patch.fontFamily.trim()) throw new CommandError("Font family cannot be empty");
       if (patch.fontSize !== undefined && (!Number.isFinite(patch.fontSize) || patch.fontSize <= 0)) throw new CommandError("Font size must be positive");
       if (patch.lineHeight !== undefined && (!Number.isFinite(patch.lineHeight) || patch.lineHeight <= 0)) throw new CommandError("Line height must be positive");
@@ -1354,10 +1357,55 @@ function applyOverrides(instance: InstanceNode, overrides: Record<string, unknow
 function createNode(document: DesignDocument, node: DesignNode, index?: number): void {
   if (document.nodes[node.id]) throw new CommandError(`Node ${node.id} already exists`);
   if (node.childIds.length) throw new CommandError("New nodes cannot reference children that have not been created in the same tree operation");
+  prepareAppearance(node.appearance, `节点 ${node.id} 的 appearance`);
   const owner = requireContainer(document, node.parentId);
   document.nodes[node.id] = structuredClone(node);
   insertAt(owner.childIds, node.id, index);
   refreshBooleanAncestors(document, node.parentId);
+}
+
+/** node.patch 允许出现的字段（与命令类型定义一致）。 */
+const NODE_PATCH_FIELDS = ["name", "visible", "locked", "layout", "appearance", "bindings", "slot", "mask", "constraints", "overflow"] as const;
+
+/** text.patch 允许出现的字段。 */
+const TEXT_PATCH_FIELDS = ["text", "fontFamily", "fontSize", "lineHeight", "fontWeight", "fontStyle", "textAlign", "letterSpacing", "runs"] as const;
+
+/** appearance 允许出现的字段。 */
+const APPEARANCE_FIELDS = ["opacity", "fills", "stroke", "strokeWidth", "cornerRadius", "cornerRadii", "shadow", "blur", "blendMode", "backgroundBlur"] as const;
+
+/**
+ * 拒绝未知字段。
+ *
+ * 命令的来源是不可信的 JSON：模型给的计划、导入的文档。用 `Object.assign` 落地的话，
+ * 字段名写错也会「成功」——命令成功、文档没变。这种静默失败最难查：编排循环会把
+ * 它当成一次有效改动，反复提交同样无效的东西，直到被判成震荡。
+ *
+ * 宁可报错：调用方（界面、以及拿到错误信息的模型）能看见问题出在哪。
+ */
+function rejectUnknownFields(value: Record<string, unknown>, allowed: readonly string[], label: string): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      throw new CommandError(`${label} 里有未知字段 "${key}"；可用字段：${allowed.join(", ")}`);
+    }
+  }
+}
+
+/**
+ * 外观对象的旧字段归一化 + 未知字段拒绝。
+ *
+ * 旧格式用 `appearance.fill`（单值字符串），现在用 `appearance.fills`（数组）。
+ * 有一批节点是在改格式那阵子造出来的，磁盘上仍是旧写法——它们在画布上**没有颜色**。
+ * 这里顺手修好（不报错：报错会让这些文档打不开），其余未知字段则拒绝。
+ */
+function prepareAppearance(appearance: unknown, label: string): void {
+  if (!appearance || typeof appearance !== "object") return;
+  const record = appearance as Record<string, unknown>;
+  const legacy = record.fill;
+  if (typeof legacy === "string" && legacy.trim() && !record.fills) {
+    record.fills = [{ type: "solid", color: legacy }];
+  }
+  delete record.fill;
+  rejectUnknownFields(record, APPEARANCE_FIELDS, label);
 }
 
 function deleteNode(document: DesignDocument, id: NodeId): void {

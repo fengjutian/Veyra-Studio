@@ -85,6 +85,19 @@ export class AiReviewBlockedError extends Error {
   }
 }
 
+/**
+ * 计划的 dry-run 没过：命令本身有问题（字段写错、引用了不存在的节点）。
+ *
+ * 单独一个类型，是为了让编排循环能**把错误回喂给模型**再要一版——命令哪里不对
+ * 是模型自己能改的，直接收工等于白跑一轮。
+ */
+export class AiPlanDryRunError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "AiPlanDryRunError";
+  }
+}
+
 export class SafeAiEditor {
   private readonly pending = new Map<string, AiPlanPreview>();
 
@@ -133,7 +146,13 @@ export class SafeAiEditor {
 
     const planId = crypto.randomUUID();
     const envelope = this.envelope(planId, document, planned.commands);
-    const preview = this.project.preview(envelope);
+    let preview: ReturnType<StudioProject["preview"]>;
+    try {
+      preview = this.project.preview(envelope);
+    } catch (error) {
+      // 命令跑不通是模型能自己改的问题：把原因带出去，调用方可以回喂给它再要一版。
+      throw new AiPlanDryRunError(error instanceof Error ? error.message : String(error), { cause: error });
+    }
     // dry-run 证明"能跑"，审查证明"该不该跑"。
     const review = reviewAiPlan({ before: preview.before, after: preview.after, commands: planned.commands });
     const result: AiPlanPreview = {

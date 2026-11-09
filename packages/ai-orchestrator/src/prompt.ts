@@ -1,5 +1,5 @@
 import type { DesignDocument, DesignNode, Paint } from "@ufira/design-schema";
-import { describeCommandVocabulary, describeNodeTemplate } from "./command-vocabulary";
+import { describeColorUsage, describeCommandVocabulary, describeNodeTemplate } from "./command-vocabulary";
 import type { AiPlanRequest } from "./safe-ai-editor";
 import { formatSelfCheckForPrompt } from "./self-check";
 
@@ -34,6 +34,9 @@ function buildSystemPrompt(): string {
     "",
     "新建节点的完整模板（node.create / component.instantiate 必须字段齐全）：",
     describeNodeTemplate(),
+    "",
+    "颜色的写法：",
+    describeColorUsage(),
     "",
     "文本节点在模板基础上额外需要：text、fontFamily、fontSize、lineHeight；",
     "可选 fontWeight（100–900 的整数）、fontStyle（\"normal\"|\"italic\"）、",

@@ -7,7 +7,11 @@
  *
  * 表是人工维护的，依据各服务公开文档；未收录的端点按通用 OpenAI 协议处理，
  * 默认关闭 `jsonMode`（最保守的假设），流式仍然启用。
+ *
+ * **实测优先**：已经跑过真实 Provider 验收的端点（见 `provider-acceptance.ts`），
+ * 能力结论以验收记录为准，而不是照文档抄的那份。
  */
+import { capabilitiesFromAcceptance, findAcceptance, type ProviderAcceptance } from "./provider-acceptance";
 
 export type AuthScheme = "bearer" | "none";
 
@@ -55,6 +59,22 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     note: "聚合网关；具体模型的 json 能力取决于被路由到的上游。",
   },
   {
+    id: "minimax",
+    label: "MiniMax",
+    baseUrl: "https://api.minimaxi.com/v1",
+    defaultModel: "MiniMax-M3",
+    capabilities: { jsonMode: true, stream: true, auth: "bearer" },
+    note: "OpenAI 兼容；正文可能带 <think> 推理前缀（解析器已剥离）。国内站与国际站的密钥不通用。",
+  },
+  {
+    id: "minimax-intl",
+    label: "MiniMax（国际站）",
+    baseUrl: "https://api.minimax.io/v1",
+    defaultModel: "MiniMax-M3",
+    capabilities: { jsonMode: true, stream: true, auth: "bearer" },
+    note: "国际站接入点；国内站的密钥在这里会一直 401。",
+  },
+  {
     id: "ollama",
     label: "Ollama（本地）",
     baseUrl: "http://localhost:11434/v1",
@@ -90,6 +110,15 @@ export interface ProviderDescription {
   matched: boolean;
   capabilities: ProviderCapabilities;
   note: string;
+  /**
+   * 实测记录（如果有）。
+   *
+   * 没有记录时，预设里的能力只是**照文档抄的**——面板会标明「未实测」，不拿
+   * 没验过的结论当事实卖。
+   */
+  acceptance?: ProviderAcceptance;
+  /** 能力结论是否来自实测。 */
+  verified: boolean;
 }
 
 /** 地址归一化：小写、去空白、去尾部斜杠，便于前缀匹配。 */
@@ -116,16 +145,31 @@ export function matchProvider(baseUrl: string): ProviderPreset | undefined {
 /** 给设置面板用的描述：命中了就报服务名，没命中就说"按通用协议处理"。 */
 export function describeProvider(baseUrl: string): ProviderDescription {
   const preset = matchProvider(baseUrl);
+  const acceptance = findAcceptance(baseUrl);
   if (!preset) {
     return {
       id: "custom",
       label: "未收录的兼容端点",
       matched: false,
-      capabilities: FALLBACK_CAPABILITIES,
+      capabilities: acceptance ? capabilitiesFromAcceptance(acceptance) : FALLBACK_CAPABILITIES,
       note: "按通用 OpenAI 协议处理：默认关闭 json 模式、保留流式；实际能力以服务端为准。",
+      ...(acceptance ? { acceptance, verified: true } : { verified: false }),
     };
   }
-  return { id: preset.id, label: preset.label, matched: true, capabilities: preset.capabilities, note: preset.note };
+  // 有实测记录就以实测为准：预设是照文档抄的，实测是跑出来的。
+  return {
+    id: preset.id,
+    label: preset.label,
+    matched: true,
+    capabilities: acceptance ? capabilitiesFromAcceptance(acceptance) : preset.capabilities,
+    note: preset.note,
+    ...(acceptance ? { acceptance, verified: true } : { verified: false }),
+  };
+}
+
+/** 能力来源的标签：实测 / 文档推断（未实测）。 */
+export function capabilitySourceLabel(description: ProviderDescription): string {
+  return description.verified ? "实测" : "文档推断（未实测）";
 }
 
 /** 能力的中文标签，面板和文档共用一个口径。 */

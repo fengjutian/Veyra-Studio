@@ -146,8 +146,9 @@ test("reports a font whose bytes cannot be read", async () => {
 test("reports a weight that does not match any declaration", async () => {
   const { project } = await projectWithFont(400);
   // 文本节点要用 700，而文档里只有 400 的声明。
+  // 字重是文本字段，走 text.patch（node.patch 不带字重，运行时现在会拒绝）。
   await project.execute(envelope(1, [
-    { type: "node.patch", payload: { id: "text:1", patch: { fontWeight: 700 } } },
+    { type: "text.patch", payload: { id: "text:1", patch: { fontWeight: 700 } } },
   ]));
   const result = await project.exportHtmlWithAssets({ pageId: "page:1", viewport: { width: 400, height: 200 } });
   assert.match(result.document, /@font-face/);

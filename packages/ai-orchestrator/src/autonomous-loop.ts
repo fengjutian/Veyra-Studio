@@ -1,7 +1,7 @@
 import type { NodeId } from "@ufira/design-schema";
 import { PlanEmptyError } from "./plan-parser";
 import type { AbortSignalLike, AiPlanPreview } from "./safe-ai-editor";
-import { SafeAiEditor } from "./safe-ai-editor";
+import { AiPlanDryRunError, SafeAiEditor } from "./safe-ai-editor";
 import { collectSelfCheck, selfCheckFingerprint, type SelfCheckContext, type SelfCheckIssue, type SelfCheckOptions, type SelfCheckReport } from "./self-check";
 
 /**
@@ -123,6 +123,8 @@ export interface AutonomousLoopOptions {
   maxRounds?: number;
   /** 同一个问题连续出现多少轮就判定为「修不动」；缺省 3。 */
   oscillationThreshold?: number;
+  /** 一轮之内最多要几版计划；缺省 2（第一版 + 一次带反馈的重来）。 */
+  maxPlanAttempts?: number;
   /** 体检层的选项（栅格、导出诊断、资源解析器）。 */
   selfCheck?: SelfCheckOptions;
   signal?: AbortSignalLike;
@@ -161,6 +163,7 @@ export async function runAutonomousLoop(editor: SafeAiEditor, options: Autonomou
   if (!goal) throw new Error("自主运行需要一个目标描述");
   const maxRounds = Math.max(1, Math.trunc(options.maxRounds ?? 6));
   const threshold = Math.max(1, Math.trunc(options.oscillationThreshold ?? 3));
+  const maxPlanAttempts = Math.max(1, Math.trunc(options.maxPlanAttempts ?? 2));
   const selectedNodeIds = options.selectedNodeIds ?? [];
 
   let progress = createLoopProgress();
@@ -192,33 +195,58 @@ export async function runAutonomousLoop(editor: SafeAiEditor, options: Autonomou
     progress = decision.progress;
     if (decision.action === "stop") return finish(decision.stopReason as LoopStopReason);
 
-    const note = buildRoundNote(goal, round, maxRounds, rounds);
-    const context: SelfCheckContext = { report, stuck: progress.stuck, note };
+    const baseNote = buildRoundNote(goal, round, maxRounds, rounds);
 
-    let plan: AiPlanPreview;
-    try {
-      plan = await editor.createPlan(goal, selectedNodeIds, {
-        ...(options.signal ? { signal: options.signal } : {}),
-        ...(options.onDelta ? { onDelta: options.onDelta } : {}),
-        selfCheck: context,
-        selfCheckRound: round,
-      });
-    } catch (error) {
-      // 模型明确表示「没有要改的」：不是故障，是合法结论。
-      if (error instanceof PlanEmptyError) {
-        pushRound({ round, report, todo: decision.todo, summary: "模型没有给出可执行的改动", appliedCommands: 0, warnings: [], note: "模型认为没有要改的东西" });
-        return finish("no-changes");
+    // 一轮之内可以要好几版计划：命令跑不通、结构审查拦下、模型说「没什么可改」，
+    // 这三种都是**模型自己能改**的问题——把原因回喂给它，比直接收工有用得多。
+    let plan: AiPlanPreview | undefined;
+    let feedback = "";
+    let lastFailure: "dry-run" | "empty" | "blocked" | undefined;
+    for (let attempt = 1; attempt <= maxPlanAttempts; attempt += 1) {
+      const context: SelfCheckContext = { report, stuck: progress.stuck, note: feedback ? `${baseNote}\n${feedback}` : baseNote };
+      let candidate: AiPlanPreview;
+      try {
+        candidate = await editor.createPlan(goal, selectedNodeIds, {
+          ...(options.signal ? { signal: options.signal } : {}),
+          ...(options.onDelta ? { onDelta: options.onDelta } : {}),
+          selfCheck: context,
+          selfCheckRound: round,
+        });
+      } catch (error) {
+        if (options.signal?.aborted) return finish("cancelled");
+        if (error instanceof PlanEmptyError) {
+          lastFailure = "empty";
+          feedback = `体检清单里还有 ${report.counts.actionable} 项待修项，你没有给出任何命令。请针对清单里的问题逐项修改。`;
+          continue;
+        }
+        if (error instanceof AiPlanDryRunError) {
+          lastFailure = "dry-run";
+          feedback = `上一份计划没能执行：${error.message}。请按错误信息修正命令后重新给出计划。`;
+          continue;
+        }
+        pushRound({ round, report, todo: decision.todo, summary: "模型调用失败", appliedCommands: 0, warnings: [], note: errorMessage(error) });
+        return finish("planner-error", errorMessage(error));
       }
-      if (options.signal?.aborted) return finish("cancelled");
-      pushRound({ round, report, todo: decision.todo, summary: "模型调用失败", appliedCommands: 0, warnings: [], note: errorMessage(error) });
-      return finish("planner-error", errorMessage(error));
+
+      if (candidate.review.blocking) {
+        const blocking = candidate.review.findings.filter(finding => finding.severity === "blocking").map(finding => finding.message).join("；");
+        lastFailure = "blocked";
+        feedback = `结构审查拦下了这份改动：${blocking}。请给出不含这些操作的计划。`;
+        editor.cancel(candidate.planId);
+        continue;
+      }
+
+      plan = candidate;
+      break;
     }
 
-    if (plan.review.blocking) {
-      const blocking = plan.review.findings.filter(finding => finding.severity === "blocking").map(finding => finding.message).join("；");
-      pushRound({ round, report, todo: decision.todo, summary: plan.summary, appliedCommands: 0, warnings: plan.warnings, note: `结构审查阻断：${blocking}` });
-      editor.cancel(plan.planId);
-      return finish("blocked", blocking);
+    if (!plan) {
+      // 一轮之内几次都没能拿到可提交的计划：按最后一次失败的原因收尾。
+      const note = lastFailure === "blocked" ? "结构审查一直拦着这份改动" : lastFailure === "empty" ? "模型一直没给出命令" : "计划一直跑不通";
+      pushRound({ round, report, todo: decision.todo, summary: "这一轮没能产出可提交的计划", appliedCommands: 0, warnings: [], note });
+      if (lastFailure === "blocked") return finish("blocked", note);
+      if (lastFailure === "empty") return finish("no-changes");
+      return finish("planner-error", note);
     }
 
     if (options.approve && !options.approve(plan)) {

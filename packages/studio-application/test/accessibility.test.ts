@@ -101,6 +101,27 @@ test("flags low-contrast text and keeps passing nodes out", () => {
   assert.equal(contrastRatio("#949494", "#ffffff")! > 3, true);
 });
 
+test("段内样式覆盖了整段文字时，不再按节点填充色报假问题", () => {
+  // 底色浅、但整段被 runs 改成深色：渲染出来是深色的，不该报对比度不足。
+  // 这个假问题会让编排循环反复「修」一个已经修好的地方（真实 Provider 验收里撞过）。
+  const covered = text("covered", "page:1", { fill: "#999999", text: "八个字符的标题" });
+  covered.runs = [{ from: 0, to: 7, style: { color: "#1f2937" } }];
+  const document = documentWith([covered]);
+  assert.deepEqual(collectContrastIssues(document), []);
+});
+
+test("段内样式只盖住一部分时，剩下那段仍然会被报出来", () => {
+  const partial = text("partial", "page:1", { fill: "#999999", text: "八个字符的标题" });
+  partial.runs = [{ from: 0, to: 4, style: { color: "#1f2937" } }];
+  const document = documentWith([partial]);
+  const issues = collectContrastIssues(document);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0]?.nodeId, "partial");
+  // 报出来的是**没被盖住**的那一段。
+  assert.equal(issues[0]?.foreground, "#999999");
+  assert.equal(issues[0]?.text, "的标题");
+});
+
 test("uses token colours when a text node is bound", () => {
   const document = documentWith(
     [text("t", "page:1", { bind: "color.ink" })],

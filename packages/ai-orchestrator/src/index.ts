@@ -5,5 +5,6 @@ export * from "./prompt";
 export * from "./openai-planner";
 export * from "./review";
 export * from "./provider-matrix";
+export * from "./provider-acceptance";
 export * from "./self-check";
 export * from "./autonomous-loop";
