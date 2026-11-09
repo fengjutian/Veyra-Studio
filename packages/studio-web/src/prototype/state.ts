@@ -1,4 +1,5 @@
-import type { DesignDocument, Interaction, NodeId, PrototypeAnimation } from "@ufira/design-schema";
+import { hasPreserveScroll, type DesignDocument, type Interaction, type NodeId, type PrototypeAnimation } from "@ufira/design-schema";
+import { scrollHostsInSubtree, type ScrollOffset } from "./scene-build";
 
 /**
  * 原型运行时的状态机。
@@ -32,6 +33,14 @@ export interface PrototypeState {
   transition?: PrototypeTransition;
   /** 自增序号：给 transition.id 用，保证同一屏连续切换也有不同的 key。 */
   seq: number;
+  /** 各滚动宿主的当前滚动偏移（按宿主节点 id）。 */
+  scroll: Record<NodeId, ScrollOffset>;
+  /**
+   * 各滚动宿主被记住的滚动偏移。
+   *
+   * 离开一屏时写入，`preserveScroll` 到达该屏时读回——见 `docs/prototype-runtime.md` 第 7 节。
+   */
+  scrollMemory: Record<NodeId, ScrollOffset>;
 }
 
 export type PrototypeEvent =
@@ -50,6 +59,13 @@ export type PrototypeEvent =
   /** 点在没有交互的空白处：如果最上层 overlay 允许，就关掉它。 */
   | { kind: "click-outside" }
   | { kind: "back" }
+  /**
+   * 滚动：宿主 id + 滚轮增量 + 该宿主当前的最大可滚动距离。
+   *
+   * 最大可滚动距离由宿主盒子的超出量算出来（要布局才知道），
+   * 所以由调用方算好带进来，状态机只负责夹紧与累加。
+   */
+  | { kind: "scroll"; hostId: NodeId; deltaX: number; deltaY: number; maxX: number; maxY: number }
   | { kind: "animation-end"; transitionId: number };
 
 export interface PrototypeResult {
@@ -61,7 +77,7 @@ export interface PrototypeResult {
 /** 从某一屏开始预览。屏幕必须存在，否则抛错——静默显示空白比报错更难排查。 */
 export function startPrototype(document: DesignDocument, screenId: NodeId): PrototypeState {
   if (!document.nodes[screenId]) throw new Error(`Prototype screen ${screenId} does not exist`);
-  return { screenId, history: [], overlays: [], seq: 0 };
+  return { screenId, history: [], overlays: [], seq: 0, scroll: {}, scrollMemory: {} };
 }
 
 /** 节点自己身上的交互（不向上找）。 */
@@ -126,9 +142,49 @@ function nextTransition(state: PrototypeState, animation: PrototypeAnimation | u
   return { id: state.seq + 1, ...(animation ? { animation } : {}) };
 }
 
-function navigate(state: PrototypeState, interaction: Interaction): PrototypeState {
+/**
+ * 把滚动偏移夹进 `[0, max]`。
+ *
+ * 内容比上次短时（换了屏、重新布局），旧位置可能已经越界——
+ * 夹紧比停在一片空白上好。
+ */
+export function clampScroll(value: number, max: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (!Number.isFinite(max) || max <= 0) return 0;
+  return Math.min(Math.max(value, 0), max);
+}
+
+/**
+ * 离开当前屏、到达目标屏时的滚动处理。
+ *
+ * - **离开**：把当前屏各滚动宿主的偏移存进记忆（`scrollMemory`）；
+ * - **到达**：`preserve` 为真就用记忆恢复（没有记忆就是 0），否则把目标屏
+ *   各宿主的当前偏移直接清零。
+ *
+ * 记忆只在离开时写入，所以「到达时重置」不会顺手抹掉记忆——
+ * 真正覆盖它的是下一次离开这一屏。
+ */
+function applyScrollOnEnter(
+  state: PrototypeState,
+  document: DesignDocument,
+  target: NodeId,
+  preserve: boolean,
+): { scroll: Record<NodeId, ScrollOffset>; scrollMemory: Record<NodeId, ScrollOffset> } {
+  const scrollMemory = { ...state.scrollMemory };
+  for (const host of scrollHostsInSubtree(document, state.screenId)) {
+    scrollMemory[host] = state.scroll[host] ?? { x: 0, y: 0 };
+  }
+  const scroll = { ...state.scroll };
+  for (const host of scrollHostsInSubtree(document, target)) {
+    scroll[host] = preserve ? (scrollMemory[host] ?? { x: 0, y: 0 }) : { x: 0, y: 0 };
+  }
+  return { scroll, scrollMemory };
+}
+
+function navigate(state: PrototypeState, document: DesignDocument, interaction: Interaction): PrototypeState {
   const target = interaction.destination;
   if (!target) return state;
+  const { scroll, scrollMemory } = applyScrollOnEnter(state, document, target, hasPreserveScroll(interaction));
   return {
     screenId: target,
     previousScreenId: state.screenId,
@@ -136,6 +192,8 @@ function navigate(state: PrototypeState, interaction: Interaction): PrototypeSta
     overlays: [],
     transition: nextTransition(state, interaction.animation),
     seq: state.seq + 1,
+    scroll,
+    scrollMemory,
   };
 }
 
@@ -155,10 +213,12 @@ function closeOverlay(state: PrototypeState, target: NodeId | null | undefined):
   return { ...state, overlays: state.overlays.slice(0, -1) };
 }
 
-function goBack(state: PrototypeState): PrototypeState {
+function goBack(state: PrototypeState, document: DesignDocument): PrototypeState {
   if (!state.history.length) return state;
   const history = [...state.history];
   const screenId = history.pop()!;
+  // 「返回」就是回到刚才待过的地方，所以按 keep（`preserveScroll: true`）处理。
+  const { scroll, scrollMemory } = applyScrollOnEnter(state, document, screenId, true);
   return {
     screenId,
     previousScreenId: state.screenId,
@@ -166,6 +226,8 @@ function goBack(state: PrototypeState): PrototypeState {
     overlays: [],
     transition: nextTransition(state, undefined),
     seq: state.seq + 1,
+    scroll,
+    scrollMemory,
   };
 }
 
@@ -188,7 +250,18 @@ export function dispatchPrototype(state: PrototypeState, document: DesignDocumen
     }
 
     case "back":
-      return { state: goBack(state) };
+      return { state: goBack(state, document) };
+
+    case "scroll": {
+      const current = state.scroll[event.hostId] ?? { x: 0, y: 0 };
+      const next = {
+        x: clampScroll(current.x + event.deltaX, event.maxX),
+        y: clampScroll(current.y + event.deltaY, event.maxY),
+      };
+      // 已经在边界上：状态不变，省掉一次没意义的重绘。
+      if (next.x === current.x && next.y === current.y) return { state };
+      return { state: { ...state, scroll: { ...state.scroll, [event.hostId]: next } } };
+    }
 
     case "click":
       return applyInteraction(state, document, resolveInteraction(document, event.nodeId, "click"));
@@ -222,7 +295,7 @@ function applyInteraction(
     case "navigate": {
       const target = interaction.destination;
       if (!target || !document.nodes[target]) return { state };
-      return { state: navigate(state, interaction) };
+      return { state: navigate(state, document, interaction) };
     }
     case "open-overlay":
     case "toggle-overlay": {
@@ -236,7 +309,7 @@ function applyInteraction(
     case "close-overlay":
       return { state: closeOverlay(state, interaction.destination ?? undefined) };
     case "prev-screen":
-      return { state: goBack(state) };
+      return { state: goBack(state, document) };
     case "open-url": {
       const url = interaction.url;
       if (!url) return { state };

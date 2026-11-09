@@ -180,6 +180,17 @@ export function hasUrl(interaction: Interaction): boolean {
 }
 
 /**
+ * 该动作类型是否可以使用「滚动保持」。
+ *
+ * 只有 `navigate` 有意义：滚动位置是「到达某一屏」时才谈得上保留还是重置。
+ * 其它动作上残留的 `preserveScroll` 是切换类型留下的旧字段（见文件头说明），
+ * 不参与判断——所以读这个字段一律先问本函数。
+ */
+export function hasPreserveScroll(interaction: Interaction): boolean {
+  return interaction?.actionType === "navigate" && interaction.preserveScroll === true;
+}
+
+/**
  * 事件类型对节点类型是否合法。
  *
  * `after-delay` 只对 frame 合法——延迟触发意味着「进入这个页面后等一会儿」，
@@ -289,6 +300,18 @@ export function withDelay(interaction: Interaction, delay: number): Interaction 
 }
 
 /**
+ * 设置「滚动保持」；动作类型不是 `navigate` 时忽略。
+ *
+ * 与 `withDelay` 同一套写法：只有当前类型用得上的字段才允许被设置，
+ * 避免给一条 overlay 交互塞进一个永远不会被读到的开关。
+ */
+export function withPreserveScroll(interaction: Interaction, preserveScroll: boolean): Interaction {
+  if (interaction.actionType !== "navigate") return interaction;
+  if (interaction.preserveScroll === preserveScroll) return interaction;
+  return { ...interaction, preserveScroll };
+}
+
+/**
  * 校验一条交互是否自洽。
  *
  * 返回问题描述列表，空数组表示通过。
@@ -328,6 +351,13 @@ export function validateInteraction(interaction: Interaction, nodeType?: string)
 
   if (hasUrl(interaction) && !interaction.url) {
     problems.push("open-url interaction requires a url");
+  }
+
+  // `preserveScroll` 是布尔开关：形状不对时读它的人会拿到意料之外的值，
+  // 所以这里只挑**类型**问题（语义上它是否生效由 `hasPreserveScroll()` 判断）。
+  const preserveScroll = (interaction as { preserveScroll?: unknown }).preserveScroll;
+  if (preserveScroll !== undefined && typeof preserveScroll !== "boolean") {
+    problems.push("preserveScroll must be a boolean");
   }
 
   if (interaction.animation && !isAnimationAllowedForAction(interaction.actionType, interaction.animation.type)) {

@@ -42,7 +42,10 @@ Figma 的组件属性（component props）补的就是这一层：
 ```ts
 export type ComponentProperty =
   | { id: string; name: string; type: "text"; defaultValue: string }
-  | { id: string; name: string; type: "boolean"; defaultValue: boolean };
+  | { id: string; name: string; type: "boolean"; defaultValue: boolean }
+  | { id: string; name: string; type: "instance-swap"; defaultValue: string }
+  | { id: string; name: string; type: "color"; defaultValue: string }
+  | { id: string; name: string; type: "number"; defaultValue: number };
 
 export interface ComponentDefinition {
   // …既有字段
@@ -55,7 +58,21 @@ export interface ComponentDefinition {
 类型与默认值必须配对，写成联合会让「text 属性的默认值是 `false`」这种
 错误数据也能通过 schema —— 校验器拦不住语义错误，只会成为下游的静默 bug。
 
-### 2.2 绑定
+属性值在实例上的存储形态统一为 `string | boolean | number`：
+
+```ts
+export type ComponentPropertyValue = string | boolean | number;
+```
+
+- `text` / `color` / `instance-swap` 的值是字符串；
+- `boolean` 的值是布尔值；
+- `number` 的值是数字。
+
+值的**解析与校验**统一走 `packages/design-schema/src/component-properties.ts`：
+那里的 `ComponentPropertySpec` 是这五种声明的判别联合，
+`resolvePropertyValue` 按声明类型返回对应形态的值。
+
+### 2.2 绑定的字段
 
 绑定放在**被绑定的节点**上，方向是「字段 → 属性 id」：
 
@@ -92,13 +109,19 @@ export interface BaseNode {
 其它字段（填充、字号、圆角……）**本轮不做** —— 一旦允许绑定任意字段，
 属性就会退化成 override 的别名，类型系统也拦不住「把布尔值绑到字号上」。
 
+> 后续切片（不在本轮范围）：把 `color` 绑到填充、`number` 绑到字号、
+> `instance-swap` 绑到内部实例。届时 `ComponentPropertyField` 要加
+> `fill` / `fontSize` / `instance` 三个字段，`ComponentPropertyBindings`
+> 同步加同名可选键，运行时 `applyInstanceProperties` 按字段分派。
+> 需要的改动清单见 §9。
+
 ### 2.3 实例上的属性值
 
 ```ts
 export interface InstanceNode extends BaseNode {
   // …既有字段
   /** 实例显式设置过的属性值；键是属性 id。缺省表示跟随组件默认值。 */
-  propValues?: Record<string, string | boolean>;
+  propValues?: Record<string, string | boolean | number>;
 }
 ```
 
@@ -112,12 +135,72 @@ export interface InstanceNode extends BaseNode {
 因此 **schemaVersion 保持 4**，不登记迁移步骤 ——
 只有「无法用默认值兼容」才需要升版本。
 
-## 3. 物化时的应用顺序
+## 3. 属性类型的行为
+
+每种类型都有固定的四件事：**值类型、默认值、校验规则、面板控件**。
+它们集中在 `component-properties.ts` 的 `PROPERTY_TYPE_SPECS` 里，
+面板与运行时都读同一张表，不允许各写一套。
+
+| 类型 | 值类型 | 默认值 | 校验 | 面板控件 |
+| --- | --- | --- | --- | --- |
+| `text` | 字符串 | `""` | 必须是字符串 | 文本输入框 |
+| `boolean` | 布尔值 | `false` | 必须是布尔值 | 开关 |
+| `instance-swap` | 字符串（组件 id） | `""`（未设置） | 必须是字符串；非空时必须指向存在的组件 | 下拉选择候选组件 |
+| `color` | 字符串（十六进制） | `"#000000"` | 必须是 `#rgb` 或 `#rrggbb` | 取色器（`input[type=color]`） |
+| `number` | 数字 | `16` | 必须是有限数字 | 数字输入框 |
+
+`instance-swap` 的值是**组件 id**（不是实例节点 id）：实例交换的语义是
+「把组件内部某个实例换成另一个组件的定义」，值指向组件最直接，
+也让实例值在变体之间可以保持稳定。
+
+`number` 的默认值取 `16` 而不是 `0`——它最常见的用途是字号，
+`0` 不是合法字号。
+
+## 4. 变体集共享声明
+
+变体集（`ComponentSetDefinition`）上可以声明一组**所有成员共享**的属性：
+
+```ts
+export interface ComponentSetDefinition {
+  id: string;
+  name: string;
+  /** 变体属性名，顺序即 UI 展示顺序。 */
+  properties: string[];
+  /** 变体集共享的组件属性声明；可选，旧集合没有它也完全合法。 */
+  componentProperties?: ComponentProperty[];
+}
+```
+
+共享声明解决的是「同一个变体集里的每个变体都要重复声明同一组属性」：
+声明一次，集内所有变体都拿到。
+
+### 4.1 合并规则与优先级
+
+一个组件的**有效属性声明** = 变体集共享声明 + 该组件自己的声明，
+按属性 id 合并：
+
+- **同名 id：组件自己的声明优先**（覆盖共享声明的整条定义：名字、类型、默认值）。
+  变体是更具体的一端，允许它特化共享属性（例如「危险」变体把 `danger` 默认值改成 `true`）。
+- **只有共享声明有、组件自己没有的**：原样继承。
+- **只有组件自己有的**：追加在继承来的声明之后。
+
+顺序：先按共享声明的顺序输出（被覆盖的用组件自己的定义替换），
+再追加组件独有的声明。这样同一变体集里所有变体的属性面板顺序一致。
+
+**类型冲突要报错**：组件把共享属性的类型改了（例如共享是 `number`，
+组件改成 `text`），属于破坏共享契约，文档校验必须报出来。
+
+### 4.2 实例侧
+
+实例绑定到具体变体后，属性定义随之解析：`resolveInstanceProperties`
+先取变体的有效声明，再看实例自己有没有显式值。
+
+## 5. 物化时的应用顺序
 
 实例物化（`component.instantiate`）与变体切换（`component.switchVariant`）
 都会重建实例子树，顺序固定为：
 
-1. 复制组件根子树（生成 `instanceId--sourceId` 形式的副本）；
+1. 复制组件根子树（生成 `instance--source` 形式的副本）；
 2. 应用 override（`applyOverrides`）；
 3. **应用属性值**（`applyPropertyValues`）。
 
@@ -125,13 +208,13 @@ export interface InstanceNode extends BaseNode {
 与之配套：`component.override` **拒绝**写入被属性绑定的字段
 （提示「该字段由组件属性 X 控制」），避免出现「改完立刻被属性值盖掉」的死角。
 
-### 3.1 文本属性与富文本
+### 5.1 文本属性与富文本
 
 属性写入的是**纯文本**：被绑定的文本副本上的段内样式（`runs`）会被清掉。
 原因：段内样式区间是按字符偏移定义的，换成一段新的文字后区间必然失效，
 留着会让 `validateTextRuns` 判定文档非法。
 
-### 3.2 变体之间
+### 5.2 变体之间
 
 创建变体时，源组件的属性声明会被**复制**到新组件（属性 id 保持一致），
 节点上的绑定随节点一起被复制。于是：
@@ -140,11 +223,10 @@ export interface InstanceNode extends BaseNode {
 - 新变体没有的属性 id，其实例值会被丢弃（该变体里不存在这个属性）；
 - 切换后按新组件的属性声明重新应用一次。
 
-代价：属性声明是**每个组件一份**，不是变体集共享。
-在源组件上改默认值不会同步到已经存在的变体（变体是复制出来的独立组件）。
-这是本轮的已知限制，见 §6。
+共享声明（§4）让「所有变体都有同一组属性」这件事不再依赖复制：
+共享声明以变体集为作用域，切换变体时自然跟着走。
 
-## 4. 命令
+## 6. 命令
 
 | 命令 | payload | 语义 |
 | --- | --- | --- |
@@ -158,28 +240,37 @@ export interface InstanceNode extends BaseNode {
 校验规则（命令层 + 文档校验层各拦一次）：
 
 - 属性 id 在组件内唯一；属性名不能为空；
-- `defaultValue` 的类型必须与 `type` 一致；
+- `defaultValue` 的类型必须与 `type` 一致（见 §3 的表）；
 - 绑定的节点必须**在组件根子树内部**（组件根本身不行 —— 它只是容器）；
 - `text` 绑定要求属性是 `text` 且节点是文本节点；
 - `visible` 绑定要求属性是 `boolean`；
 - 实例的属性值必须对应实例所属组件声明过的属性，值类型必须匹配；
-- 组件内同一字段只能绑一个属性（重复绑定是覆盖）。
+- 组件内同一字段只能绑一个属性（重复绑定是覆盖）；
+- 组件覆盖共享属性时不得改变它的类型（§4.1）。
 
-## 5. UI
+## 7. UI
 
-### 5.1 实例侧
+### 7.1 实例侧
 
 实例面板新增「组件属性」区：每个属性一行编辑器。
 
 - `text` 属性 → 文本输入框；
-- `boolean` 属性 → 勾选框；
+- `boolean` 属性 → 开关；
+- `color` 属性 → 取色器；
+- `number` 属性 → 数字输入框；
+- `instance-swap` 属性 → 下拉选择候选组件（默认项「未设置」）；
 - 每行显示这个属性绑在哪个节点的哪个字段上；
 - 实例显式改过的属性带「恢复默认」按钮。
+
+按类型渲染控件的组件是 `packages/studio-web/src/component-prop-editor.tsx`
+（`ComponentPropEditor`）：它接收属性声明、当前值与候选列表，
+按 `PROPERTY_TYPE_SPECS` 的 `control` 字段选控件。
+接进实例面板的片段见 §9。
 
 被属性绑定的文本节点**不再出现在「实例覆盖」区** ——
 它的内容归属性管，两处都能改会让人以为有一个改动没生效。
 
-### 5.2 组件侧
+### 7.2 组件侧
 
 属性面板（选中节点时）新增「组件属性」区，条件是**选中的节点属于某个组件**
 （`findOwningComponentId` 能找到归属组件）：
@@ -192,28 +283,61 @@ export interface InstanceNode extends BaseNode {
 绑定目标就是**当前选中的节点**——和 Figma 的
 「选中图层 → Create component property」一致：先选图层，再暴露。
 
-## 6. 已知限制
+## 8. 已知限制
 
-- **属性只支持两种类型**（text / boolean），不支持实例交换、颜色、字号等。
-- **属性声明按组件各存一份**，不是变体集共享；源组件改默认值不会同步到已有变体。
+- **绑定字段仍只有 `text` 与 `visible`**：`color` / `number` / `instance-swap`
+  属性已可声明、可校验、可在实例面板编辑，但还不能绑到节点字段上
+  （绑到填充 / 字号 / 内部实例是下一轮切片，改动清单见 §9）。
+- **`color` 只接受十六进制**（`#rgb` / `#rrggbb`），不支持 `rgba()` 或颜色名。
+- **`instance-swap` 的值指向组件 id**，空串表示「未设置」；不支持指向实例节点 id。
+- **属性声明默认按组件各存一份**，不是变体集共享；共享声明是可选能力（§4），
+  两者可以并存，共享声明优先作为基线（§4.1）。
 - **文本属性写纯文本**，会清掉被绑定文本节点的段内样式。
-- **绑定只支持 `text` 与 `visible` 两个字段**，其余字段仍只能靠 override。
 - **属性不能跨组件嵌套引用**：组件 A 的属性不会自动传给 A 内部 B 的实例。
 - **不升 schema 版本**：字段全可选，旧文档无需迁移。
 
-## 7. 测试
+## 9. 需要其它文件配合的改动
+
+本轮实现落在 `component-properties.ts`（类型表、校验、解析、共享声明合并）
+与 `component-prop-editor.tsx`（面板控件）里。以下改动需要配套落地，
+否则新类型无法在真实文档里往返：
+
+| 文件 | 改动 |
+| --- | --- |
+| `packages/design-schema/src/types.ts` | `ComponentProperty` 加三种新分支；`InstanceNode.propValues` 放宽到 `string \| boolean \| number`；`ComponentSetDefinition` 加 `componentProperties?: ComponentProperty[]` |
+| `packages/design-schema/src/schema.ts` | `componentPropertySchema` 加三种新分支；`propValues` 记录值加 `z.number()`；`componentSets` 加 `componentProperties` 数组 |
+| `packages/design-schema/src/validate.ts` | 实例属性值按类型校验；共享属性被变体改类型时报错 |
+| `packages/design-runtime/src/commands.ts` | `instance.property.set` 的 `value` 放宽到 `string \| boolean \| number` |
+| `packages/design-runtime/src/runtime.ts` | `setInstanceProperty` 的值校验按类型分派 |
+| `packages/studio-web/src/component-props.ts` | 视图类型放宽到新属性类型 |
+| `packages/studio-web/src/instance-panel.tsx` | 用 `ComponentPropEditor` 渲染各类型控件 |
+
+**注意**：zod 的 `z.object` 默认**剥掉未声明的键**。共享声明
+（`componentSets[*].componentProperties`）和 `number` 实例值如果没同步进
+schema，会在 `validateDocument` 之后**静默消失**——不是报错，是丢数据。
+
+下一轮切片（绑定扩展）需要的改动：
+
+| 文件 | 改动 |
+| --- | --- |
+| `packages/design-schema/src/types.ts` | `ComponentPropertyField` 加 `fill` / `fontSize` / `instance`；`ComponentPropertyBindings` 加同名可选键 |
+| `packages/design-schema/src/schema.ts` | `componentPropertyBindingsSchema` 加同名可选键 |
+| `packages/design-schema/src/validate.ts` | 新字段与属性类型的匹配规则（`fill`↔`color`、`fontSize`↔`number`、`instance`↔`instance-swap`） |
+| `packages/design-runtime/src/runtime.ts` | `applyInstanceProperties` 按新字段分派（填充色、字号、替换内部实例的组件） |
+
+## 10. 测试
 
 - `design-schema/test/component-properties.test.ts`
-  —— schema 接受新字段、拒绝类型不匹配的默认值、
-  文档校验能发现悬空绑定 / 未知属性 id / 实例值类型错误。
+  —— 新类型的解析 / 校验 / 默认值、变体集共享声明的合并与优先级、
+  旧行为（text / visible）回归。
+- `studio-web/test/component-prop-editor.test.ts`
+  —— 各类型控件的渲染与回调（jsdom + react-dom/client）。
 - `design-runtime/test/component-properties.test.ts`
   —— 声明 / 绑定 / 解绑 / 删除属性、实例值的设置与重置、
   物化顺序（属性覆盖 override）、变体切换保留属性值、
   override 被属性绑定字段拒绝。
-- `studio-web/test/component-props.test.ts`
-  —— 实例属性视图（含显式值标记、绑定标签）、被绑定的文本节点不出现在覆盖列表。
 
-## 8. 参照来源
+## 11. 参照来源
 
 - Figma 组件属性（component properties）：
   <https://help.figma.com/hc/en-us/articles/15339657135383>
