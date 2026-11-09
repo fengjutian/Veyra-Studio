@@ -20,6 +20,7 @@ button.icon-only{padding:5px;min-width:26px}
 .dialog-form-fields{display:grid;gap:10px;max-height:min(50vh,320px);overflow:auto;padding-right:2px}
 .dialog-field-label{font-size:11px;color:#98a2b3}
 .dialog-input{width:100%;border:1px solid #363d4b;border-radius:7px;background:#111318;color:#fff;padding:8px;font-size:12px}
+.dialog-textarea{resize:vertical;min-height:120px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5;white-space:pre}
 .dialog-input:focus{outline:none;border-color:#8b5cf6}
 .dialog-error{margin:0;font-size:11px;color:#ff9b9b}
 .dialog-actions{display:flex;justify-content:flex-end;gap:8px}

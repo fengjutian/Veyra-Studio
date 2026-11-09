@@ -10,6 +10,8 @@ export interface TokenPanelProps {
   disabled?: boolean;
   canBind: boolean;
   onCreate(): void;
+  /** 从样式表导入 token（CSS 自定义属性 / SCSS 变量）。 */
+  onImport?(): void;
   onUpdate(name: string, token: TokenValue): void;
   onBind(property: keyof PropertyBindings, tokenName: string): void;
   onUnbind(property: keyof PropertyBindings): void;
@@ -62,7 +64,7 @@ function tokenPreview(token: TokenValue): string {
  * 数值 token 能绑圆角/间距——和 `resolveRadius` / `resolveGap` / `resolveStroke`
  * 支持的绑定保持一致，避免出现"能绑但不生效"的选项。
  */
-export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUpdate, onBind, onUnbind, onDelete, themeName, overridden, onResetOverride }: TokenPanelProps) {
+export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onImport, onUpdate, onBind, onUnbind, onDelete, themeName, overridden, onResetOverride }: TokenPanelProps) {
   const entries = Object.entries(tokens).sort(([left], [right]) => left.localeCompare(right));
   const boundProperty = (name: string): keyof PropertyBindings | undefined =>
     (Object.entries(bindings ?? {}) as Array<[keyof PropertyBindings, string]>).find(([, value]) => value === name)?.[0];
@@ -71,6 +73,18 @@ export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUp
     <div className="token-panel">
       <div className="section-heading">
         <h2>设计 Tokens{themeName ? ` · ${themeName}` : ""}</h2>
+        {onImport ? (
+          <Tooltip label="从样式表导入 token">
+            <button
+              aria-label="从样式表导入 token"
+              disabled={disabled || Boolean(themeName)}
+              onClick={onImport}
+              title={themeName ? "主题只能覆盖已有 token" : undefined}
+            >
+              <Icon name="import" />
+            </button>
+          </Tooltip>
+        ) : null}
         <button disabled={disabled || Boolean(themeName)} onClick={onCreate} title={themeName ? "主题只能覆盖已有 token" : undefined}><Icon name="tokenAdd" />新增</button>
       </div>
       {themeName ? (

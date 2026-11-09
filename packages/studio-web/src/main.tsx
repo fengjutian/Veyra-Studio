@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -1442,6 +1442,56 @@ function App() {
     if (!value) return;
     await applyToken(name, { type: "number", value: Number(value) });
   });
+  /**
+   * 从样式表导入 token。
+   *
+   * 解析器只给**提案**：类型是推断的、带单位的值不换算、同名 token 会被覆盖——
+   * 这三件事都要让人先看见再决定，所以中间有一张可改名的确认表。
+   * 导入写在一个事务里，因此可以一次撤销。
+   */
+  const importTokensFromStyleSheet = () => void run(async () => {
+    if (activeThemeId) {
+      setMessage("当前在主题模式：主题只能覆盖已有 token，请先切回「基础」再导入");
+      return;
+    }
+    const pasted = await askForm({
+      title: "从样式表导入 Token",
+      description: "粘贴 CSS 自定义属性或 SCSS 变量，例如：:root { --color-brand: #6366f1; --space-md: 16px; }",
+      fields: [{
+        key: "css",
+        label: "样式表",
+        type: "textarea",
+        placeholder: ":root {\n  --color-brand: #6366f1;\n  --space-md: 16px;\n}",
+      }],
+    });
+    if (!pasted) return;
+    const parsed = parseStyleTokens(pasted.css ?? "", { existing: document.tokens });
+    if (!parsed.tokens.length) {
+      setMessage(parsed.warnings[0] ?? "没有解析出任何变量");
+      return;
+    }
+    const confirmed = await askForm({
+      title: `导入 ${parsed.tokens.length} 个 Token`,
+      description: "名字可以改；清空某一项表示不导入它。会覆盖同名 token 的地方已标注。",
+      fields: parsed.tokens.map(token => ({
+        key: `token:${token.name}`,
+        label: `${token.source} = ${token.value}${token.conflicts ? "（会覆盖同名 token）" : ""}`,
+        defaultValue: token.name,
+      })),
+    });
+    if (!confirmed) return;
+    const commands: DesignCommand[] = [];
+    for (const token of parsed.tokens) {
+      const name = (confirmed[`token:${token.name}`] ?? "").trim();
+      if (!name) continue;
+      commands.push({ type: "token.upsert", payload: { name, token: proposalToToken(token) } });
+    }
+    if (!commands.length) { setMessage("没有导入任何 token"); return; }
+    await execute(commands);
+    const skipped = parsed.tokens.length - commands.length;
+    const hint = parsed.warnings.length ? `；${parsed.warnings[0]}` : "";
+    setMessage(`已导入 ${commands.length} 个 token${skipped ? `，跳过 ${skipped} 个` : ""}${hint}`);
+  });
   const updateToken = (name: string, token: TokenValue) => void run(async () => {
     if (token.type === "typography") {
       const next = await askTypographyValue(askForm, token.value);
@@ -2213,6 +2263,7 @@ function App() {
               disabled={busy}
               canBind={Boolean(selected)}
               onCreate={createToken}
+              onImport={importTokensFromStyleSheet}
               onUpdate={updateToken}
               onBind={bindToken}
               onUnbind={unbindToken}

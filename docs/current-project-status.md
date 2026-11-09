@@ -750,8 +750,13 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   绑定按最终类型判定；主题是 `document.themes` 里的 token 覆盖，
   `applyThemeTokens()` 在进入布局/场景/导出前合并，别名与字体 token 自动跟随，
   命令为 `theme.upsert` / `theme.delete`，当前主题是视图状态、导出时传 `themeId`；
-  规格见 `token-system.md`）。仍缺：分组元数据（重命名/排序/描述）、
-  主题继承与按页面切换、从样式表或 Figma 导入 token 的入口；
+  规格见 `token-system.md`）。**从样式表导入 token 已实现**（2026-11-09）：
+  `design-schema/src/token-import.ts` 的 `parseStyleTokens()` 解析 CSS 自定义属性与
+  SCSS 变量，产出**提案**——类型是推断的、带单位的值不换算（rem/em 猜不得）、
+  同名 token 会覆盖，这三件事都要先让人看见；面板上逐条确认（可改名、可不导入）
+  后在一个事务里写入。`var(--x)` 变成别名 token，SCSS 插值跳过并说明原因。
+  规格见 `token-system.md` §5。仍缺：分组元数据（重命名/排序/描述）、
+  主题继承与按页面切换、Figma 变量导入；
 - 生产级 AI Provider 体验的其余部分：真实 Provider 的逐家验收（能力矩阵目前是
   文档 + 能力表，尚未在每家的真实服务上跑通）、密钥轮换与作用域管理（当前密钥只活
   一个标签页，刷新后需要重新输入）；结构审查目前覆盖删除、锁定、页面、历史还原、

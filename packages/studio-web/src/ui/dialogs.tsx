@@ -61,6 +61,8 @@ export interface FormField {
   label: string;
   defaultValue?: string;
   placeholder?: string;
+  /** 多行输入（粘贴大段文本时用，比如样式表）。 */
+  type?: "text" | "textarea";
 }
 
 export interface FormRequest {
@@ -336,16 +338,31 @@ export function DialogProvider({ children }: { children: ReactNode }) {
                 {formRequest?.fields.map((field, index) => (
                   <label className="dialog-field" key={field.key}>
                     <span className="dialog-field-label">{field.label}</span>
-                    <input
-                      ref={index === 0 ? inputRef : undefined}
-                      className="dialog-input"
-                      value={formValues[field.key] ?? ""}
-                      placeholder={field.placeholder}
-                      onChange={event => {
-                        setFormValues(current => ({ ...current, [field.key]: event.target.value }));
-                        setError(undefined);
-                      }}
-                    />
+                    {field.type === "textarea" ? (
+                      // 多行输入不挂 inputRef：那是 HTMLInputElement 的 ref，
+                      // 首个字段是 textarea 时自动聚焦就落在这里，交给浏览器默认。
+                      <textarea
+                        className="dialog-input dialog-textarea"
+                        rows={8}
+                        value={formValues[field.key] ?? ""}
+                        placeholder={field.placeholder}
+                        onChange={event => {
+                          setFormValues(current => ({ ...current, [field.key]: event.target.value }));
+                          setError(undefined);
+                        }}
+                      />
+                    ) : (
+                      <input
+                        ref={index === 0 ? inputRef : undefined}
+                        className="dialog-input"
+                        value={formValues[field.key] ?? ""}
+                        placeholder={field.placeholder}
+                        onChange={event => {
+                          setFormValues(current => ({ ...current, [field.key]: event.target.value }));
+                          setError(undefined);
+                        }}
+                      />
+                    )}
                   </label>
                 ))}
               </div>

@@ -13,6 +13,7 @@ export * from "./validate";
 export * from "./lint";
 export * from "./migrate";
 export * from "./tokens";
+export * from "./token-import";
 export * from "./paint";
 export * from "./blend";
 export * from "./components";
