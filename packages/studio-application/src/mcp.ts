@@ -94,6 +94,13 @@ export interface McpToolDefinition {
   /** 这个工具允许承载的命令类型；空数组表示只读工具。 */
   commandTypes: DesignCommand["type"][];
   requiresApproval: boolean;
+  /**
+   * 调这个工具需要的 scope。
+   *
+   * 多租户接入后，「能连上」不等于「能改」：只读 Agent 不该拿到写权限。
+   * 没写 scope 表示不额外限制（兼容单租户部署）。
+   */
+  scope?: string;
   inputSchema: { type: "object"; properties: Record<string, McpInputProperty>; required: string[] };
 }
 
@@ -110,6 +117,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     description: "返回当前文档的页面、节点、token 与组件摘要。只读，不需要确认。",
     commandTypes: [],
     requiresApproval: false,
+    scope: "design:read",
     inputSchema: {
       type: "object",
       properties: {
@@ -124,6 +132,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     description: "在临时运行时里执行命令，返回变更前后与告警，不写入项目。只读，不需要确认。",
     commandTypes: [...MCP_SUPPORTED_COMMAND_TYPES],
     requiresApproval: false,
+    scope: "design:read",
     inputSchema: {
       type: "object",
       properties: {
@@ -142,6 +151,7 @@ export const MCP_TOOLS: McpToolDefinition[] = [
     description: "把命令作为一次原子事务提交。是否放行由策略决定，破坏性命令必须人工确认。",
     commandTypes: [...MCP_SUPPORTED_COMMAND_TYPES],
     requiresApproval: true,
+    scope: "design:write",
     inputSchema: {
       type: "object",
       properties: {
@@ -229,6 +239,8 @@ export interface McpAuditInput {
   commands: DesignCommand[];
   decision: "applied" | "rejected";
   reason?: string;
+  /** 这次调用落在哪个租户；单租户部署可以不填。 */
+  tenant?: string;
   at?: string;
 }
 
@@ -241,6 +253,7 @@ export interface McpAuditEntry {
   commandTypes: string[];
   decision: "applied" | "rejected";
   reason?: string;
+  tenant?: string;
   at: string;
 }
 
@@ -255,6 +268,17 @@ export function createAuditEntry(input: McpAuditInput): McpAuditEntry {
     commandTypes: input.commands.map(command => command.type),
     decision: input.decision,
     ...(input.reason ? { reason: input.reason } : {}),
+    ...(input.tenant ? { tenant: input.tenant } : {}),
     at: input.at ?? new Date().toISOString(),
   };
+}
+
+/**
+ * 这个主体能不能调这个工具。
+ *
+ * 工具没声明 scope 就是不额外限制（单租户部署的老行为）。
+ */
+export function toolAllowedByScope(tool: McpToolDefinition, scopes: readonly string[]): boolean {
+  if (!tool.scope) return true;
+  return scopes.includes(tool.scope);
 }

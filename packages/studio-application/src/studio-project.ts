@@ -13,6 +13,15 @@ export interface StudioExecuteResult {
   checkpointError?: string;
 }
 
+/** 一次成功提交之后广播出去的事件。 */
+export interface StudioCommitEvent {
+  /** 提交后的修订号。 */
+  revision: number;
+  commandId: string;
+  /** 这次提交包含的命令类型。 */
+  commandTypes: string[];
+}
+
 export interface StudioPreviewResult {
   before: DesignDocument;
   after: DesignDocument;
@@ -27,6 +36,13 @@ export interface OpenProjectResult {
 export class StudioProject {
   private runtime: DesignRuntime;
   private operationQueue: Promise<void> = Promise.resolve();
+  /**
+   * 提交成功的监听者。
+   *
+   * 外部集成（MCP 的 SSE 推送）靠它知道「文档变了」——否则只能轮询。
+   * 这只是**新增**的订阅入口，不改变任何已有路径的行为。
+   */
+  private readonly commitListeners = new Set<(event: StudioCommitEvent) => void>();
 
   private constructor(
     private readonly repository: ProjectRepository,
@@ -58,6 +74,17 @@ export class StudioProject {
     return this.runtime.snapshot();
   }
 
+  /**
+   * 订阅提交事件；返回取消订阅的函数。
+   *
+   * 只在**提交成功**之后触发——回滚了的事务不算数，否则外部会收到一条
+   * 「文档变了」但其实没变的通知。
+   */
+  onCommit(listener: (event: StudioCommitEvent) => void): () => void {
+    this.commitListeners.add(listener);
+    return () => { this.commitListeners.delete(listener); };
+  }
+
   canUndo(): boolean { return this.runtime.canUndo(); }
   canRedo(): boolean { return this.runtime.canRedo(); }
 
@@ -82,6 +109,7 @@ export class StudioProject {
 
       try {
         await this.repository.saveSnapshot(this.runtime.snapshot());
+        this.notifyCommitted({ revision: result.revision, commandId: envelope.commandId, commandTypes: envelope.commands.map(command => command.type) });
         return { result, checkpointed: true };
       } catch (error) {
         return { result, checkpointed: false, checkpointError: errorMessage(error) };
@@ -181,9 +209,23 @@ export class StudioProject {
       const entry = this.lastTransaction();
       try { await this.repository.appendTransactions([entry]); }
       catch (error) { this.runtime = new DesignRuntime(before); throw error; }
-      try { await this.repository.saveSnapshot(this.runtime.snapshot()); return { result, checkpointed: true }; }
-      catch (error) { return { result, checkpointed: false, checkpointError: errorMessage(error) }; }
+      try {
+        await this.repository.saveSnapshot(this.runtime.snapshot());
+        this.notifyCommitted({ revision: result.revision, commandId: entry.commandId, commandTypes: entry.commands.map(command => command.type) });
+        return { result, checkpointed: true };
+      } catch (error) { return { result, checkpointed: false, checkpointError: errorMessage(error) }; }
     });
+  }
+
+  /** 广播提交事件；一个监听者出错不影响其他人。 */
+  private notifyCommitted(event: StudioCommitEvent): void {
+    for (const listener of [...this.commitListeners]) {
+      try {
+        listener(event);
+      } catch {
+        // 监听者的问题不该让提交本身失败——提交已经落库了。
+      }
+    }
   }
 
   private exclusive<T>(operation: () => Promise<T>): Promise<T> {

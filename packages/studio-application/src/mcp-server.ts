@@ -1,6 +1,7 @@
 import type { DesignCommand } from "@ufira/design-runtime";
 import type { DesignDocument } from "@ufira/design-schema";
-import { MCP_SUPPORTED_COMMAND_TYPES, MCP_TOOLS, authorizeCommands, createAuditEntry, type McpPolicy, type McpToolDefinition } from "./mcp";
+import { MCP_SUPPORTED_COMMAND_TYPES, MCP_TOOLS, authorizeCommands, createAuditEntry, toolAllowedByScope, type McpPolicy, type McpToolDefinition } from "./mcp";
+import type { McpPrincipal } from "./mcp-tenants";
 import type { StudioProject } from "./studio-project";
 
 /**
@@ -41,6 +42,13 @@ export interface McpServerOptions {
   autoApprove?: boolean;
   /** 审计回调；stdio 版本写到 stderr。 */
   onAudit?(entry: ReturnType<typeof createAuditEntry>): void;
+  /**
+   * 这次连接的主体。
+   *
+   * 多租户部署时，每个租户一个 server 实例，主体跟着实例走——审计记录里的
+   * 「谁」和「哪个租户」因此是真的，而不是「mcp:client」这种占位。
+   */
+  principal?: McpPrincipal;
   serverVersion?: string;
 }
 
@@ -104,12 +112,27 @@ async function callTool(project: StudioProject, options: McpServerOptions, id: s
   if (!isRecord(params) || typeof params.name !== "string") return errorResponse(id, -32602, "tools/call 需要 name");
   const args = isRecord(params.arguments) ? params.arguments : {};
 
+  const tool = MCP_TOOLS.find(item => item.name === params.name);
+  if (!tool) return errorResponse(id, -32602, `Unknown tool: ${params.name}`);
+  // scope 是「能连上」与「能改」的分界：只读 Agent 不该拿到写权限。
+  // 没有主体时（单租户部署、stdio 本地调用）不做这层判断——那是老行为。
+  const principal = options.principal;
+  if (principal && !toolAllowedByScope(tool, principal.scopes)) {
+    options.onAudit?.(createAuditEntry({ tool: tool.name, commandId: `mcp:${globalThis.crypto.randomUUID()}`, actor: actorOf(options), ...(principal.tenantId ? { tenant: principal.tenantId } : {}), revisionBefore: project.snapshot().revision, commands: [], decision: "rejected", reason: `scope_denied：缺少 ${tool.scope}` }));
+    return ok(id, toolError(`scope_denied：调用 ${tool.name} 需要 ${tool.scope}`));
+  }
+
   switch (params.name) {
     case "design.read": return ok(id, readDocument(project, args));
     case "design.preview": return ok(id, previewCommands(project, args));
     case "design.apply": return await applyCommands(project, options, id, args);
     default: return errorResponse(id, -32602, `Unknown tool: ${params.name}`);
   }
+}
+
+/** 审计里的「谁」：有主体就是主体，没有就是历史的占位值。 */
+function actorOf(options: McpServerOptions): string {
+  return options.principal?.subject ?? "mcp:client";
 }
 
 function readDocument(project: StudioProject, args: Record<string, unknown>): unknown {
@@ -159,11 +182,11 @@ async function applyCommands(project: StudioProject, options: McpServerOptions, 
 
   const decision = authorizeCommands(options.policy, commands);
   if (!decision.allowed) {
-    options.onAudit?.(createAuditEntry({ tool: "design.apply", commandId: `mcp:${globalThis.crypto.randomUUID()}`, actor: "mcp:client", revisionBefore: document.revision, commands, decision: "rejected", reason: decision.reasons.join("；") }));
+    options.onAudit?.(createAuditEntry({ tool: "design.apply", commandId: `mcp:${globalThis.crypto.randomUUID()}`, actor: actorOf(options), ...(options.principal?.tenantId ? { tenant: options.principal.tenantId } : {}), revisionBefore: document.revision, commands, decision: "rejected", reason: decision.reasons.join("；") }));
     return ok(id, toolError(`policy_rejected：${decision.reasons.join("；")}`));
   }
   if (decision.requiresApproval && !options.autoApprove) {
-    options.onAudit?.(createAuditEntry({ tool: "design.apply", commandId: `mcp:${globalThis.crypto.randomUUID()}`, actor: "mcp:client", revisionBefore: document.revision, commands, decision: "rejected", reason: "approval_required" }));
+    options.onAudit?.(createAuditEntry({ tool: "design.apply", commandId: `mcp:${globalThis.crypto.randomUUID()}`, actor: actorOf(options), ...(options.principal?.tenantId ? { tenant: options.principal.tenantId } : {}), revisionBefore: document.revision, commands, decision: "rejected", reason: "approval_required" }));
     return ok(id, toolError(`approval_required：${decision.approvalReasons.join("；")}`));
   }
 
@@ -173,13 +196,14 @@ async function applyCommands(project: StudioProject, options: McpServerOptions, 
       commandId,
       documentId: document.id,
       baseRevision: document.revision,
-      actor: { type: "integration", id: "mcp:client" },
+      actor: { type: "integration", id: actorOf(options) },
       commands,
     });
     options.onAudit?.(createAuditEntry({
       tool: "design.apply",
       commandId,
-      actor: "mcp:client",
+      actor: actorOf(options),
+      ...(options.principal?.tenantId ? { tenant: options.principal.tenantId } : {}),
       revisionBefore: document.revision,
       revisionAfter: committed.result.revision,
       commands,
@@ -188,7 +212,7 @@ async function applyCommands(project: StudioProject, options: McpServerOptions, 
     return ok(id, toolResult({ revision: committed.result.revision, checkpointed: committed.checkpointed, warnings: committed.result.warnings, summary: typeof args.summary === "string" ? args.summary : undefined }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    options.onAudit?.(createAuditEntry({ tool: "design.apply", commandId, actor: "mcp:client", revisionBefore: document.revision, commands, decision: "rejected", reason: message }));
+    options.onAudit?.(createAuditEntry({ tool: "design.apply", commandId, actor: actorOf(options), ...(options.principal?.tenantId ? { tenant: options.principal.tenantId } : {}), revisionBefore: document.revision, commands, decision: "rejected", reason: message }));
     return ok(id, toolError(`apply_failed：${message}`));
   }
 }

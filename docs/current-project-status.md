@@ -177,8 +177,21 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   Bearer token，缺少令牌时拒绝启动（临时调试需显式 `STUDIO_MCP_HTTP_INSECURE=1`，
   此时随机生成一次性令牌并打印）；`initialize` 下发 `Mcp-Session-Id`，后续调用必须
   携带，会话按空闲时间过期，同一会话的请求串行执行；请求体上限 256 KB；
-  未实现 SSE 服务端推送与 OAuth —— 当前工具都是请求-响应式，公网部署仍需反向代理
-  再加一层鉴权；
+- MCP 生产化（2026-11-09）：补上了规模化接入外部 Agent 缺的三样东西，规格见
+  `mcp-production.md`——
+  ① **OAuth 2.1**（`mcp-auth.ts`）：内置授权服务器，授权码 + PKCE（强制 S256，
+  不接受 `plain`），授权码一次性、刷新令牌轮换、令牌只存 SHA-256 摘要；提供
+  RFC 8414 / RFC 9728 发现文档（鉴权之前就能取到）、`/oauth/authorize`、
+  `/oauth/token`、`/oauth/revoke`；未登记的回调地址不会被重定向（不制造开放重定向）；
+  动态注册默认关闭，且默认只放行预登记客户端（登记即管理员的预先授权）；
+  ② **多租户隔离**（`mcp-tenants.ts`）：令牌带租户、请求按租户路由到各自的项目，
+  租户之间互相看不到对方的内容；令牌没带租户且没有默认租户就拒绝，绝不猜；
+  会话绑定租户，别的租户拿同一个会话 id 来用会被拒；工具按 scope 卡
+  （`design:read` / `design:write`），审计记录带上主体与租户，不再是 `mcp:client`；
+  ③ **SSE 推送**（`mcp-events.ts`）：`GET /mcp` 开流，服务端按租户推
+  `notifications/resources/updated`；变更有两个来源——本进程提交后立刻推
+  （给 `StudioProject` 加了 `onCommit` 订阅），以及轮询事务日志发现**别的进程**
+  （网页端）提交的改动，修订号账本保证同一个修订号只推一次；
 - 画布渲染器：场景先压成纯数据的 `SceneNode` 树（`renderer/scene.ts`，布局盒 + 填充/描边/
   圆角/文字/图片，不碰 DOM），再由 Canvas 2D 渲染器按 `zoom × dpr` 绘制
   （`renderer/canvas-renderer.ts`），缩放时重绘而不是拉伸位图。分层借鉴 tldraw /
@@ -923,6 +936,7 @@ npm run test:studio-web
 npm run visual:compare:probe   # 版本并排对比
 npm run visual:package:probe   # 资源包交付
 npm run visual:loop:probe      # 编排循环（自主运行）
+npm run visual:mcp:probe       # MCP HTTP 传输（OAuth / 多租户 / SSE），不需要浏览器
 ```
 
 本地启动 Web 垂直切片：

@@ -44,6 +44,9 @@ jobs:
       - run: npm ci
       - run: npm run build:studio-core
       - run: npm run test:studio-core
+      # 端到端：MCP HTTP 传输。起一个真的 HTTP 服务，走 OAuth 授权码 + PKCE 换令牌
+      # → 带令牌读文档 → 多租户互相读不到 → SSE 收到变更通知。不需要浏览器。
+      - run: npm run visual:mcp:probe
 
   web:
     name: 工作台 build + test
