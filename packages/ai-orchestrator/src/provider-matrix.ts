@@ -21,6 +21,13 @@ export interface ProviderCapabilities {
   /** 支持 SSE 流式回复。 */
   stream: boolean;
   auth: AuthScheme;
+  /**
+   * 支持看图（多模态输入）。
+   *
+   * 没有它就不能带截图问模型——界面会关掉「带截图」入口，不给用户一个注定
+   * 失败的选项。
+   */
+  vision?: boolean;
 }
 
 export interface ProviderPreset {
@@ -178,5 +185,7 @@ export function capabilityLabels(capabilities: ProviderCapabilities): string[] {
     capabilities.stream ? "流式" : "非流式",
     capabilities.jsonMode ? "JSON 模式" : "纯文本输出",
     capabilities.auth === "bearer" ? "Bearer 鉴权" : "免鉴权",
+    // 看图能力没说清时不说——「未标注」比「不支持」诚实：没验过的端点可能支持。
+    ...(capabilities.vision === true ? ["支持看图"] : capabilities.vision === false ? ["不支持看图"] : []),
   ];
 }

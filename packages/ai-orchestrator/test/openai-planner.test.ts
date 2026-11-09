@@ -77,3 +77,38 @@ test("rejects a reply without usable content", async () => {
   const planner = createOpenAiCompatiblePlanner({ baseUrl: "https://example.test/v1", model: "gpt-test", fetch: fetchMock });
   await assert.rejects(planner.plan(request), /没有 choices/);
 });
+
+test("没有截图时 user 段是纯字符串", async () => {
+  const calls: Array<{ init?: FetchInitLike }> = [];
+  const fetchMock: FetchLike = async (_url, init) => {
+    calls.push({ init });
+    return chatResponse({ summary: "s", commands: [{ type: "document.rename", payload: { name: "x" } }] });
+  };
+  const planner = createOpenAiCompatiblePlanner({ baseUrl: "https://example.test/v1", model: "gpt-test", fetch: fetchMock });
+  await planner.plan(request);
+  const body = JSON.parse(calls[0].init!.body!) as { messages: Array<{ role: string; content: unknown }> };
+  assert.equal(typeof body.messages[1].content, "string");
+});
+
+test("带截图时 user 段变成内容块数组：文本在前、图片在后", async () => {
+  const calls: Array<{ init?: FetchInitLike }> = [];
+  const fetchMock: FetchLike = async (_url, init) => {
+    calls.push({ init });
+    return chatResponse({ summary: "s", commands: [{ type: "document.rename", payload: { name: "x" } }] });
+  };
+  const planner = createOpenAiCompatiblePlanner({ baseUrl: "https://example.test/v1", model: "gpt-test", fetch: fetchMock });
+  await planner.plan({
+    ...request,
+    image: { dataUrl: "data:image/png;base64,AAA", mimeType: "image/png", width: 800, height: 600 },
+  });
+
+  const body = JSON.parse(calls[0].init!.body!) as { messages: Array<{ role: string; content: unknown }> };
+  const content = body.messages[1].content;
+  assert.ok(Array.isArray(content), "带图时 content 必须是数组——只接受字符串的端点会直接报错");
+  const blocks = content as Array<{ type: string; text?: string; image_url?: { url: string } }>;
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].type, "text");
+  assert.match(blocks[0].text ?? "", /添加一个蓝色卡片/);
+  assert.equal(blocks[1].type, "image_url");
+  assert.equal(blocks[1].image_url?.url, "data:image/png;base64,AAA");
+});

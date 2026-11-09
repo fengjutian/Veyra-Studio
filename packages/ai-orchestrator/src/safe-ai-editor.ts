@@ -12,10 +12,34 @@ export interface AbortSignalLike {
   removeEventListener?(type: "abort", listener: () => void): void;
 }
 
+/**
+ * 一张给模型看的图。
+ *
+ * 用 data URL 而不是裸字节：OpenAI 兼容端点的 `image_url` 直接吃 data URL，
+ * 不用先上传再引用。传输层（浏览器）负责把当前画面渲染成 PNG，编排层只负责
+ * 原样传下去——**它不关心图从哪来**。
+ */
+export interface AiImagePayload {
+  /** 完整的 data URL：`data:image/png;base64,...`。 */
+  dataUrl: string;
+  /** MIME 类型，例如 `image/png`。 */
+  mimeType: string;
+  /** 像素宽高；写进提示，模型好定位画面里的东西。 */
+  width?: number;
+  height?: number;
+}
+
 export interface AiPlanRequest {
   prompt: string;
   document: DesignDocument;
   selectedNodeIds: NodeId[];
+  /**
+   * 当前画面的截图。
+   *
+   * 有了它，模型才能回答「好不好看」「哪里挤」「对比够不够」这类**看图**才能
+   * 回答的问题——文字摘要给不了这些。没有它时整条链路照旧工作，只是模型瞎猜。
+   */
+  image?: AiImagePayload;
   /**
    * 体检结论。
    *
@@ -43,6 +67,8 @@ export interface CreatePlanOptions {
   selfCheck?: SelfCheckContext;
   /** 当前是第几轮。 */
   selfCheckRound?: number;
+  /** 当前画面的截图；传了它模型就能「看图」。 */
+  image?: AiImagePayload;
 }
 
 export interface AiCommandPlan {
@@ -135,6 +161,7 @@ export class SafeAiEditor {
       prompt,
       document: structuredClone(document),
       selectedNodeIds: [...selectedNodeIds],
+      ...(options.image ? { image: options.image } : {}),
       ...(options.selfCheck ? { selfCheck: options.selfCheck } : {}),
       ...(options.selfCheckRound !== undefined ? { selfCheckRound: options.selfCheckRound } : {}),
       ...(options.signal ? { signal: options.signal } : {}),

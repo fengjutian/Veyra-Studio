@@ -2,6 +2,7 @@ import type { NodeId } from "@ufira/design-schema";
 import { PlanEmptyError } from "./plan-parser";
 import type { AbortSignalLike, AiPlanPreview } from "./safe-ai-editor";
 import { AiPlanDryRunError, SafeAiEditor } from "./safe-ai-editor";
+import type { AiImagePayload } from "./safe-ai-editor";
 import { collectSelfCheck, selfCheckFingerprint, type SelfCheckContext, type SelfCheckIssue, type SelfCheckOptions, type SelfCheckReport } from "./self-check";
 
 /**
@@ -125,6 +126,13 @@ export interface AutonomousLoopOptions {
   oscillationThreshold?: number;
   /** 一轮之内最多要几版计划；缺省 2（第一版 + 一次带反馈的重来）。 */
   maxPlanAttempts?: number;
+  /**
+   * 当前画面的截图；每一轮都带上。
+   *
+   * 体检能查出来的问题（对比度、lint、导出诊断）都很具体，但「挤不挤、齐不齐、
+   * 好不好看」只有看图才知道。带上截图，模型才能回答这类问题。
+   */
+  image?: AiImagePayload;
   /** 体检层的选项（栅格、导出诊断、资源解析器）。 */
   selfCheck?: SelfCheckOptions;
   signal?: AbortSignalLike;
@@ -209,6 +217,7 @@ export async function runAutonomousLoop(editor: SafeAiEditor, options: Autonomou
         candidate = await editor.createPlan(goal, selectedNodeIds, {
           ...(options.signal ? { signal: options.signal } : {}),
           ...(options.onDelta ? { onDelta: options.onDelta } : {}),
+          ...(options.image ? { image: options.image } : {}),
           selfCheck: context,
           selfCheckRound: round,
         });

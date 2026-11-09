@@ -29,6 +29,20 @@ export interface ProviderAcceptance {
     planRoundTrip: boolean;
     /** Bearer 鉴权可用。 */
     bearerAuth: boolean;
+    /**
+     * 能看图（多模态输入）。
+     *
+     * 实测方式：发一张已知内容的小图，看模型能不能描述出来。没测过的端点
+     * **不写这个字段**——「没验过」不等于「不支持」。
+     */
+    vision?: boolean;
+    /**
+     * 带图的规划器往返：仓库提示 + 一张画着文档的图 → 模型 → 命令计划 → dry-run。
+     *
+     * `vision` 只证明「模型能看图」，这一项才证明「模型能看着图给出本产品能
+     * 执行的命令」。
+     */
+    visionPlanRoundTrip?: boolean;
   };
   /** 每项检查的细节（给人看的）。 */
   notes: string[];
@@ -45,7 +59,7 @@ export const PROVIDER_ACCEPTANCE: ProviderAcceptance[] = [
     providerId: "minimax",
     baseUrl: "https://api.minimaxi.com/v1",
     model: "MiniMax-M3",
-    verifiedAt: "2026-11-09",
+    verifiedAt: "2026-11-10",
     checks: {
       models: true,
       chat: true,
@@ -53,6 +67,8 @@ export const PROVIDER_ACCEPTANCE: ProviderAcceptance[] = [
       stream: true,
       planRoundTrip: true,
       bearerAuth: true,
+      vision: true,
+      visionPlanRoundTrip: true,
     },
     notes: [
       "models：可用 9 个模型（MiniMax-M3.1-Flash / M3 / M2.7 / M2.5 / M2.1 / M2 及 highspeed 变体）",
@@ -62,6 +78,9 @@ export const PROVIDER_ACCEPTANCE: ProviderAcceptance[] = [
       "planRoundTrip：真实规划器提示 → 回复 → 命令计划 → dry-run 全通",
       "编排循环：真实模型 1 轮收敛（stopReason=converged）——此前因词汇表的颜色写法错误而震荡",
       "鉴权：Bearer 正常；未测 401 后的换钥行为（用密钥环本地验证）",
+      "vision：发一张已知内容的 PNG，模型在推理里描述出了图中的颜色与形状——确认能吃 image_url",
+      "visionPlanRoundTrip：仓库提示 + 一张画着样例文档的图 → 模型给出命令计划 → dry-run 通过",
+      "2026-11-10 复验：vision 改用纯蓝 32×32 PNG 复测（模型答出蓝色），visionPlanRoundTrip 复测通过；其余各项一并复跑",
     ],
   },
 ];
@@ -72,6 +91,9 @@ export function capabilitiesFromAcceptance(acceptance: ProviderAcceptance): Prov
     jsonMode: acceptance.checks.jsonMode,
     stream: acceptance.checks.stream,
     auth: acceptance.checks.bearerAuth ? "bearer" : "none",
+    // 没测过看图就**不标**这个字段：标成 false 会让界面误以为「不支持」，
+    // 而实际可能只是没验。
+    ...(acceptance.checks.vision !== undefined ? { vision: acceptance.checks.vision } : {}),
   };
 }
 

@@ -62,10 +62,31 @@ function buildUserPrompt(request: AiPlanRequest): string {
     parts.push(formatSelfCheckForPrompt(request.selfCheck, request.selfCheckRound ? { round: request.selfCheckRound } : {}));
     parts.push("");
   }
+  if (request.image) {
+    parts.push(describeAttachedImage(request.image));
+    parts.push("");
+  }
   parts.push(summarizeDocument(request.document, request.selectedNodeIds));
   parts.push("");
   parts.push("请只输出 JSON 计划。");
   return parts.join("\n");
+}
+
+/**
+ * 告诉模型「附了一张图」以及「图和文字摘要各管什么」。
+ *
+ * 必须讲清楚分工：文字摘要给的是**精确数值**（id、坐标、字号），截图给的是
+ * **观感**（挤不挤、齐不齐、好不好看）。模型分不清这两者时，要么忽略截图，
+ * 要么拿截图里的模糊印象去改精确数值——两种都会出错。
+ */
+function describeAttachedImage(image: AiPlanRequest["image"]): string {
+  if (!image) return "";
+  const size = image.width && image.height ? `${image.width}×${image.height}` : "尺寸未知";
+  return [
+    `附上了当前画面的截图（${image.mimeType}，${size}）。`,
+    "分工：文字摘要给的是精确的节点 id、坐标、尺寸与字号；截图给的是观感——挤不挤、对不对齐、够不够醒目、哪里难看。",
+    "要改的仍然是摘要里列出的真实节点，用它们的 id 下命令；截图用来判断「改成什么样」，不要凭截图猜 id。",
+  ].join("\n");
 }
 
 /** 把当前文档压成模型能读懂的紧凑摘要。 */

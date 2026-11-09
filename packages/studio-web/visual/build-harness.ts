@@ -15,10 +15,17 @@ const harnessRoot = join(root, "packages", "studio-web", "harness");
 
 export const HARNESS_HTML = join(here, ".cache", "harness.html");
 
-export async function buildHarness(): Promise<string> {
-  await mkdir(dirname(HARNESS_HTML), { recursive: true });
+/**
+ * 打一个 harness 入口成单文件 HTML。
+ *
+ * `entry` 是 `harness/` 下的文件名（不含扩展名）。默认是画布基线那个；视觉上下文
+ * 探针用的是另一个入口，两者产物各写各的，互不覆盖。
+ */
+export async function buildHarness(entry = "main"): Promise<string> {
+  const out = entry === "main" ? HARNESS_HTML : join(here, ".cache", `harness-${entry}.html`);
+  await mkdir(dirname(out), { recursive: true });
   const result = await build({
-    entryPoints: [join(harnessRoot, "main.ts")],
+    entryPoints: [join(harnessRoot, `${entry}.ts`)],
     bundle: true,
     format: "iife",
     platform: "browser",
@@ -36,8 +43,8 @@ export async function buildHarness(): Promise<string> {
 <script>${js.replace(/<\/script>/gi, "<\\/script>")}</script>
 </body>
 </html>`;
-  await writeFile(HARNESS_HTML, html, "utf8");
-  return HARNESS_HTML;
+  await writeFile(out, html, "utf8");
+  return out;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

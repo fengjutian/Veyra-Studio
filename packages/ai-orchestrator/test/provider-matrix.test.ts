@@ -60,3 +60,19 @@ test("capability labels describe stream, json and auth", () => {
   assert.deepEqual(capabilityLabels({ jsonMode: true, stream: true, auth: "bearer" }), ["流式", "JSON 模式", "Bearer 鉴权"]);
   assert.deepEqual(capabilityLabels({ jsonMode: false, stream: false, auth: "none" }), ["非流式", "纯文本输出", "免鉴权"]);
 });
+
+test("看图能力：没验过就不标，验过才标", () => {
+  // 没验过的端点不能标成「不支持看图」——它可能只是没验。
+  assert.deepEqual(capabilityLabels({ jsonMode: true, stream: true, auth: "bearer" }), ["流式", "JSON 模式", "Bearer 鉴权"]);
+  assert.deepEqual(capabilityLabels({ jsonMode: true, stream: true, auth: "bearer", vision: true }), ["流式", "JSON 模式", "Bearer 鉴权", "支持看图"]);
+  assert.deepEqual(capabilityLabels({ jsonMode: true, stream: true, auth: "bearer", vision: false }), ["流式", "JSON 模式", "Bearer 鉴权", "不支持看图"]);
+});
+
+test("实测记录里的看图能力会盖过预设", () => {
+  // MiniMax 有实测记录：结论以实测为准。
+  const description = describeProvider("https://api.minimaxi.com/v1");
+  assert.equal(description.verified, true);
+  assert.equal(description.capabilities.vision, true);
+  // 没实测过的端点：预设里没写看图能力 → 不标。
+  assert.equal(describeProvider("https://api.openai.com/v1").capabilities.vision, undefined);
+});

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
-import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
+import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
@@ -99,6 +99,7 @@ import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
+import { capturePageScreenshot } from "./ai-vision";
 import { AiSettingsPanel } from "./ai-settings-panel";
 import "./styles.css";
 import "./workbench.css";
@@ -113,6 +114,8 @@ function App() {
   const [currentPageId, setCurrentPageId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("添加一个蓝色卡片");
+  // 「带截图问 AI」：把当前页面渲染成 PNG 一起发给模型。端点不支持看图时自动失效。
+  const [aiVision, setAiVision] = useState(false);
   const [preview, setPreview] = useState<AiPlanPreview>();
   // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
   const planAbort = useRef<AbortController | undefined>(undefined);
@@ -241,6 +244,9 @@ function App() {
         },
       })
     : demoPlanner, [aiSettings]);
+  // 端点支不支持看图：只有**实测过**能看图的端点才给这个选项。
+  // 没验过的端点可能是支持的，但发过去大概率报错——不给用户一个坑。
+  const visionSupported = describeProvider(aiSettings.baseUrl).capabilities.vision === true;
   const editor = useMemo(() => project ? new SafeAiEditor(project, planner) : undefined, [project, planner]);
 
   const applyHistory = async (direction: "undo" | "redo") => {
@@ -1426,10 +1432,12 @@ function App() {
     operationInFlight.current = true;
     setPlanning(true); setBusy(true); setStreamText("");
     try {
+      const image = await captureVisionIfEnabled();
       const next = await editor.createPlan(prompt, selectedIds, {
         signal: controller.signal,
         // 只覆盖显示累计文本；权威内容由 Planner 的 fullText 给出。
         onDelta: (_delta, fullText) => setStreamText(fullText),
+        ...(image ? { image } : {}),
       });
       setPreview(next);
       setMessage("AI 计划已完成 dry-run，等待确认");
@@ -1440,6 +1448,23 @@ function App() {
       operationInFlight.current = false;
       setPlanning(false); setBusy(false); setStreamText("");
     }
+  };
+
+  /**
+   * 「带截图问 AI」开关打开时，给当前页面截一张图。
+   *
+   * 端点不支持看图就不截——发过去只会得到一个 400。与其让用户对着报错猜，
+   * 不如一开始就把这个选项关掉。
+   */
+  const captureVisionIfEnabled = async (): Promise<AiImagePayload | undefined> => {
+    if (!aiVision || !document || !page) return undefined;
+    if (!describeProvider(aiSettings.baseUrl).capabilities.vision) return undefined;
+    const shot = await capturePageScreenshot({ document, pageId: page.id, repository, projectId: document.id });
+    if (!shot) {
+      setMessage("这一页没有可截图的内容，AI 这次是按文字摘要回答的");
+      return undefined;
+    }
+    return { dataUrl: shot.dataUrl, mimeType: shot.mimeType, width: shot.width, height: shot.height };
   };
 
   /**
@@ -1458,11 +1483,13 @@ function App() {
     setLoopRunning(true); setBusy(true); setLoopRounds([]); setLoopSummary(undefined);
     try {
       const resolveAsset = await createSelfCheckResolver(project.snapshot());
+      const image = await captureVisionIfEnabled();
       const result = await runAutonomousLoop(editor, {
         goal: prompt.trim(),
         selectedNodeIds: selectedIds,
         maxRounds: 6,
         selfCheck: { resolveAsset },
+        ...(image ? { image } : {}),
         signal: controller.signal,
         onRound: round => {
           setLoopRounds(previous => [...previous, round]);
@@ -2467,6 +2494,17 @@ function App() {
           <section className="inspector-section">
             <h2>AI 安全编辑</h2>
             <textarea aria-label="AI 指令" placeholder="描述你想让 AI 做的修改…" value={prompt} onChange={event => setPrompt(event.target.value)} />
+            <label className="field field-inline">
+              <span className="field-label">带截图问 AI</span>
+              <input
+                type="checkbox"
+                checked={aiVision}
+                disabled={!visionSupported}
+                title={visionSupported ? "把当前页面渲染成 PNG 一起发给模型" : "当前端点没有实测过看图能力，无法带截图"}
+                onChange={event => setAiVision(event.target.checked)}
+              />
+            </label>
+            {visionSupported ? <p className="empty-hint">带上截图后，模型能看出挤不挤、齐不齐、哪里难看——这些光看文字摘要看不出来。</p> : <p className="empty-hint">当前端点没有实测过看图能力，这个开关用不了。</p>}
             <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
             {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
             {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}

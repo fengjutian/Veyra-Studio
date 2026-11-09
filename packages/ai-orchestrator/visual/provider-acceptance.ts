@@ -29,6 +29,7 @@ import { FileSystemProjectRepository } from "@ufira/design-persistence/filesyste
 import { DesignRuntime } from "@ufira/design-runtime";
 import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
 import { StudioProject } from "@ufira/studio-application";
+import { encodePng } from "../../design-export/visual/png";
 import {
   COMMAND_TYPES,
   SafeAiEditor,
@@ -161,6 +162,45 @@ async function checkChat(config: ProviderConfig): Promise<CheckResult> {
     return { name: "chat", ok: Boolean(content.trim()), detail: content.trim() ? `回复：${content.trim().slice(0, 60)}` : "回复是空的" };
   } catch (error) {
     return { name: "chat", ok: false, detail: `请求失败：${String(error)}` };
+  }
+}
+
+/**
+ * 一张纯蓝色的 32×32 PNG。
+ *
+ * 用它验「能不能看图」：模型得说出这是**蓝色**。问颜色而不是问「这是什么图」，
+ * 因为颜色是这张图唯一可判定的属性——模型瞎猜也猜得到「一张图」，猜不到蓝色。
+ */
+const BLUE_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAALUlEQVR4nO3OIQEAAAgDsOckO10gxs3E/JLZqxIQEBAQEBAQEBAQEBAQEGgHHn2W1HlGoKJwAAAAAElFTkSuQmCC";
+
+/** 蓝色说法：模型可能用中文、英文或色相词。 */
+const BLUE_WORDS = ["蓝", "blue", "青蓝", "azure", "navy"];
+
+async function checkVision(config: ProviderConfig): Promise<CheckResult> {
+  try {
+    const { status, text } = await postChat(config, {
+      model: config.model,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "text", text: "这张图是什么颜色？只回答颜色。" },
+          { type: "image_url", image_url: { url: `data:image/png;base64,${BLUE_PNG_BASE64}` } },
+        ],
+      }],
+      max_tokens: 512,
+    });
+    if (status !== 200) return { name: "vision", ok: false, detail: `HTTP ${status}：${text.slice(0, 200)}` };
+    const content = extractContent(text);
+    const sawBlue = BLUE_WORDS.some(word => content.toLowerCase().includes(word.toLowerCase()));
+    return {
+      name: "vision",
+      ok: sawBlue,
+      detail: sawBlue
+        ? `能看图：模型认出了蓝色（回复：${content.trim().slice(0, 60)}）`
+        : `请求被接受，但回复里没有出现「蓝」：${content.trim().slice(0, 120) || "(空)"}`,
+    };
+  } catch (error) {
+    return { name: "vision", ok: false, detail: `请求失败：${String(error)}` };
   }
 }
 
@@ -304,6 +344,116 @@ async function checkPlanRoundTrip(config: ProviderConfig): Promise<CheckResult> 
 }
 
 /**
+ * 带图的规划器往返：仓库自己的提示 + **一张真的画着这份文档的图** → 模型 → 命令计划 → dry-run。
+ *
+ * 这一项才是「视觉上下文」的真验收：前一项只证明「模型能看图」，这一项证明
+ * 「模型能看着图给出**本产品能执行**的命令」。
+ *
+ * 图是自己画的（按文档里的几何与填充色填矩形），不是浏览器截图——验收工具跑在
+ * Node 里，没有画布。但它足够真：模型看到的位置与颜色确实来自文档。
+ */
+async function checkVisionPlanRoundTrip(config: ProviderConfig): Promise<CheckResult> {
+  const document = fixtureDocument();
+  const image = renderFixturePng(document);
+  if (!image) return { name: "visionPlanRoundTrip", ok: false, detail: "没能画出样例文档的截图" };
+
+  const request: AiPlanRequest = {
+    prompt: "看图：标题的文字太浅了，改成深色，让它在白色背景上达到 4.5:1 的对比度",
+    document,
+    selectedNodeIds: ["text:title"],
+    image: { dataUrl: `data:image/png;base64,${image.base64}`, mimeType: "image/png", width: image.width, height: image.height },
+  };
+  const prompt = buildPlannerPrompt(request);
+  try {
+    const { status, text } = await postChat(config, {
+      model: config.model,
+      messages: [
+        { role: "system", content: prompt.system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: prompt.user },
+            { type: "image_url", image_url: { url: request.image!.dataUrl } },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+      max_tokens: 4096,
+      temperature: 0.2,
+    });
+    if (status !== 200) return { name: "visionPlanRoundTrip", ok: false, detail: `HTTP ${status}：${text.slice(0, 300)}` };
+    const content = extractContent(text);
+    const plan = parsePlanResponse(content);
+    const unknown = plan.commands.filter(command => !(COMMAND_TYPES as readonly string[]).includes(command.type));
+    if (unknown.length) {
+      return { name: "visionPlanRoundTrip", ok: false, detail: `计划里有词汇表之外的命令：${unknown.map(command => command.type).join(", ")}` };
+    }
+    if (!plan.commands.length) return { name: "visionPlanRoundTrip", ok: false, detail: "计划里没有命令" };
+
+    const runtime = new DesignRuntime(document);
+    const result = runtime.execute({
+      commandId: "acceptance:vision",
+      documentId: document.id,
+      baseRevision: document.revision,
+      actor: { type: "ai", id: "acceptance" },
+      commands: plan.commands,
+    });
+    if (result.ok === false) {
+      return { name: "visionPlanRoundTrip", ok: false, detail: `dry-run 失败：${JSON.stringify(result)}` };
+    }
+    return {
+      name: "visionPlanRoundTrip",
+      ok: true,
+      detail: `带着图解析出 ${plan.commands.length} 条命令（${plan.commands.map(command => command.type).join(", ")}），dry-run 通过`,
+    };
+  } catch (error) {
+    return { name: "visionPlanRoundTrip", ok: false, detail: `往返失败：${error instanceof Error ? error.message : String(error)}` };
+  }
+}
+
+/**
+ * 把样例文档画成一张 PNG。
+ *
+ * 只画矩形与填充色——够模型看出「这里有个浅色的标题」，也够验证链路。
+ * 颜色按节点的填充色来，浅色标题就会真的画成浅色。
+ */
+function renderFixturePng(document: DesignDocument): { base64: string; width: number; height: number } | undefined {
+  const width = 480;
+  const height = 320;
+  const data = new Uint8Array(width * height * 4);
+  // 背景：白。
+  for (let index = 0; index < width * height; index += 1) {
+    data[index * 4] = 255; data[index * 4 + 1] = 255; data[index * 4 + 2] = 255; data[index * 4 + 3] = 255;
+  }
+  for (const node of Object.values(document.nodes)) {
+    const fill = node.appearance.fills?.[0];
+    if (!fill || fill.type !== "solid") continue;
+    const rgb = parseHexColor(fill.color);
+    if (!rgb) continue;
+    const left = Math.max(0, Math.round(node.layout.x));
+    const top = Math.max(0, Math.round(node.layout.y));
+    const right = Math.min(width, Math.round(node.layout.x + node.layout.width));
+    const bottom = Math.min(height, Math.round(node.layout.y + node.layout.height));
+    for (let y = top; y < bottom; y += 1) {
+      for (let x = left; x < right; x += 1) {
+        const index = (y * width + x) * 4;
+        data[index] = rgb[0]; data[index + 1] = rgb[1]; data[index + 2] = rgb[2]; data[index + 3] = 255;
+      }
+    }
+  }
+  const png = encodePng({ width, height, data });
+  return { base64: png.toString("base64"), width, height };
+}
+
+/** `#rrggbb` → RGB；解析不了就返回 undefined。 */
+function parseHexColor(color: string): [number, number, number] | undefined {
+  const match = /^#?([0-9a-f]{6})$/i.exec(color.trim());
+  if (!match) return undefined;
+  const value = Number.parseInt(match[1]!, 16);
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+}
+
+/**
  * 编排循环往返：真实模型能不能照着待修清单改对。
  *
  * 这是「AI 自己跑」最关键的一问——前面的检查只证明单轮能通，这里证明多轮能收敛。
@@ -367,7 +517,9 @@ async function main(): Promise<void> {
   checks.push(await checkChat(config));
   checks.push(await checkJsonMode(config));
   checks.push(await checkStream(config));
+  checks.push(await checkVision(config));
   checks.push(await checkPlanRoundTrip(config));
+  checks.push(await checkVisionPlanRoundTrip(config));
   if (args.loop) checks.push(await checkLoop(config));
 
   for (const check of checks) {
@@ -387,6 +539,13 @@ async function main(): Promise<void> {
       stream: checks.find(check => check.name === "stream")?.ok ?? false,
       planRoundTrip: checks.find(check => check.name === "planRoundTrip")?.ok ?? false,
       bearerAuth: true,
+      // 没测看图就不写这个字段——「没验过」不等于「不支持」。
+      ...(checks.some(check => check.name === "vision")
+        ? { vision: checks.find(check => check.name === "vision")?.ok ?? false }
+        : {}),
+      ...(checks.some(check => check.name === "visionPlanRoundTrip")
+        ? { visionPlanRoundTrip: checks.find(check => check.name === "visionPlanRoundTrip")?.ok ?? false }
+        : {}),
     },
     notes: checks.map(check => `${check.name}：${check.detail}`),
   };

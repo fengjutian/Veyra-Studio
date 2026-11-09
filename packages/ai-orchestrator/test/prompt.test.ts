@@ -68,3 +68,24 @@ test("the summary describes every fill kind without assuming a linear gradient",
   node.appearance.fills = [{ type: "radial", cx: 0.5, cy: 0.5, r: 0.5, stops }];
   assert.match(summarizeDocument(document, []), /填充=径向渐变\(中心 50%,50%，半径 50%\)/);
 });
+
+test("没有截图时提示里不出现截图相关的字样", () => {
+  const { user } = buildPlannerPrompt({ prompt: "把标题改成红色", document: documentWithText(), selectedNodeIds: [] });
+  assert.doesNotMatch(user, /截图/);
+});
+
+test("带截图时提示讲清了图与文字摘要各管什么", () => {
+  const { user } = buildPlannerPrompt({
+    prompt: "把标题改成红色",
+    document: documentWithText(),
+    selectedNodeIds: ["text:1"],
+    image: { dataUrl: "data:image/png;base64,AAA", mimeType: "image/png", width: 960, height: 640 },
+  });
+  assert.match(user, /截图/);
+  assert.match(user, /960×640/);
+  // 分工必须讲清楚：模型分不清「图管观感、摘要管数值」就会拿截图里的模糊印象去改精确数值。
+  assert.match(user, /观感/);
+  assert.match(user, /精确/);
+  // 截图说明排在文档摘要之前：先说「这是图」，再给「这是数值」。
+  assert.ok(user.indexOf("截图") < user.indexOf("当前文档："));
+});

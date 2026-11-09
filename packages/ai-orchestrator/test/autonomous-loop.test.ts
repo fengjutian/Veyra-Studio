@@ -233,6 +233,39 @@ test("编排循环：体检结果回喂给模型，模型按清单改完后收�
   assert.match(requests[0]?.selfCheck?.note ?? "", /第 1\/6 轮/);
 });
 
+test("编排循环：截图每一轮都带到模型手上", async () => {
+  const project = await projectWithLowContrastText();
+  const requests: AiPlanRequest[] = [];
+  const planner: AiPlanner = {
+    async plan(request) {
+      requests.push(request);
+      return { summary: "把标题改成深色", commands: [darkenText as never] };
+    },
+  };
+  const editor = new SafeAiEditor(project, planner);
+  const image = { dataUrl: "data:image/png;base64,AAA", mimeType: "image/png", width: 800, height: 600 };
+
+  const result = await runAutonomousLoop(editor, { goal: "把这份设计改好看点", image });
+
+  assert.equal(result.stopReason, "converged");
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0]?.image, image);
+});
+
+test("编排循环：没给截图时请求里也不该有图", async () => {
+  const project = await projectWithLowContrastText();
+  const requests: AiPlanRequest[] = [];
+  const editor = new SafeAiEditor(project, {
+    async plan(request) {
+      requests.push(request);
+      return { summary: "把标题改成深色", commands: [darkenText as never] };
+    },
+  });
+
+  await runAutonomousLoop(editor, { goal: "把这份设计改好看点" });
+  assert.equal(requests[0]?.image, undefined);
+});
+
 test("编排循环：结构审查拦下的改动不落地，文档原样不动", async () => {
   const project = await projectWithLowContrastText();
   await project.execute({

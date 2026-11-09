@@ -120,7 +120,7 @@ export function createOpenAiCompatiblePlanner(options: OpenAiCompatiblePlannerOp
         model,
         messages: [
           { role: "system", content: options.systemPrompt ?? prompt.system },
-          { role: "user", content: prompt.user },
+          { role: "user", content: userContent(prompt.user, request.image) },
         ],
       };
       if (options.temperature !== undefined) body.temperature = options.temperature;
@@ -133,6 +133,21 @@ export function createOpenAiCompatiblePlanner(options: OpenAiCompatiblePlannerOp
       return parsePlanResponse(content ?? extractContent(raw));
     },
   };
+}
+
+/**
+ * user 段的内容。
+ *
+ * 有图时按 OpenAI 兼容的多模态格式发：`content` 从字符串变成**内容块数组**，
+ * 文本块在前、图片块在后。没有这一步，图根本发不出去——`content` 只能是
+ * 字符串的端点会直接报错。
+ */
+function userContent(text: string, image: AiPlanRequest["image"]): unknown {
+  if (!image) return text;
+  return [
+    { type: "text", text },
+    { type: "image_url", image_url: { url: image.dataUrl } },
+  ];
 }
 
 /** 密钥环：当前用哪一把，以及环里的全部密钥。 */
