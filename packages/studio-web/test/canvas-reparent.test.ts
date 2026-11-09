@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDocument, defaultAppearance, defaultLayout, type DesignDocument, type DesignNode } from "@ufira/design-schema";
+import { DesignRuntime } from "@ufira/design-runtime";
 import {
   canHostChildren,
   dropContainerFor,
+  emptiedParents,
+  findDropContainerInScene,
   isDescendantOf,
   planCanvasReparent,
+  previewCenter,
   topLevelDraggedIds,
 } from "../src/canvas-reparent";
+import type { SceneNode } from "../src/renderer/scene";
 
 /**
  * 画布上的跨容器拖拽。
@@ -199,4 +204,180 @@ test("子树判定", () => {
   assert.equal(isDescendantOf(document, "outer", "box"), true);
   assert.equal(isDescendantOf(document, "outer", "loose"), false);
   assert.equal(isDescendantOf(document, "inner", "outer"), false);
+});
+
+test("编组内部若干子节点整组搬出：全部换父级，相对位置不变", () => {
+  const document = scene();
+  // group 里有三个兄弟节点，整组拖到另一个容器 target。
+  const group = frame("group", "outer");
+  const g1 = frame("g1", "group");
+  const g2 = frame("g2", "group");
+  const g3 = frame("g3", "group");
+  const target = frame("target");
+  group.childIds = ["g1", "g2", "g3"];
+  document.nodes = { ...document.nodes, group, g1, g2, g3, target };
+  document.pages["page:1"]!.childIds = ["outer", "loose", "target"];
+
+  // 三个节点在页面坐标上的位置（相对彼此间隔 10px）。
+  const boxes = {
+    g1: { x: 200, y: 100 },
+    g2: { x: 230, y: 100 },
+    g3: { x: 260, y: 100 },
+  };
+  const plan = planCanvasReparent({
+    document,
+    draggedIds: ["g1", "g2", "g3"],
+    containerId: "target",
+    boxes,
+    // target 的内容盒原点在页面坐标 (180, 80)。
+    containerOrigin: { x: 180, y: 80 },
+  });
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  const reparents = plan.commands.filter(command => command.type === "node.reparent");
+  assert.equal(reparents.length, 3);
+  assert.deepEqual(
+    reparents.map(command => (command.payload as { parentId: string }).parentId),
+    ["target", "target", "target"],
+  );
+  // 局部坐标 = 页面坐标 - 新父级原点，彼此间隔仍是 30 / 10。
+  const locals = plan.commands
+    .filter(command => command.type === "node.patch")
+    .map(command => (command.payload as { patch: { layout: { x: number; y: number } } }).patch.layout);
+  assert.deepEqual(locals.map(layout => layout.x), [20, 50, 80]);
+  assert.deepEqual(locals.map(layout => layout.y), [20, 20, 20]);
+});
+
+test("整组搬出后原编组变空：空编组是否留着由调用方决定", () => {
+  const document = scene();
+  const group = frame("group", "outer");
+  const g1 = frame("g1", "group");
+  group.childIds = ["g1"];
+  document.nodes = { ...document.nodes, group, g1 };
+  document.pages["page:1"]!.childIds.push("group");
+  const plan = planCanvasReparent({
+    document,
+    draggedIds: ["g1"],
+    containerId: "outer",
+    boxes: { g1: { x: 0, y: 0 } },
+    containerOrigin: { x: 0, y: 0 },
+  });
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  // 搬回原来的祖先时，编组会变空——这条命令序列里应当包含删除空编组的那一步。
+  const deletes = plan.commands.filter(command => command.type === "node.delete");
+  assert.equal(deletes.length, 1);
+  assert.deepEqual((deletes[0]?.payload as { id: string }).id, "group");
+});
+
+test("部分搬移时编组保留：没有掏空就不删", () => {
+  const document = scene();
+  const group = frame("group", "outer");
+  const g1 = frame("g1", "group");
+  const g2 = frame("g2", "group");
+  group.childIds = ["g1", "g2"];
+  document.nodes = { ...document.nodes, group, g1, g2 };
+  const plan = planCanvasReparent({
+    document,
+    draggedIds: ["g1"],
+    containerId: "outer",
+    boxes: { g1: { x: 0, y: 0 } },
+    containerOrigin: { x: 0, y: 0 },
+  });
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  assert.equal(plan.commands.filter(command => command.type === "node.delete").length, 0);
+});
+
+test("掏空判定：只算这次真被搬走的节点", () => {
+  const document = scene();
+  const group = frame("group", "outer");
+  const g1 = frame("g1", "group");
+  const g2 = frame("g2", "group");
+  group.childIds = ["g1", "g2"];
+  document.nodes = { ...document.nodes, group, g1, g2 };
+  // 两个都搬走 → group 被掏空。
+  assert.deepEqual(emptiedParents(document, ["g1", "g2"], "outer"), ["group"]);
+  // 只搬一个 → 还剩一个，不掏空。
+  assert.deepEqual(emptiedParents(document, ["g1"], "outer"), []);
+});
+
+function sceneNode(id: string, x: number, y: number, width: number, height: number, children: SceneNode[] = []): SceneNode {
+  return { id, type: "frame", box: { x, y, width, height }, clip: true, opacity: 1, strokeWidth: 0, radius: 0, children };
+}
+
+test("落点容器：场景里找包含该点的最深容器", () => {
+  const inner = sceneNode("inner", 20, 20, 50, 50);
+  const group = sceneNode("group", 0, 0, 200, 100, [inner]);
+  const target = sceneNode("target", 300, 0, 200, 100);
+  const scene = [group, target];
+
+  assert.equal(findDropContainerInScene(scene, { x: 30, y: 30 }, new Set()), "inner");
+  assert.equal(findDropContainerInScene(scene, { x: 100, y: 80 }, new Set()), "group");
+  assert.equal(findDropContainerInScene(scene, { x: 350, y: 50 }, new Set()), "target");
+  // 空白处：落在页面层。
+  assert.equal(findDropContainerInScene(scene, { x: 250, y: 50 }, new Set()), undefined);
+});
+
+test("落点容器：被拖动的节点连同子树整体排除", () => {
+  const moved = sceneNode("moved", 10, 10, 30, 30);
+  const group = sceneNode("group", 0, 0, 200, 100, [moved]);
+  const scene = [group];
+
+  // 点落在被拖节点自己身上 → 它被排除，回落到它的容器。
+  assert.equal(findDropContainerInScene(scene, { x: 20, y: 20 }, new Set(["moved"])), "group");
+  // 点落在被拖节点的区域但不在容器内 → 没有容器可落（页面层）。
+  const loose = sceneNode("loose", 100, 100, 30, 30);
+  assert.equal(findDropContainerInScene([loose], { x: 110, y: 110 }, new Set(["loose"])), undefined);
+});
+
+test("预览中心：多节点的包围盒中心", () => {
+  assert.deepEqual(
+    previewCenter([
+      { x: 0, y: 0, width: 20, height: 20 },
+      { x: 40, y: 0, width: 20, height: 20 },
+    ]),
+    { x: 30, y: 10 },
+  );
+  assert.equal(previewCenter([]), undefined);
+});
+
+test("整组搬出在运行时落地：子节点换父级、坐标是局部坐标、编组消失", () => {
+  const document = scene();
+  const group = frame("group", "outer");
+  const g1 = frame("g1", "group");
+  const g2 = frame("g2", "group");
+  const target = frame("target");
+  group.childIds = ["g1", "g2"];
+  document.nodes.outer!.childIds = ["inner", "group"];
+  document.nodes = { ...document.nodes, group, g1, g2, target };
+  document.pages["page:1"]!.childIds = ["outer", "loose", "target"];
+
+  const plan = planCanvasReparent({
+    document,
+    draggedIds: ["g1", "g2"],
+    containerId: "target",
+    boxes: { g1: { x: 200, y: 100 }, g2: { x: 230, y: 100 } },
+    containerOrigin: { x: 180, y: 80 },
+  });
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+
+  const runtime = new DesignRuntime(document);
+  runtime.execute({
+    commandId: "cmd:1",
+    documentId: document.id,
+    baseRevision: 0,
+    actor: { type: "human", id: "user:1" },
+    commands: plan.commands,
+  });
+  const after = runtime.snapshot();
+  // 两个子节点都进了 target，编组被掏空后删除。
+  assert.deepEqual(after.nodes.target?.childIds, ["g1", "g2"]);
+  assert.equal(after.nodes.group, undefined);
+  assert.equal(after.nodes.g1?.parentId, "target");
+  // 坐标写的是新父级的局部坐标：页面坐标 200/230 - target 原点 180 = 20/50。
+  assert.equal(after.nodes.g1?.layout.x, 20);
+  assert.equal(after.nodes.g2?.layout.x, 50);
+  assert.equal(after.nodes.g1?.layout.y, 20);
 });

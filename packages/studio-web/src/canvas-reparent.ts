@@ -139,7 +139,36 @@ export function planCanvasReparent(request: CanvasReparentRequest): CanvasRepare
       },
     });
   }
+  // 搬空之后的空编组要删掉：它的存在意义就是把那几个节点聚在一起。
+  //
+  // 判据是「**这次拖放搬走了它的最后一个子节点**」，不是「它现在没有子节点」——
+  // 后者会把用户自己建的空 frame 也删掉。用户要留空 frame，就不会有子节点被搬走。
+  for (const parentId of emptiedParents(document, dragged, containerId)) {
+    commands.push({ type: "node.delete", payload: { id: parentId } });
+  }
   return { ok: true, commands, containerId, containerIsPage };
+}
+
+/**
+ * 这次搬运会掏空的父级。
+ *
+ * 「掏空」= 搬走之后它一个子节点都不剩（被搬走的不算还在里面）。
+ * 页面不算：页面不会因为孩子被搬走而消失。
+ */
+export function emptiedParents(document: DesignDocument, draggedIds: string[], containerId: string): string[] {
+  const moved = new Set(draggedIds);
+  const emptied = new Set<string>();
+  for (const id of draggedIds) {
+    const node = document.nodes[id];
+    const parentId = node?.parentId;
+    if (!node || !parentId || parentId === containerId) continue;
+    if (document.pages[parentId]) continue;
+    const parent = document.nodes[parentId];
+    if (!parent) continue;
+    const remaining = parent.childIds.filter(childId => childId !== id && !moved.has(childId));
+    if (!remaining.length) emptied.add(parentId);
+  }
+  return [...emptied];
 }
 
 /** `candidate` 是否在 `ancestor` 的子树里。 */
@@ -147,6 +176,21 @@ export function isDescendantOf(document: DesignDocument, ancestor: string, candi
   const node = document.nodes[ancestor];
   if (!node) return false;
   return node.childIds.some(childId => childId === candidate || isDescendantOf(document, childId, candidate));
+}
+
+/**
+ * 被拖节点的预览包围盒中心。
+ *
+ * 用它判定落点容器：节点本身跟着指针走，指针永远在节点上，靠指针判定只会命中
+ * 自己；节点的**中心**进入另一个容器，才是「放进去了」的直观含义。
+ */
+export function previewCenter(boxes: SceneBox[], point?: { x: number; y: number }): { x: number; y: number } | undefined {
+  if (!boxes.length) return undefined;
+  const minX = Math.min(...boxes.map(box => box.x));
+  const minY = Math.min(...boxes.map(box => box.y));
+  const maxX = Math.max(...boxes.map(box => box.x + box.width));
+  const maxY = Math.max(...boxes.map(box => box.y + box.height));
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
 }
 
 /** 点是否在盒子内。 */

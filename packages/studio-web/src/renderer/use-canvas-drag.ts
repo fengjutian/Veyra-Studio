@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import type { DesignNode } from "@ufira/design-schema";
 import { isClickDraw, isDrawTool, rectFromDrag, type DrawToolId, type ToolId } from "../tools";
-import { findDropContainerInScene } from "../canvas-reparent";
+import { findDropContainerInScene, previewCenter } from "../canvas-reparent";
 import { hitTest, type HitPoint } from "./hit-test";
 import { angleDegrees, boxCenter, hitTestHandleRotated, hitTestRotationHandle, normalizeAngle, resizeRotatedBox, ROTATE_HANDLE_GAP, ROTATE_HANDLE_RADIUS, snapAngle, toLocalPoint, toRadians } from "./rotation";
 import { selectedBoxes, selectionBounds, type HandleId } from "./selection";
@@ -61,11 +61,9 @@ export interface CanvasDragHandlers {
  * 用它判定落点容器：节点本身会跟着指针走，指针永远在节点上，靠指针判定只会命中
  * 自己；节点的**中心**进入另一个容器，才是「放进去了」的直观含义。
  */
-function previewCenter(ids: string[], boxes: Record<string, SceneBox>): { x: number; y: number } | undefined {
+function previewCenterOf(ids: string[], boxes: Record<string, SceneBox>): { x: number; y: number } | undefined {
   const list = ids.map(id => boxes[id]).filter((box): box is SceneBox => Boolean(box));
-  if (!list.length) return undefined;
-  const bounds = selectionBounds(list);
-  return bounds ? { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 } : undefined;
+  return previewCenter(list);
 }
 
 export function useCanvasDrag(options: CanvasDragOptions): {
@@ -232,7 +230,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       updatePreview(offsetSubtreeBoxes(options.scene, gesture.ids, deltaX + snap.deltaX, deltaY + snap.deltaY));
       // 落点容器：被拖集合的预览中心落进了哪个容器。判定用**几何包含**而不是命中
       // 测试——被拖节点自己被排除在外，否则永远命中自己。
-      const center = previewCenter(gesture.ids, previewRef.current);
+      const center = previewCenterOf(gesture.ids, previewRef.current);
       dropContainerRef.current = center
         ? findDropContainerInScene(options.scene, center, new Set(gesture.ids))
         : undefined;
