@@ -242,6 +242,18 @@ export interface Constraints {
   vertical: ConstraintAxis;
 }
 
+/**
+ * 溢出模式：内容超出盒子时怎么办。
+ *
+ * - `hidden`：裁切但不滚动（**缺省**，与现有 frame 的裁剪行为一致）；
+ * - `scroll`：内容超出盒子时可以滚动，超出部分照常被裁切；
+ * - `visible`：不裁切，内容溢出到盒子外面。
+ *
+ * 只对容器型节点（frame / component / instance）有意义；其它节点类型写这个字段
+ * 会被运行时拒绝。
+ */
+export type OverflowMode = "visible" | "hidden" | "scroll";
+
 export interface BaseNode {
   id: NodeId;
   type: NodeType;
@@ -258,6 +270,15 @@ export interface BaseNode {
   constraints?: Constraints;
   /** 作为组件插槽的 frame：实例可以往这里填充自己的内容。 */
   slot?: boolean;
+  /**
+   * 溢出模式；只对容器型节点有意义。
+   *
+   * 做成属性而不是新的节点类型——「内容超出盒子怎么办」本来就是盒子语义，
+   * 新类型会牵动判别联合、导出、组件和 AI 计划解析的每一处。
+   *
+   * 缺省是 `hidden`（裁切不滚动），所以旧文档不需要迁移。
+   */
+  overflow?: OverflowMode;
   /** 组件属性绑定；只在组件定义子树里有意义。 */
   componentPropertyBindings?: ComponentPropertyBindings;
   /**

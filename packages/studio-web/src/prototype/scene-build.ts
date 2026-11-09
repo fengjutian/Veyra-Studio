@@ -1,5 +1,5 @@
 import { buildNode, type SceneNode } from "../renderer/scene";
-import type { DesignDocument, DesignNode, NodeId } from "@ufira/design-schema";
+import type { DesignDocument, DesignNode, NodeId, OverflowMode } from "@ufira/design-schema";
 
 /**
  * 从任意节点（不要求是页面直属）构建场景子树，并把整棵子树平移到给定位置。
@@ -37,8 +37,8 @@ export interface ScrollOffset {
   y: number;
 }
 
-/** 节点的溢出模式。 */
-export type OverflowMode = "visible" | "hidden" | "scroll";
+/** 节点的溢出模式；字段没写就是 `undefined`（缺省裁切不滚动）。 */
+export type { OverflowMode };
 
 /** 容器型节点：只有它们才有子节点，才谈得上滚动。 */
 const CONTAINER_TYPES = new Set(["frame", "component", "instance"]);
@@ -46,13 +46,11 @@ const CONTAINER_TYPES = new Set(["frame", "component", "instance"]);
 /**
  * 读节点上的溢出模式；字段没写就是 `undefined`。
  *
- * `overflow` 是**可选的文档字段**，还没进 `design-schema` 的类型与 schema
- * （补丁片段见 `docs/prototype-runtime.md` 第 8.1 节）：字段缺失时读到的就是
- * `undefined`，所以未打补丁的文档行为与现在完全一致。
+ * 字段是**可选的文档字段**（`design-schema` 的 `BaseNode.overflow`），
+ * 缺省就是「裁切不滚动」，所以旧文档的行为与现在完全一致。
  */
 export function overflowOf(node: DesignNode | undefined): OverflowMode | undefined {
-  const value = (node as { overflow?: unknown } | undefined)?.overflow;
-  return value === "scroll" || value === "visible" || value === "hidden" ? value : undefined;
+  return node?.overflow;
 }
 
 /** 是否是容器型节点。 */

@@ -159,9 +159,14 @@ Figma 那边**默认保留**滚动位置，交互面板里的复选框叫「Rese
 不需要额外声明；显式写 `overflow: "hidden"` / `"visible"` 才放弃这个身份。
 其余容器必须显式 `overflow: "scroll"` 才是滚动宿主。
 
-> ⚠️ `overflow` 字段还没进 `design-schema` 的类型与 schema（`types.ts` / `schema.ts` 不在本轮改动范围内），
-> 需要父级应用补丁，片段见交付报告。在补丁落地前，运行时读不到这个字段
-> （zod 会剥掉未声明的键），滚动容器能力只对**已经在内存里**的文档生效。
+> `overflow` 是 `design-schema` 的**可选文档字段**（`BaseNode.overflow`），
+> 已在类型、zod schema 与文档校验里落地：只有容器型节点
+> （frame / component / instance）能带它，其它节点写了会被 `validateDocument` 拒绝；
+> 命令层（`node.patch`）也会拦。
+> 字段全可选，所以**不升 schema 版本**，旧文档不写它时行为完全不变。
+>
+> 属性面板的「溢出」小节可以直接改：选「滚动」写 `overflow: "scroll"`，
+> 选回「裁切」把字段删掉（回到缺省语义）。
 
 ### 8.2 滚动行为
 
@@ -186,7 +191,6 @@ Figma 那边**默认保留**滚动位置，交互面板里的复选框叫「Rese
 - `mouse-over` 只在进入节点时触发一次（不做每帧触发，否则悬停动作会自我循环）；`mouse-enter` 优先于它；
 - 滚动保持只认 `navigate` 动作上的 `preserveScroll`；`open-overlay` 等动作带着这个字段只是残留，不生效；
 - 滚动容器没有滚动条 UI、没有惯性滚动，也不支持固定元素（sticky / fixed）；
-- `overflow` 字段的 schema 补丁未合入前，滚动容器只在内存文档里可用（第 8.1 节）；
 - push 的位移量按视口宽度整屏计算，不做「部分推入」；
 - 预览固定 960×680、不缩放（窗口小时外层滚动）。
 
@@ -197,3 +201,6 @@ Figma 那边**默认保留**滚动位置，交互面板里的复选框叫「Rese
 | `studio-web/test/prototype-state.test.ts` | 起始校验、冒泡与最深层优先、非法目标无操作、导航历史、overlay 开关/点外部、返回、外链副作用、动画结束、after-delay 排程、辅助函数、状态不可变 |
 | `studio-web/test/prototype-overlay-position.test.ts` | 居中、四角、manual 相对触发节点、无基准兜底 |
 | `studio-web/test/prototype-scroll.test.ts` | 滚动位置保存、返回时恢复、不保留时重置为 0、偏移边界夹紧、最大可滚动距离、场景平移、滚轮命中滚动宿主（jsdom） |
+| `design-schema/test/overflow.test.ts` | 三种溢出模式可存、缺省合法、非容器被拒、非法取值被 zod 拒绝 |
+| `design-runtime/test/overflow.test.ts` | `node.patch` 设置溢出模式、非法值与非法节点被拒且文档不变、可撤销 |
+| `studio-web/test/property-panel-overflow.test.ts` | 溢出小节只在容器上出现；三个取值各自写入正确的字段（jsdom） |

@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
-import { MAX_LIST_INDENT, TEXT_DEFAULTS, applyTextRunStyle, paragraphIndexAt, paragraphRanges, paragraphStyleAt, runStyleAt, type BlendMode, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type ListType, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextNode, type TextPatch, type TextRunStyle } from "@ufira/design-schema";
+import { MAX_LIST_INDENT, TEXT_DEFAULTS, applyTextRunStyle, paragraphIndexAt, paragraphRanges, paragraphStyleAt, runStyleAt, type BlendMode, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type ListType, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextNode, type TextPatch, type TextRunStyle, type OverflowMode } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 import { GridTrackEditor as GridTrackVisualEditor } from "./grid-track-editor";
 import type { BooleanOperation } from "./boolean";
@@ -10,7 +10,7 @@ export interface PropertyPanelProps {
   /** 父节点：约束只在绝对布局的容器里才有意义，所以面板需要知道父级。 */
   parent?: DesignNode;
   disabled?: boolean;
-  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints">>): void;
+  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints" | "overflow">>): void;
   onPatchText(patch: TextPatch): void;
   /** 改段落样式（列表类型 / 缩进 / 段落缩进 / 悬挂 / 列表间距）；走独立命令，不经过 TextPatch。 */
   onSetParagraphStyle?(payload: { from: number; to: number; style: { listType?: ListType | "none"; indentDelta?: number; paragraphIndent?: number; hanging?: boolean; listSpacing?: number } }): void;
@@ -218,6 +218,20 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
           <NumberField label="左" value={padding.left} min={0} disabled={disabled} onCommit={left => patchPadding({ left })} />
         </div>
       </Section>
+
+      {/* 溢出模式只对容器有意义：形状没有「内容超出盒子」这回事。 */}
+      {CONTAINER_TYPES.has(node.type) && (
+        <Section title="溢出">
+          <Segmented
+            label="内容超出盒子时"
+            value={node.overflow ?? "hidden"}
+            disabled={disabled}
+            options={overflowOptions}
+            onChange={value => onPatch({ overflow: value === "hidden" ? undefined : (value as OverflowMode) })}
+          />
+          <p className="field-hint">「裁切」是缺省行为；「滚动」在原型预览里可滚；「可见」允许内容溢出到盒子外。</p>
+        </Section>
+      )}
 
       {/* 约束只对绝对布局容器里的子节点有意义；在页面根或 stack 容器里显示只会误导。 */}
       {parent && parent.layout.mode === "absolute" && (
@@ -935,6 +949,14 @@ function maxRadius(radii: CornerRadii): number {
 }
 /** 只有形状能当蒙版：文本/图片/容器的「轮廓」没有明确语义。 */
 const MASKABLE_TYPES = new Set(["vector", "rectangle", "ellipse"]);
+/** 只有容器谈得上「内容超出盒子」：形状没有子内容。 */
+const CONTAINER_TYPES = new Set(["frame", "component", "instance"]);
+/** 溢出模式选项；缺省是「裁切」，所以面板上显示的是显式值。 */
+const overflowOptions = [
+  { value: "hidden", label: "裁切" },
+  { value: "scroll", label: "滚动" },
+  { value: "visible", label: "可见" },
+];
 /** 纯色 → 线性渐变：默认上下两段，结束色先给白色，用户自己改。 */
 function toGradient(color: string): Paint {
   return { type: "linear", angle: 180, stops: [{ offset: 0, color }, { offset: 1, color: "#ffffff" }] };

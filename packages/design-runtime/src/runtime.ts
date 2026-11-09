@@ -134,6 +134,16 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
     case "node.patch": {
       const node = requireNode(document, command.payload.id);
       if (command.payload.patch.slot !== undefined && typeof command.payload.patch.slot !== "boolean") throw new CommandError("Slot flag must be a boolean");
+      if (command.payload.patch.overflow !== undefined) {
+        const overflow = command.payload.patch.overflow;
+        if (overflow !== "visible" && overflow !== "hidden" && overflow !== "scroll") {
+          throw new CommandError(`Overflow mode must be visible, hidden or scroll, got ${String(overflow)}`);
+        }
+        // 溢出模式只对容器有意义：形状没有「内容超出盒子」这回事。
+        if (node.type !== "frame" && node.type !== "component" && node.type !== "instance") {
+          throw new CommandError(`Node ${node.id} of type ${node.type} cannot have an overflow mode`);
+        }
+      }
       if (command.payload.patch.mask !== undefined) {
         if (typeof command.payload.patch.mask !== "boolean") throw new CommandError("Mask flag must be a boolean");
         // 只有形状能当蒙版：文本/图片/容器的「轮廓」没有明确语义，放进来只会让裁剪结果不可解释。

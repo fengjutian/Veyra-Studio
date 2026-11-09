@@ -62,6 +62,10 @@ export function validateDocument(input: unknown): DesignDocument {
       else if (child.parentId !== nodeId) issues.push(`child ${childId} parentId does not match node ${nodeId}`);
     }
     if (node.slot && node.type !== "frame" && node.type !== "component") issues.push(`node ${nodeId} of type ${node.type} cannot be a slot`);
+    // 溢出模式只对容器有意义：形状没有「内容超出盒子」这回事。
+    if (node.overflow !== undefined && node.type !== "frame" && node.type !== "component" && node.type !== "instance") {
+      issues.push(`node ${nodeId} of type ${node.type} cannot have an overflow mode`);
+    }
     if (node.type === "image" && !document.assets[node.assetId]) issues.push(`image ${nodeId} references missing asset ${node.assetId}`);
     if (node.type === "instance" && !document.components[node.componentId]) issues.push(`instance ${nodeId} references missing component ${node.componentId}`);
     for (const [property, tokenName] of Object.entries(node.bindings ?? {})) {

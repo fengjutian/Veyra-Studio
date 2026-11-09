@@ -882,7 +882,7 @@ function App() {
     await execute([{ type: "page.delete", payload: { id: page.id } }]);
     switchPage(nextPageId);
   });
-  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
+  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask" | "overflow">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
   /**
@@ -924,7 +924,7 @@ function App() {
     }
   };
   const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
-  const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints">>) => selected && patchNode(selected.id, patchValue);
+  const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints" | "overflow">>) => selected && patchNode(selected.id, patchValue);
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
   const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
   // 段落样式走独立命令：它是带区间语义的结构，不能混进 text.patch。

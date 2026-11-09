@@ -26,7 +26,7 @@ import { clampScroll, dispatchPrototype, startPrototype } from "../src/prototype
  * 滚轮事件进去，画布上内容的绘制坐标随之平移。
  */
 
-/** 造一个 frame 节点；`overflow` 是可选文档字段（还没进 schema，见交付报告）。 */
+/** 造一个 frame 节点；`overflow` 是可选的文档字段（缺省即裁切不滚动）。 */
 function frame(
   id: string,
   parentId: string,
@@ -52,8 +52,8 @@ function frame(
       ...(options.fill ? { fills: [{ type: "solid" as const, color: options.fill }] } : {}),
     },
     ...(options.interactions ? { interactions: options.interactions } : {}),
+    ...(options.overflow ? { overflow: options.overflow } : {}),
   } as DesignNode;
-  if (options.overflow) (node as { overflow?: string }).overflow = options.overflow;
   return node;
 }
 
