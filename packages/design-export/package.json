@@ -21,7 +21,7 @@
     "@ufira/design-schema": "*"
   },
   "devDependencies": {
-    "@types/node": "^25.5.0",
+    "@types/node": "^26.6.6",
     "harfbuzzjs": "^1.6.4",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
