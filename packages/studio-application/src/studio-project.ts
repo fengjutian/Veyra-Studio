@@ -3,6 +3,7 @@ import { computePageLayout, type LayoutOptions, type LayoutResult } from "@ufira
 import type { ProjectRepository, ProjectSnapshot } from "@ufira/design-persistence";
 import { DesignRuntime, type CommandEnvelope, type CommandResult, type TransactionEntry } from "@ufira/design-runtime";
 import { createDocument, type DesignDocument } from "@ufira/design-schema";
+import { preparePackageAssets, preparePackageFontFaces, type AssetPackage } from "./asset-package";
 import { createAssetResolver } from "./assets";
 import { dedupeByFeature, prepareFontFaces } from "./font-faces";
 
@@ -120,6 +121,33 @@ export class StudioProject {
       : await prepareFontFaces(this.repository, document, options);
     const result = exportPageToHtml(document, { ...options, resolveAsset, fontFaces: fonts.css ? [fonts.css] : [] });
     return { ...result, diagnostics: dedupeByFeature([...result.diagnostics, ...fonts.diagnostics]) };
+  }
+
+  /**
+   * 导出成**资源包**：主文档 + 图片/字体文件，文档里用相对路径引用。
+   *
+   * 与 {@link exportHtmlWithAssets} 的差别是「内联」与「外链」：
+   * 内联产出单个自包含 HTML，体积涨约 33%，字体超过 1 MB 就只能放弃；
+   * 外链产出一个包，体积不涨、字体不受内联上限约束，代价是交付物不再
+   * 是单个文件。规格见 `docs/asset-packaging.md`。
+   *
+   * 注意：包里的相对路径要落盘后才解析得了，所以这个产物**不能**直接塞进
+   * 预览弹窗（预览用的是内联版）。
+   */
+  async exportHtmlPackage(options: HtmlExportOptions): Promise<AssetPackage> {
+    const document = this.runtime.snapshot();
+    const images = await preparePackageAssets(this.repository, document, options.pageId, options.nodeIds);
+    const fonts = await preparePackageFontFaces(this.repository, document, options);
+    const result = exportPageToHtml(document, {
+      ...options,
+      resolveAsset: options.resolveAsset ?? images.resolveAsset,
+      fontFaces: fonts.css ? [fonts.css] : [],
+    });
+    return {
+      document: result.document,
+      files: [...images.files, ...fonts.files],
+      diagnostics: dedupeByFeature([...result.diagnostics, ...fonts.diagnostics]),
+    };
   }
 
   /**

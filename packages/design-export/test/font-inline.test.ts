@@ -9,6 +9,7 @@ import {
   fontFaceCss,
   inlineFonts,
   matchFontDeclaration,
+  packagedFontFaceCss,
 } from "../src/index";
 
 /**
@@ -100,6 +101,23 @@ test("writes a font-face rule with the weight, the style and the data url", () =
 test("escapes the quotes in a family name", () => {
   const css = fontFaceCss({ family: 'Say "Hi"', weight: 400, style: "normal", bytes: new Uint8Array([1]), mime: "font/ttf" });
   assert.match(css, /font-family: "Say \\"Hi\\"";/);
+});
+
+test("points a packaged font face at the file inside the package", () => {
+  const css = packagedFontFaceCss({
+    family: "Press Start 2P",
+    weight: 700,
+    style: "italic",
+    bytes: new Uint8Array([102, 111, 111]),
+    mime: "font/woff2",
+  }, "./fonts/PressStart2P-700i.woff2");
+  assert.match(css, /@font-face \{/);
+  assert.match(css, /font-family: "Press Start 2P";/);
+  assert.match(css, /src: url\("\.\/fonts\/PressStart2P-700i\.woff2"\) format\("woff2"\);/);
+  assert.match(css, /font-weight: 700;/);
+  assert.match(css, /font-style: italic;/);
+  // 打包模式不能退回 data URI：外链文件才是打包的意义所在。
+  assert.doesNotMatch(css, /data:/);
 });
 
 test("skips a font that is too large and says so", () => {

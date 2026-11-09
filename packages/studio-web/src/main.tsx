@@ -4,7 +4,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
-import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt } from "@ufira/studio-application";
+import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -57,6 +57,7 @@ import { CanvasA11yLayer } from "./renderer/a11y-layer";
 import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
 import { exportPageToPng, downloadDataUrl } from "./png-export";
+import { createZip } from "./zip";
 import type { ExportDiagnostic } from "@ufira/design-export";
 import { exportPageToHtml } from "@ufira/design-export";
 import { ExportDiagnosticsPanel } from "./export-panel";
@@ -1137,6 +1138,24 @@ function App() {
     downloadFile(`${exportFilename}.html`, result.document, "text/html");
     setExportReport({ format: "html", diagnostics: result.diagnostics });
     setMessage(`HTML 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
+  });
+  /**
+   * 导出资源包：主文档 + 图片/字体文件，打成 ZIP。
+   *
+   * 与「导出 HTML」的区别是内联与外链：那个产出单个自包含文件（图片与字体
+   * 都写成 data URL），体积涨约 33%、字体超过 1 MB 就只能放弃；这个把资源
+   * 拆成独立文件，体积不涨、字体也不受内联上限约束。
+   */
+  const exportPackage = () => void run(async () => {
+    const result = await project.exportHtmlPackage({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
+    const encoder = new TextEncoder();
+    const entries = [
+      { path: PACKAGE_DOCUMENT_NAME, bytes: encoder.encode(result.document) },
+      ...result.files.map(file => ({ path: file.path, bytes: file.bytes })),
+    ];
+    downloadBytes(`${exportFilename}.zip`, createZip(entries), "application/zip");
+    setExportReport({ format: "html", diagnostics: result.diagnostics });
+    setMessage(`资源包已导出${exportScopeLabel} · ${result.files.length} 个资源文件 · ${result.diagnostics.length} 条诊断`);
   });
   const exportSvg = () => void run(async () => {
     const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
@@ -2227,6 +2246,14 @@ function App() {
         </Tabs.Content>
         <Tabs.Content value="export" className="inspector-body">
           <section className="inspector-section">
+            <h2>导出交付物</h2>
+            <p className="field-hint">「导出 HTML」产出单个自包含文件（图片与字体内联，体积涨约三分之一）；「资源包」把图片与字体拆成独立文件、体积不涨，字体也不受内联上限约束。</p>
+            <div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6 }}>
+              <Tooltip label="导出单个自包含的 HTML 文件"><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />导出 HTML</button></Tooltip>
+              <Tooltip label="导出资源包（HTML + 图片/字体文件，打成 ZIP）"><button disabled={busy} onClick={exportPackage}><Icon name="exportPackage" />导出资源包</button></Tooltip>
+            </div>
+          </section>
+          <section className="inspector-section">
             <h2>预览交付物</h2>
             <div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
               <Tooltip label="在隔离沙箱里预览 HTML 交付物"><button disabled={busy} onClick={previewHtml}><Icon name="exportHtml" />预览 HTML</button></Tooltip>
@@ -2636,6 +2663,8 @@ function buildExposedProperty(propertyId: string, name: string, field: Component
   }
 }
 function downloadFile(name: string, content: string, type: string): void { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
+/** 下载二进制产物（ZIP 等）。 */
+function downloadBytes(name: string, bytes: Uint8Array, type: string): void { const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
 
 const container = document.getElementById("root")! as HTMLElement & { __studioRoot?: ReturnType<typeof createRoot> };
 const root = container.__studioRoot ?? createRoot(container);

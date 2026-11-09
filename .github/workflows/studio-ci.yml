@@ -61,6 +61,9 @@ jobs:
       # 端到端：版本并排对比。对着构建产物跑——导入 fixture、用真实按键造出第二个
       # 版本、点开两栏、逐点比对两栏内容。纯函数测不出「两栏是不是同一交付物」。
       - run: npm run visual:compare:probe -- --require-browser
+      # 端到端：资产打包。真实应用里插一张真 PNG → 点「导出资源包」→ 把下载下来的
+      # ZIP 读回来核对条目、引用与图片字节。
+      - run: npm run visual:package:probe -- --require-browser
 
   budgets:
     name: 性能预算（layout / export / paint）

@@ -50,6 +50,7 @@ import {
   MousePointer2,
   PanelLeft,
   PanelRight,
+  Package,
   Play,
   Pencil,
   PenTool,
@@ -98,6 +99,8 @@ export const ICONS = {
   import: Upload,
   /** 版本并排对比。 */
   compareVersions: Columns2,
+  /** 资源包（HTML + 资源文件，打成 ZIP）。 */
+  exportPackage: Package,
 
   // 页面
   page: FilePlus,

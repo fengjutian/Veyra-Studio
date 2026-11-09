@@ -1,4 +1,5 @@
 export * from "./studio-project";
+export * from "./asset-package";
 export * from "./assets";
 export * from "./boolean-engine";
 export * from "./font-faces";

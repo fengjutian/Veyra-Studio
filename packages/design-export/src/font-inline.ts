@@ -160,6 +160,30 @@ export function fontFaceCss(font: InlineFont): string {
 }
 
 /**
+ * 包内相对路径的 `@font-face` 规则。
+ *
+ * 与 {@link fontFaceCss} 只差一处：`src` 指向包里的文件，而不是 data URI。
+ *
+ * 打包交付物里字体是独立文件，所以**不受内联上限约束**——1 MB 的上限是为了
+ * 控制 base64 膨胀（体积涨约 33%），外链文件没有这个问题。规格见
+ * `docs/asset-packaging.md`。
+ *
+ * `path` 必须是包内相对路径（`./fonts/Inter-400.woff2`）：绝对路径或带 scheme
+ * 的地址会让交付物跑到包外面去。
+ */
+export function packagedFontFaceCss(font: InlineFont, path: string): string {
+  return [
+    "@font-face {",
+    `  font-family: ${cssFontFamily(font.family)};`,
+    `  src: url("${path}") format("${fontFormat(font.mime)}");`,
+    `  font-weight: ${font.weight};`,
+    `  font-style: ${font.style};`,
+    "  font-display: swap;",
+    "}",
+  ].join("\n");
+}
+
+/**
  * 把字体整理成可内联的结果。
  *
  * 超过上限的不内联，改为记 note——「字会变」这件事必须让人看见。
