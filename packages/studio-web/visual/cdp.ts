@@ -7,7 +7,7 @@
  *
  * 也因此它很薄：只实现 flat session 模式下用得到的那几个域。
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
