@@ -72,6 +72,18 @@ import { HistoryPanel } from "./history-panel";
 import { readStorageEstimate, storagePercent, type StorageEstimate } from "./storage-estimate";
 import { DEFAULT_HISTORY_KEEP, storageUsageOverview, type StorageUsageOverview } from "./storage-usage";
 import { StoragePanel } from "./storage-panel";
+import { DiskBackupPanel } from "./disk-backup-panel";
+import { DiskBackupRunner, type DiskBackupStatus } from "./disk-backup";
+import {
+  backupDirectoryFromHandle,
+  clearSavedBackupDirectory,
+  ensureDirectoryPermission,
+  loadSavedBackupDirectory,
+  pickBackupDirectory,
+  rememberLastBackupSavedAt,
+  saveBackupDirectory,
+  supportsDiskBackup,
+} from "./disk-backup-browser";
 import { inspectorTabs, type InspectorTabId } from "./inspector-tabs";
 import { forgetAssetUrl, loadAssetUrl } from "./asset-url";
 import { Icon } from "./icons";
@@ -162,6 +174,12 @@ function App() {
   const [baselineRevision, setBaselineRevision] = useState<number>();
   // 自动备份列表与浏览器存储用量。
   const [backups, setBackups] = useState<BackupSummary[]>([]);
+  // 磁盘备份：是否支持、接上的目录名、最近一次写入状态。
+  const [diskBackup, setDiskBackup] = useState<DiskBackupStatus>({ state: "disabled" });
+  const [diskBackupDirectory, setDiskBackupDirectory] = useState<string>();
+  const diskBackupSupported = useMemo(() => supportsDiskBackup(), []);
+  const diskBackupRunner = useRef<DiskBackupRunner | null>(null);
+  if (!diskBackupRunner.current) diskBackupRunner.current = new DiskBackupRunner();
   const [storage, setStorage] = useState<StorageEstimate>();
   // 逐项目的存储占用与清理清单。
   const [storageUsage, setStorageUsage] = useState<StorageUsageOverview>();
@@ -228,6 +246,24 @@ function App() {
   };
 
   useEffect(() => { void initialize(repository).then(async ({ project: value }) => { const snapshot = value.snapshot(); setProject(value); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); await refreshHistory(snapshot.id); setMissingAssets(await findMissingAssets(repository, snapshot)); setBackups(await backupStore.list(snapshot.id)); setStorage(await readStorageEstimate()); setStorageUsage(await loadStorageUsage(snapshot.id)); setMessage("就绪"); }).catch(error => setMessage(String(error))); }, []);
+  // 恢复上次选的备份目录。这里只能**查**权限：没有用户手势时浏览器不允许申请，
+  // 所以权限被收回后要等用户再点一次「立即备份」或重新选择目录。
+  useEffect(() => {
+    if (!diskBackupSupported) return;
+    let cancelled = false;
+    void (async () => {
+      const saved = await loadSavedBackupDirectory();
+      if (!saved || cancelled) return;
+      if (!(await ensureDirectoryPermission(saved.handle))) return;
+      const runner = diskBackupRunner.current!;
+      runner.use(backupDirectoryFromHandle(saved.handle));
+      runner.restoreLastSavedAt(saved.lastSavedAt);
+      if (cancelled) return;
+      setDiskBackupDirectory(saved.handle.name);
+      setDiskBackup({ state: "idle", lastSavedAt: saved.lastSavedAt });
+    })().catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [diskBackupSupported]);
   // 页面被关闭或切到后台时立刻把待写快照落盘，避免最后几次编辑留在内存里。
   useEffect(() => installAutosaveFlush(), []);
   // 历史版本列表和项目摘要：等自动保存真正落盘之后再刷新，否则看到的还是上一版。
@@ -248,10 +284,19 @@ function App() {
     let cancelled = false;
     void (async () => {
       const existing = await backupStore.list(snapshotProjectId);
-      if (cancelled || !shouldWriteBackup(existing[0], new Date())) return;
-      await backupStore.write(project.snapshot());
-      const next = await backupStore.list(snapshotProjectId);
-      if (!cancelled) setBackups(next);
+      // 两种备份各自节流：IndexedDB 那边跳过了，磁盘这边仍可能该写。
+      if (!cancelled && shouldWriteBackup(existing[0], new Date())) {
+        await backupStore.write(project.snapshot());
+        const next = await backupStore.list(snapshotProjectId);
+        if (!cancelled) setBackups(next);
+      }
+      const runner = diskBackupRunner.current;
+      if (!runner?.target || cancelled) return;
+      const status = await runner.backup(project.snapshot());
+      if (!cancelled) setDiskBackup(status);
+      if (status.state === "saved" && status.lastSavedAt) {
+        void rememberLastBackupSavedAt(status.lastSavedAt).catch(() => undefined);
+      }
     })().catch(() => undefined);
     return () => { cancelled = true; };
   }, [autosave.state, autosave.lastSavedAt, snapshotProjectId, project]);
@@ -587,6 +632,42 @@ function App() {
     const snapshot = await backupStore.read(document.id, row.createdAt);
     downloadFile(`${safeFilename(snapshot.meta.name)}-备份-r${row.revision}.json`, JSON.stringify(snapshot, null, 2), "application/json");
     setMessage(`备份 r${row.revision} 已下载`);
+  });
+  /** 选一个本地目录作为磁盘备份目标（需要用户手势，所以只能在点击里调）。 */
+  const enableDiskBackup = () => void run(async () => {
+    const handle = await pickBackupDirectory();
+    if (!handle) return; // 用户取消不是错误。
+    if (!(await ensureDirectoryPermission(handle, true))) {
+      setMessage("没有拿到该目录的写入权限，备份未启用");
+      return;
+    }
+    const runner = diskBackupRunner.current!;
+    runner.use(backupDirectoryFromHandle(handle));
+    await saveBackupDirectory(handle);
+    setDiskBackupDirectory(handle.name);
+    const current = documentRef.current;
+    const status = current ? await runner.backup(current, { force: true }) : { state: "idle" as const };
+    setDiskBackup(status);
+    if (status.state === "saved" && status.lastSavedAt) await rememberLastBackupSavedAt(status.lastSavedAt).catch(() => undefined);
+    setMessage(status.state === "saved" ? `磁盘备份已启用：${handle.name}` : `磁盘备份已启用：${handle.name}（下次自动保存时写入）`);
+  });
+  /** 立刻写一份，不走节流。 */
+  const backupToDiskNow = () => void run(async () => {
+    const current = documentRef.current;
+    const runner = diskBackupRunner.current;
+    if (!current || !runner?.target) return;
+    const status = await runner.backup(current, { force: true });
+    setDiskBackup(status);
+    if (status.state === "saved" && status.lastSavedAt) await rememberLastBackupSavedAt(status.lastSavedAt).catch(() => undefined);
+    setMessage(status.state === "saved" ? `已备份到 ${diskBackupDirectory}` : `备份失败：${status.error ?? "未知原因"}`);
+  });
+  /** 断开目录：只删句柄记录，磁盘上已经写出的备份文件不动。 */
+  const disableDiskBackup = () => void run(async () => {
+    diskBackupRunner.current?.use(undefined);
+    await clearSavedBackupDirectory().catch(() => undefined);
+    setDiskBackupDirectory(undefined);
+    setDiskBackup({ state: "disabled" });
+    setMessage("已断开磁盘备份");
   });
   const restoreBackup = (row: BackupSummary) => void run(async () => {
     const confirmation = backupRestoreConfirmation(row);
@@ -1864,6 +1945,18 @@ function App() {
           <section className="inspector-section">
             <h2>存储用量</h2>
             <StoragePanel estimate={storage} usage={storageUsage} disabled={busy} onRefresh={() => { refreshStorage(); refreshStorageUsage(); }} onExportBackup={exportJson} onTrimHistory={trimProjectHistory} onDeleteProject={deleteStorageProject} />
+          </section>
+          <section className="inspector-section">
+            <h2>磁盘备份</h2>
+            <DiskBackupPanel
+              supported={diskBackupSupported}
+              directoryName={diskBackupDirectory}
+              status={diskBackup}
+              disabled={busy}
+              onEnable={enableDiskBackup}
+              onDisable={disableDiskBackup}
+              onBackupNow={backupToDiskNow}
+            />
           </section>
           <section className="inspector-section">
             <TokenPanel tokens={document.tokens} bindings={selected?.bindings} disabled={busy} canBind={Boolean(selected)} onCreate={createToken} onUpdate={updateToken} onBind={bindToken} onUnbind={unbindToken} onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))} />
