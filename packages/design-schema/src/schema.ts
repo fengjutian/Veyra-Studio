@@ -435,6 +435,8 @@ export const designDocumentSchema = z.object({
         letterSpacing: z.number().finite().optional(),
       }),
     }),
+    // 别名：值是被引用的 token 名；目标存在性与环由 `validateDocument()` 检查。
+    z.object({ type: z.literal("alias"), value: z.string().min(1) }),
   ])),
   assets: z.record(id, z.object({
     id,

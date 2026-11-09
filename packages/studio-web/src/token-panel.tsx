@@ -1,4 +1,5 @@
 import type { PropertyBindings, TokenValue } from "@ufira/design-schema";
+import { effectiveTokenType, groupTokens } from "./token-groups";
 import { Icon } from "./icons";
 import { Tooltip } from "./ui/tooltip";
 
@@ -16,7 +17,7 @@ export interface TokenPanelProps {
 }
 
 /** 每种 token 类型可以绑定的属性。 */
-const BINDABLE: Record<TokenValue["type"], Array<keyof PropertyBindings>> = {
+const BINDABLE: Record<Exclude<TokenValue["type"], "alias">, Array<keyof PropertyBindings>> = {
   color: ["fill", "stroke"],
   number: ["radius", "spacing"],
   typography: ["typography"],
@@ -32,12 +33,19 @@ const PROPERTY_LABELS: Record<keyof PropertyBindings, string> = {
   radius: "圆角",
 };
 
-/** token 值的一行预览；复合值（字体）拼成可读的一段。 */
+/**
+ * 别名链的最终类型。
+ *
+ * 绑定下拉要按**最终类型**给选项：`text.primary`（alias → 颜色）应该能绑填充。
+ * 链断了就按别名本身处理（不给绑定入口），与校验层的判定保持一致。
+ */
+/** token 值的一行预览；复合值（字体）拼成可读的一段，别名显示指向目标。 */
 function tokenPreview(token: TokenValue): string {
   if (token.type === "typography") {
     const { fontFamily, fontSize, lineHeight, fontWeight } = token.value;
     return `${fontFamily} ${fontSize}px${lineHeight ? `/${lineHeight}` : ""}${fontWeight ? ` · ${fontWeight}` : ""}`;
   }
+  if (token.type === "alias") return `→ ${token.value}`;
   return String(token.value);
 }
 
@@ -61,38 +69,44 @@ export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onUp
       </div>
       {entries.length === 0 && <p className="empty-hint">还没有 token。新增颜色或数值 token 后可以绑定到选中节点。</p>}
       <div className="token-panel-list">
-        {entries.map(([name, token]) => {
-          const property = boundProperty(name);
-          const bindable = BINDABLE[token.type] ?? [];
-          return (
-            <div className="token-panel-row" key={name}>
-              {token.type === "color"
-                ? <span className="token-swatch" style={{ background: String(token.value) }} />
-                : <span className="token-swatch token-swatch-value">{tokenPreview(token)}</span>}
-              <span className="token-panel-name" title={`${name}: ${tokenPreview(token)}`}>{name}</span>
-              <select
-                className="token-bind-select"
-                aria-label={`绑定 ${name}`}
-                disabled={disabled || !canBind}
-                value={property ?? ""}
-                onChange={event => {
-                  const next = event.target.value as keyof PropertyBindings | "";
-                  if (property && (!next || next !== property)) onUnbind(property);
-                  if (next) onBind(next, name);
-                }}
-              >
-                <option value="">不绑定</option>
-                {bindable.map(item => <option key={item} value={item}>{PROPERTY_LABELS[item]}</option>)}
-              </select>
-              <Tooltip label="修改 token 值">
-                <button className="icon-only" aria-label={`修改 ${name}`} disabled={disabled} onClick={() => onUpdate(name, token)}><Icon name="tokenEdit" /></button>
-              </Tooltip>
-              <Tooltip label="删除 token">
-                <button className="icon-only" aria-label={`删除 ${name}`} disabled={disabled} onClick={() => onDelete(name)}><Icon name="tokenRemove" /></button>
-              </Tooltip>
-            </div>
-          );
-        })}
+        {groupTokens(tokens).map(group => (
+          <div className="token-group" key={group.id || "ungrouped"}>
+            <h3 className="token-group-title">{group.label}</h3>
+            {group.entries.map(([name, token]) => {
+              const property = boundProperty(name);
+              const resolvedType = effectiveTokenType(tokens, name);
+              const bindable = resolvedType ? BINDABLE[resolvedType as Exclude<TokenValue["type"], "alias">] ?? [] : [];
+              return (
+                <div className="token-panel-row" key={name}>
+                  {token.type === "color"
+                    ? <span className="token-swatch" style={{ background: String(token.value) }} />
+                    : <span className="token-swatch token-swatch-value">{tokenPreview(token)}</span>}
+                  <span className="token-panel-name" title={`${name}: ${tokenPreview(token)}`}>{name}</span>
+                  <select
+                    className="token-bind-select"
+                    aria-label={`绑定 ${name}`}
+                    disabled={disabled || !canBind}
+                    value={property ?? ""}
+                    onChange={event => {
+                      const next = event.target.value as keyof PropertyBindings | "";
+                      if (property && (!next || next !== property)) onUnbind(property);
+                      if (next) onBind(next, name);
+                    }}
+                  >
+                    <option value="">不绑定</option>
+                    {bindable.map(item => <option key={item} value={item}>{PROPERTY_LABELS[item]}</option>)}
+                  </select>
+                  <Tooltip label="修改 token 值">
+                    <button className="icon-only" aria-label={`修改 ${name}`} disabled={disabled} onClick={() => onUpdate(name, token)}><Icon name="tokenEdit" /></button>
+                  </Tooltip>
+                  <Tooltip label="删除 token">
+                    <button className="icon-only" aria-label={`删除 ${name}`} disabled={disabled} onClick={() => onDelete(name)}><Icon name="tokenRemove" /></button>
+                  </Tooltip>
+                </div>
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );

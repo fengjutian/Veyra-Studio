@@ -11,7 +11,8 @@ import {
   type BindingRequirement,
   type ComponentPropertyField,
 } from "./component-properties";
-import type { ComponentPropertyBindings, DesignDocument, NodeId } from "./types";
+import { resolveTokenTarget } from "./tokens";
+import type { ComponentPropertyBindings, DesignDocument, NodeId, TokenValue } from "./types";
 
 export class DocumentValidationError extends Error {
   constructor(public readonly issues: string[]) {
@@ -33,6 +34,28 @@ export function validateDocument(input: unknown): DesignDocument {
   if (new Set(document.pageOrder).size !== document.pageOrder.length) issues.push("pageOrder contains duplicate IDs");
   for (const pageId of document.pageOrder) if (!document.pages[pageId]) issues.push(`pageOrder references missing page ${pageId}`);
   for (const pageId of pageIds) if (!document.pageOrder.includes(pageId)) issues.push(`page ${pageId} is missing from pageOrder`);
+
+  // 别名 token：目标必须存在，链上不能出现环。渲染时解析失败会退回节点值，
+  // 但「悄悄退回」会让设计系统分层失效却不报错，所以在文档校验阶段就拒绝。
+  for (const [name, token] of Object.entries(document.tokens)) {
+    if (token.type !== "alias") continue;
+    if (!document.tokens[token.value]) {
+      issues.push(`token ${name} alias references missing token ${token.value}`);
+      continue;
+    }
+    const seen = new Set<string>([name]);
+    let current: string | undefined = token.value;
+    while (current) {
+      if (seen.has(current)) {
+        issues.push(`token ${name} has a cyclic alias chain`);
+        break;
+      }
+      seen.add(current);
+      const next: TokenValue | undefined = document.tokens[current];
+      if (!next || next.type !== "alias") break;
+      current = next.value;
+    }
+  }
 
   const claimed = new Map<NodeId, string>();
   const claim = (childId: NodeId, owner: string) => {
@@ -77,9 +100,10 @@ export function validateDocument(input: unknown): DesignDocument {
     if (node.type === "image" && !document.assets[node.assetId]) issues.push(`image ${nodeId} references missing asset ${node.assetId}`);
     if (node.type === "instance" && !document.components[node.componentId]) issues.push(`instance ${nodeId} references missing component ${node.componentId}`);
     for (const [property, tokenName] of Object.entries(node.bindings ?? {})) {
-      const token = document.tokens[tokenName];
-      if (!token) issues.push(`node ${nodeId} ${property} binding references missing token ${tokenName}`);
-      else if (!bindingAccepts(property, token.type)) issues.push(`node ${nodeId} ${property} binding cannot use ${token.type} token ${tokenName}`);
+      // 绑到别名时按**最终类型**判定：`text.primary` 是 alias → 颜色，能绑填充。
+      const resolved = resolveTokenTarget(document, tokenName);
+      if (!resolved) issues.push(`node ${nodeId} ${property} binding references missing or cyclic token ${tokenName}`);
+      else if (!bindingAccepts(property, resolved.token.type)) issues.push(`node ${nodeId} ${property} binding cannot use ${resolved.token.type} token ${tokenName}`);
       // 字体样式只对文本节点有意义；绑在容器上不会生效，早报比静默忽略好。
       else if (property === "typography" && node.type !== "text") issues.push(`node ${nodeId} typography binding requires a text node`);
     }

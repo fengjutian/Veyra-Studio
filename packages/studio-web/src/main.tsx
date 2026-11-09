@@ -1255,13 +1255,13 @@ function App() {
   const createToken = () => void run(async () => {
     const type = await askChoice({
       title: "新增 Token",
-      description: "颜色 token 绑定填充/描边；数值 token 绑定圆角/自动布局间距；字体 token 绑定文本节点的整套文字样式。",
-      options: [{ value: "color", label: "颜色" }, { value: "number", label: "数值" }, { value: "typography", label: "字体" }],
+      description: "颜色 token 绑定填充/描边；数值 token 绑定圆角/自动布局间距；字体 token 绑定文本节点；别名 token 指向另一个 token（语义分层）。",
+      options: [{ value: "color", label: "颜色" }, { value: "number", label: "数值" }, { value: "typography", label: "字体" }, { value: "alias", label: "别名" }],
     });
     if (!type) return;
     const name = (await askText({
       title: "Token 名称",
-      defaultValue: type === "color" ? "color.primary" : type === "number" ? "space.md" : "text.body",
+      defaultValue: type === "color" ? "color.primary" : type === "number" ? "space.md" : type === "typography" ? "text.body" : "text.primary",
     }))?.trim();
     if (!name) return;
     if (type === "color") {
@@ -1276,6 +1276,22 @@ function App() {
       await execute([{ type: "token.upsert", payload: { name, token: { type: "typography", value } } }]);
       return;
     }
+    if (type === "alias") {
+      const target = (await askText({
+        title: "指向哪个 token",
+        defaultValue: Object.keys(document.tokens)[0] ?? "",
+        validate: input => {
+          const value = input?.trim();
+          if (!value) return "别名必须指向一个已存在的 token";
+          if (value === name) return "别名不能指向自己";
+          if (!document.tokens[value]) return `没有名为 ${value} 的 token`;
+          return undefined;
+        },
+      }))?.trim();
+      if (!target) return;
+      await execute([{ type: "token.upsert", payload: { name, token: { type: "alias", value: target } } }]);
+      return;
+    }
     const value = (await askText({ title: "数值", defaultValue: "16", validate: validateNumber }))?.trim();
     if (!value) return;
     await execute([{ type: "token.upsert", payload: { name, token: { type: "number", value: Number(value) } } }]);
@@ -1285,6 +1301,22 @@ function App() {
       const next = await askTypographyValue(askForm, token.value);
       if (!next) return;
       await execute([{ type: "token.upsert", payload: { name, token: { type: "typography", value: next } } }]);
+      return;
+    }
+    if (token.type === "alias") {
+      const target = (await askText({
+        title: "别名目标",
+        defaultValue: token.value,
+        validate: input => {
+          const value = input?.trim();
+          if (!value) return "别名必须指向一个已存在的 token";
+          if (value === name) return "别名不能指向自己";
+          if (!document.tokens[value]) return `没有名为 ${value} 的 token`;
+          return undefined;
+        },
+      }))?.trim();
+      if (!target || target === token.value) return;
+      await execute([{ type: "token.upsert", payload: { name, token: { type: "alias", value: target } } }]);
       return;
     }
     const current = String(token.value);

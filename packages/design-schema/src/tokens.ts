@@ -14,15 +14,48 @@ export function resolveToken(document: DesignDocument, name: string | undefined)
   return name ? document.tokens[name] : undefined;
 }
 
+/**
+ * 别名链的最大深度。
+ *
+ * 语义 token 套一层就够，「主题 → 语义 → 基础」最多三层；16 层只是防御性上限，
+ * 真正防环靠 `seen` 集合与文档校验。
+ */
+export const MAX_TOKEN_ALIAS_DEPTH = 16;
+
+/**
+ * 沿别名链解析到最终 token。
+ *
+ * 返回最终 token 与它的名字；断链、环、超深都返回 `undefined`（调用方退回节点值）。
+ * 这是**唯一**的别名解析入口——`tokenNumber` / `tokenColor` / `tokenTypography`
+ * 都经过它，因此绑定校验与渲染不会对「别名指向什么类型」有两套答案。
+ */
+export function resolveTokenTarget(
+  document: DesignDocument,
+  name: string | undefined,
+): { name: string; token: TokenValue } | undefined {
+  let current = name;
+  const seen = new Set<string>();
+  for (let depth = 0; depth <= MAX_TOKEN_ALIAS_DEPTH; depth++) {
+    if (!current) return undefined;
+    if (seen.has(current)) return undefined;
+    seen.add(current);
+    const token = document.tokens[current];
+    if (!token) return undefined;
+    if (token.type !== "alias") return { name: current, token };
+    current = token.value;
+  }
+  return undefined;
+}
+
 /** 数值 token（间距、圆角、字号等）。 */
 export function tokenNumber(document: DesignDocument, name: string | undefined): number | undefined {
-  const token = resolveToken(document, name);
+  const token = resolveTokenTarget(document, name)?.token;
   return token?.type === "number" && typeof token.value === "number" ? token.value : undefined;
 }
 
 /** 颜色 token。 */
 export function tokenColor(document: DesignDocument, name: string | undefined): string | undefined {
-  const token = resolveToken(document, name);
+  const token = resolveTokenTarget(document, name)?.token;
   return token?.type === "color" && typeof token.value === "string" ? token.value : undefined;
 }
 
@@ -80,7 +113,7 @@ export function resolveGap(document: DesignDocument, node: DesignNode): number {
 
 /** 字体 token 的值；绑的不是 typography token 时返回 `undefined`。 */
 export function tokenTypography(document: DesignDocument, name: string | undefined): TypographyValue | undefined {
-  const token = resolveToken(document, name);
+  const token = resolveTokenTarget(document, name)?.token;
   return token?.type === "typography" ? token.value : undefined;
 }
 

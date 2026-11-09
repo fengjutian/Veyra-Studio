@@ -548,11 +548,19 @@ export interface TypographyValue {
  * 设计 token。
  *
  * `color` / `number` / `string` 是早期的三种标量；`typography` 是复合值，
- * 绑定到文本节点后**覆盖**节点的文字样式（见 `resolveTypography()`）。
+ * 绑定到文本节点后**覆盖**节点的文字样式（见 `resolveTypography()`）；
+ * `alias` 指向另一个 token，解析时沿链取最终值（见 `resolveTokenTarget()`）。
  */
 export type TokenValue =
   | { type: "color" | "number" | "string"; value: string | number }
-  | { type: "typography"; value: TypographyValue };
+  | { type: "typography"; value: TypographyValue }
+  /**
+   * 别名：值就是目标 token 的名字。
+   *
+   * 语义对齐设计系统里的「语义 token → 基础 token」分层（`text.primary` →
+   * `gray.900`）。解析时沿链取最终值，环与断链都在文档校验阶段拒绝。
+   */
+  | { type: "alias"; value: string };
 
 /**
  * 资源的来源与授权信息。
