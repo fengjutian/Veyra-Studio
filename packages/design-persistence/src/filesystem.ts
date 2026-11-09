@@ -146,8 +146,17 @@ export class FileSystemProjectRepository implements ProjectRepository {
   }
 
   async getAsset(projectId: string, hash: string): Promise<Uint8Array | undefined> {
+    // 读路径不能因为哈希格式不对就崩：那只是说明「这份资产不在这里」。
+    // 哈希非法（例如从别处导入的文档）按「读不到」处理，让导出与缺失资产
+    // 检查给出诊断，而不是整条流程失败。
+    let normalized: string;
     try {
-      return await readFile(join(this.projectDirectory(projectId), "assets", normalizeAssetHash(hash)));
+      normalized = normalizeAssetHash(hash);
+    } catch {
+      return undefined;
+    }
+    try {
+      return await readFile(join(this.projectDirectory(projectId), "assets", normalized));
     } catch (error: any) {
       if (error?.code === "ENOENT") return undefined;
       throw error;
@@ -155,8 +164,15 @@ export class FileSystemProjectRepository implements ProjectRepository {
   }
 
   async deleteAsset(projectId: string, hash: string): Promise<void> {
+    let normalized: string;
     try {
-      await unlink(join(this.projectDirectory(projectId), "assets", normalizeAssetHash(hash)));
+      normalized = normalizeAssetHash(hash);
+    } catch {
+      // 哈希非法：这份资产本来就不在，等价于已经删掉了。
+      return;
+    }
+    try {
+      await unlink(join(this.projectDirectory(projectId), "assets", normalized));
     } catch (error: any) {
       // 字节本来就不在，等价于已经删掉了。
       if (error?.code !== "ENOENT") throw error;

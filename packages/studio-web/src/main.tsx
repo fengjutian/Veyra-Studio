@@ -4,7 +4,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, type AiPlanPreview, type AiPlanner } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
-import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, reconstructDocumentAt } from "@ufira/studio-application";
+import { StudioProject, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -58,10 +58,12 @@ import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
 import { exportPageToPng, downloadDataUrl } from "./png-export";
 import type { ExportDiagnostic } from "@ufira/design-export";
+import { exportPageToHtml } from "@ufira/design-export";
 import { ExportDiagnosticsPanel } from "./export-panel";
 import type { ExportFormat } from "./export-report";
 import { ExportPreviewDialog } from "./export-preview-dialog";
 import { fitPreviewSize, previewTitle, svgPreviewDataUrl, type ExportPreview } from "./export-preview";
+import { comparePaneTitles, planVersionCompareScope } from "./version-compare";
 import { assetIdForHash, fitImageBox, fontFamilyFromFileName, fontFileError, fontMimeFromFileName, imageFileError, readImageSize, sha256Hex } from "./assets";
 import { assetLabel, formatBytes, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
 import { readFontMetadata } from "./font-metadata";
@@ -202,6 +204,8 @@ function App() {
   const [exportReport, setExportReport] = useState<{ format: ExportFormat; diagnostics: ExportDiagnostic[] }>();
   // 隔离预览：弹窗里渲染导出器真实产物。
   const [exportPreview, setExportPreview] = useState<ExportPreview>();
+  // 并排对比的左侧（历史版本）产物。有它时预览弹窗渲染成两栏。
+  const [comparePreview, setComparePreview] = useState<{ title: string; preview: ExportPreview }>();
   const [previewOpen, setPreviewOpen] = useState(false);
   // 原型预览：非空时进入全屏预览（Esc 退出）。这是视图状态，不写文档。
   const [prototypeScreenId, setPrototypeScreenId] = useState<string>();
@@ -1154,6 +1158,7 @@ function App() {
   const previewHtml = () => void run(async () => {
     const result = await project.exportHtmlWithAssets(exportOptions());
     setExportReport({ format: "html", diagnostics: result.diagnostics });
+    setComparePreview(undefined);
     setExportPreview({ format: "html", title: previewTitle("html", exportScopeLabel), content: { kind: "html", html: result.document } });
     setPreviewOpen(true);
   });
@@ -1161,6 +1166,7 @@ function App() {
     const result = await project.exportSvgWithAssets(exportOptions());
     setExportReport({ format: "svg", diagnostics: result.diagnostics });
     const size = fitPreviewSize(exportTarget.viewport);
+    setComparePreview(undefined);
     setExportPreview({ format: "svg", title: previewTitle("svg", exportScopeLabel), content: { kind: "image", dataUrl: svgPreviewDataUrl(result.svg), ...size } });
     setPreviewOpen(true);
   });
@@ -1170,8 +1176,61 @@ function App() {
     const result = await exportPageToPng(snapshot, { ...exportOptions(), scale: 2, resolveAsset });
     setExportReport({ format: "png", diagnostics: result.diagnostics });
     const size = fitPreviewSize(result);
+    setComparePreview(undefined);
     setExportPreview({ format: "png", title: previewTitle("png", exportScopeLabel), content: { kind: "image", dataUrl: result.dataUrl, ...size } });
     setPreviewOpen(true);
+  });
+
+  /**
+   * 把一份文档（可能是历史版本）导成 HTML 预览产物。
+   *
+   * 走的是和真正下载完全一样的导出路径，只是把产物塞进弹窗而不是存成文件——
+   * 对比看到的必须就是交付物本身。
+   */
+  const buildHtmlPreview = async (source: DesignDocument, scope: { pageId: string; nodeIds?: string[] }) => {
+    const resolveAsset = await createAssetResolver(repository, source, scope.pageId, scope.nodeIds);
+    const fonts = await prepareFontFaces(repository, source, { pageId: scope.pageId, nodeIds: scope.nodeIds, themeId: activeThemeId });
+    return exportPageToHtml(source, {
+      pageId: scope.pageId,
+      viewport: exportTarget.viewport,
+      // 范围退回整页时不能再带选区的原点，否则两侧画的不是同一个位置。
+      origin: scope.nodeIds ? exportTarget.origin : undefined,
+      title: source.meta.name,
+      nodeIds: scope.nodeIds,
+      themeId: activeThemeId,
+      resolveAsset,
+      fontFaces: fonts.css ? [fonts.css] : [],
+    });
+  };
+
+  /**
+   * 版本并排对比：左边历史版本、右边当前版本。
+   *
+   * 两侧用**同一份范围**导出，否则左右根本不是同一件事，看不出差异。范围对不
+   * 上时（历史版本里没有这个对象、还没有这一页）会退回整页并把话说出来。
+   */
+  const previewCompareVersion = (row: SnapshotRow) => void run(async () => {
+    const historical = await repository.readSnapshot(document.id, row.revision);
+    const result = planVersionCompareScope({
+      currentNodeIds: exportTarget.nodeIds,
+      currentPageId: activePageId,
+      current: document,
+      historical,
+    });
+    if (result.ok === false) {
+      setMessage(result.reason);
+      return;
+    }
+    const plan = result.plan;
+    const [left, right] = await Promise.all([
+      buildHtmlPreview(historical, { pageId: plan.pageId, nodeIds: plan.nodeIds }),
+      buildHtmlPreview(document, { pageId: plan.pageId, nodeIds: plan.nodeIds }),
+    ]);
+    const titles = comparePaneTitles({ label: row.label, updatedAt: row.updatedAt });
+    setComparePreview({ title: titles.historical, preview: { format: "html", title: titles.historical, content: { kind: "html", html: left.document } } });
+    setExportPreview({ format: "html", title: titles.current, content: { kind: "html", html: right.document } });
+    setPreviewOpen(true);
+    setMessage(plan.note ? `版本对比：${plan.note}` : `版本对比：${titles.historical} ↔ 当前`);
   });
   const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
   /**
@@ -1866,6 +1925,8 @@ function App() {
   const previewStale = preview?.baseRevision !== document.revision;
   const componentSummaries = listComponents(document);
   const versionRows = snapshotRows(snapshots);
+  // 并排对比只列历史版本：当前版本和它自己对比没有意义。
+  const compareVersionRows = versionRows.filter(row => !row.current);
   // 分段标题的上下文与角标来自纯函数：哪个分段有需要处理的条目，就在标签上显示数字。
   const inspectorTabRows = inspectorTabs({
     selectionCount: selectedIds.length,
@@ -2174,6 +2235,19 @@ function App() {
             </div>
           </section>
           <section className="inspector-section">
+            <h2>版本对比</h2>
+            <p className="field-hint">选一个历史版本，和当前版本并排看同一份交付物：左边历史，右边当前。</p>
+            <div className="snapshot-list">{compareVersionRows.length
+              ? compareVersionRows.map(row => <div className="snapshot-row" key={row.revision}>
+                <span className="snapshot-label">{row.label}</span>
+                <span className="snapshot-time" title={row.updatedAt}>{formatSnapshotTime(row.updatedAt)}</span>
+                <Tooltip label={`和当前版本并排对比 ${row.label}`}>
+                  <button className="icon-only" aria-label={`和当前版本并排对比 ${row.label}`} disabled={busy} onClick={() => previewCompareVersion(row)}><Icon name="compareVersions" /></button>
+                </Tooltip>
+              </div>)
+              : <p className="empty-hint">还没有可对比的历史版本。改动落盘之后，这里会列出可以并排对比的版本。</p>}</div>
+          </section>
+          <section className="inspector-section">
             <h2>导出诊断</h2>
             <ExportDiagnosticsPanel format={exportReport?.format} diagnostics={exportReport?.diagnostics ?? []} onSelect={nodeId => { if (document.nodes[nodeId]) setSelectedIds([nodeId]); }} />
           </section>
@@ -2327,7 +2401,7 @@ function App() {
         <span className="inspector-foot-meta">{storage ? `存储 ${storagePercent(storage)}%` : "存储用量未知"}</span>
       </div>
     </aside>
-    <ExportPreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} preview={exportPreview} />
+    <ExportPreviewDialog open={previewOpen} onOpenChange={open => { setPreviewOpen(open); if (!open) setComparePreview(undefined); }} preview={exportPreview} compare={comparePreview} />
     {prototypeScreenId && <PrototypePreview document={document} repository={repository} projectId={document.id} startScreenId={prototypeScreenId} onExit={() => setPrototypeScreenId(undefined)} />}
   </div>;
 }

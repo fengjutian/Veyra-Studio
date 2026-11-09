@@ -197,6 +197,16 @@ export function repositoryContractTests(name: string, createFixture: () => Promi
     });
   });
 
+  test(`${name}: 哈希格式非法的资产按「读不到」处理，不抛错`, async () => {
+    await withRepository(async ({ repository }) => {
+      // 从别处导入的文档可能带着不是 SHA-256 的资产哈希。那只是说明这份字节
+      // 不在这里，不能让整条导出/资产检查流程崩掉——写入路径保持严格即可。
+      assert.equal(await repository.getAsset("project:1", "hash-sample"), undefined);
+      assert.equal(await repository.getAsset("project:1", ""), undefined);
+      await repository.deleteAsset?.("project:1", "hash-sample");
+    });
+  });
+
   test(`${name}: 旧格式文档在打开时被迁移并被记录`, async () => {
     await withRepository(async ({ repository, seed }) => {
       if (!seed) return;

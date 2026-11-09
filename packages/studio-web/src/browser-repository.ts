@@ -185,12 +185,28 @@ export class DexieProjectRepository implements ProjectRepository {
   }
 
   async getAsset(projectId: string, hash: string): Promise<Uint8Array | undefined> {
-    const record = await this.database.assets.get([projectId, normalizeAssetHash(hash)]);
+    // 读路径不能因为哈希格式不对就崩：那只是说明「这份资产不在这里」。
+    // 哈希非法（例如从别处导入的文档）按「读不到」处理，让导出与缺失资产
+    // 检查给出诊断，而不是整条流程失败。
+    let normalized: string;
+    try {
+      normalized = normalizeAssetHash(hash);
+    } catch {
+      return undefined;
+    }
+    const record = await this.database.assets.get([projectId, normalized]);
     return record ? new Uint8Array(record.bytes) : undefined;
   }
 
   async deleteAsset(projectId: string, hash: string): Promise<void> {
-    await this.database.assets.delete([projectId, normalizeAssetHash(hash)]);
+    let normalized: string;
+    try {
+      normalized = normalizeAssetHash(hash);
+    } catch {
+      // 哈希非法：这份资产本来就不在，等价于已经删掉了。
+      return;
+    }
+    await this.database.assets.delete([projectId, normalized]);
   }
 
   async recover(projectId: string): Promise<ProjectSnapshot> {

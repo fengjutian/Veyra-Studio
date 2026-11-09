@@ -29,6 +29,7 @@ import {
   Circle as CircleIcon,
   ClipboardPaste,
   Combine,
+  Columns2,
   Component as ComponentIcon,
   Copy,
   CopyPlus,
@@ -95,6 +96,8 @@ export const ICONS = {
   exportPng: FileImage,
   exportJson: Braces,
   import: Upload,
+  /** 版本并排对比。 */
+  compareVersions: Columns2,
 
   // 页面
   page: FilePlus,
