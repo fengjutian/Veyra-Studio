@@ -459,6 +459,12 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
             onCommit={text => { setTextSelection({ from: 0, to: 0 }); onPatchText({ text }); }}
           />
           <TextField label="字体" value={node.fontFamily} disabled={disabled} suggestions={fontSuggestions} onCommit={fontFamily => onPatchText({ fontFamily })} />
+          {node.bindings?.typography && (
+            <p className="empty-hint">
+              字体样式由 token「{node.bindings.typography}」控制，字体/字号/行高以它为准；
+              要改就在「数据 → 设计 Tokens」里改这份 token。
+            </p>
+          )}
           <NumberField label="字号" value={node.fontSize} disabled={disabled} onCommit={fontSize => onPatchText({ fontSize })} />
           <NumberField label="行高" value={node.lineHeight} disabled={disabled} onCommit={lineHeight => onPatchText({ lineHeight })} />
           <Segmented
