@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isValidVectorPath } from "./geometry";
 import { validateTextRuns } from "./rich-text";
 import { validateParagraphStyles } from "./paragraph-styles";
+import { isValidGridAreaName, parseGridAreaTemplate } from "./grid-areas";
 
 const nonNegative = z.number().finite().nonnegative();
 const id = z.string().min(1);
@@ -65,10 +66,29 @@ const gridTrackSchema = z.discriminatedUnion("type", [
 ]);
 
 const gridCellSchema = z.object({
-  row: z.number().int().positive(),
-  column: z.number().int().positive(),
+  row: z.number().int().positive().optional(),
+  column: z.number().int().positive().optional(),
   rowSpan: z.number().int().positive().optional(),
   columnSpan: z.number().int().positive().optional(),
+  area: z.string().min(1).optional(),
+}).superRefine((cell, ctx) => {
+  if (cell.area !== undefined) {
+    // 命名区域与行列号是二选一的定位方式：同时给出时「以谁为准」没有确定答案。
+    if (cell.row !== undefined || cell.column !== undefined) {
+      ctx.addIssue({ code: "custom", message: "A grid cell cannot give both an area name and row/column" });
+    }
+    // 区域的外接矩形已经决定了跨度，再写跨度只会和模板打架。
+    if (cell.rowSpan !== undefined || cell.columnSpan !== undefined) {
+      ctx.addIssue({ code: "custom", message: "A grid cell with an area name cannot also give a span" });
+    }
+    if (!isValidGridAreaName(cell.area)) {
+      ctx.addIssue({ code: "custom", message: `"${cell.area}" is not a valid grid area name`, path: ["area"] });
+    }
+    return;
+  }
+  if (cell.row === undefined || cell.column === undefined) {
+    ctx.addIssue({ code: "custom", message: "A grid cell must give either an area name or row and column", path: ["row"] });
+  }
 });
 
 const gridSpecSchema = z.object({
@@ -76,8 +96,51 @@ const gridSpecSchema = z.object({
   rows: z.array(gridTrackSchema),
   columnGap: nonNegative,
   rowGap: nonNegative,
+  areas: z.array(z.string()).optional(),
   cells: z.record(id, gridCellSchema).optional(),
   align: z.enum(["start", "center", "end", "stretch"]).optional(),
+}).superRefine((grid, ctx) => {
+  const template = parseGridAreaTemplate(grid.areas ?? []);
+  if (grid.areas !== undefined) {
+    for (const issue of template.issues) {
+      ctx.addIssue({ code: "custom", message: issue.message, path: issue.row === undefined ? ["areas"] : ["areas", issue.row - 1] });
+    }
+    // 模板与轨道数必须一致：区域画在轨道之外时，「多出来的那一列」到底存不存在
+    // 只能靠猜——不如让用户把模板改到和轨道对齐。
+    if (template.columns && template.columns !== grid.columns.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Grid areas has ${template.columns} columns but there are ${grid.columns.length} column tracks`,
+        path: ["areas"],
+      });
+    }
+    if (template.rows && template.rows !== grid.rows.length) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Grid areas has ${template.rows} rows but there are ${grid.rows.length} row tracks`,
+        path: ["areas"],
+      });
+    }
+  }
+  if (!grid.cells) return;
+  for (const [nodeId, cell] of Object.entries(grid.cells)) {
+    if (cell.area === undefined) continue;
+    if (grid.areas === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Grid cell references area "${cell.area}" but the grid has no areas template`,
+        path: ["cells", nodeId, "area"],
+      });
+      continue;
+    }
+    if (!template.areas.has(cell.area)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Grid cell references unknown area "${cell.area}"`,
+        path: ["cells", nodeId, "area"],
+      });
+    }
+  }
 });
 
 export const layoutSchema = z.object({

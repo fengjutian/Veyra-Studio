@@ -46,7 +46,7 @@ export type GridTrack =
   | { type: "max-content" };
 
 /** 子节点在 Grid 容器里占据的单元格区间（行列均从 1 开始计数）。 */
-export interface GridCell {
+export interface GridCellPlacement {
   /** 起始行（1-based）。 */
   row: number;
   /** 起始列（1-based）。 */
@@ -55,7 +55,33 @@ export interface GridCell {
   rowSpan?: number;
   /** 跨几列；缺省 1。 */
   columnSpan?: number;
+  /** 与 `area` 互斥。 */
+  area?: undefined;
 }
+
+/**
+ * 用命名区域定位子节点。
+ *
+ * 行列区间由 `GridSpec.areas` 模板里同名区域的外接矩形推导，
+ * 因此改模板时子节点会跟着走——这正是命名区域相对「手写行列号」的价值。
+ */
+export interface GridCellArea {
+  /** 区域名；必须在 `GridSpec.areas` 模板里存在且构成矩形。 */
+  area: string;
+  /** 与 `area` 互斥。 */
+  row?: undefined;
+  column?: undefined;
+  rowSpan?: undefined;
+  columnSpan?: undefined;
+}
+
+/**
+ * 子节点在 Grid 容器里的位置。
+ *
+ * 两种写法二选一：直接给行列区间，或引用命名区域。
+ * 同时给出两者会让「到底听谁的」变得含糊，schema 层直接拒绝。
+ */
+export type GridCell = GridCellPlacement | GridCellArea;
 
 /**
  * Grid 容器配置。
@@ -68,6 +94,14 @@ export interface GridSpec {
   rows: GridTrack[];
   columnGap: number;
   rowGap: number;
+  /**
+   * 命名网格区域模板（CSS `grid-template-areas` 语义）。
+   *
+   * 每个字符串是一行，以空格分列；同名单元格必须构成矩形，`.` 表示空位。
+   * 模板的行列数必须与 `rows` / `columns` 的轨道数一致——否则「区域画在第 3 列、
+   * 轨道只有 2 条」这类错位只能靠猜，不如直接拒绝。
+   */
+  areas?: string[];
   /** 子节点 → 单元格区间。缺省的子节点按顺序依次填格子。 */
   cells?: Record<NodeId, GridCell>;
   /** 子节点在格子内的对齐；缺省 `start`。 */

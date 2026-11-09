@@ -46,6 +46,7 @@ function gridRoot(children: DesignNode[], grid: {
   rows: GridTrack[];
   columnGap?: number;
   rowGap?: number;
+  areas?: string[];
   cells?: Record<string, GridCell>;
   align?: "start" | "center" | "end" | "stretch";
   width?: number;
@@ -66,6 +67,7 @@ function gridRoot(children: DesignNode[], grid: {
       rows: grid.rows,
       columnGap: grid.columnGap ?? 0,
       rowGap: grid.rowGap ?? 0,
+      areas: grid.areas,
       cells: grid.cells,
       align: grid.align,
     },
@@ -308,4 +310,70 @@ test("solveGrid: fraction 轨道之间保留 gap", () => {
   // 第二条轨道起点 = 100 + 10 = 110。
   assert.equal(result.children[0]?.x, 110);
   assert.equal(result.totalWidth, 210);
+});
+
+test("grid: 命名区域决定子节点的行列与跨度", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "fixed", size: 100 }, { type: "fixed", size: 60 }],
+    rows: [{ type: "fixed", size: 40 }, { type: "fixed", size: 30 }],
+    areas: [
+      "header header",
+      "sidebar main",
+    ],
+    cells: {
+      first: { area: "header" },
+      second: { area: "sidebar" },
+      third: { area: "main" },
+    },
+  });
+  const first = node("first", "root");
+  first.layout = { ...defaultLayout(), width: 20, height: 10 };
+  const second = node("second", "root");
+  second.layout = { ...defaultLayout(), width: 20, height: 10 };
+  const third = node("third", "root");
+  third.layout = { ...defaultLayout(), width: 20, height: 10 };
+
+  const result = computePageLayout(documentWith(root, [first, second, third]), "page:1", { viewport: { width: 800, height: 600 } });
+  // header 横跨两列，起点 (0,0)；缺省 align=start 时子节点保持自己的尺寸。
+  assert.deepEqual(result.boxes.first, { x: 0, y: 0, width: 20, height: 10 });
+  // sidebar 在第 2 行第 1 列 → y = 40。
+  assert.equal(result.boxes.second?.x, 0);
+  assert.equal(result.boxes.second?.y, 40);
+  // main 在第 2 行第 2 列 → x = 100。
+  assert.equal(result.boxes.third?.x, 100);
+  assert.equal(result.boxes.third?.y, 40);
+});
+
+test("grid: align=stretch 时命名区域把子节点撑满整个外接矩形", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "fixed", size: 100 }, { type: "fixed", size: 60 }],
+    rows: [{ type: "fixed", size: 40 }],
+    areas: ["header header"],
+    align: "stretch",
+    cells: { first: { area: "header" } },
+  });
+  const first = node("first", "root");
+  first.layout = { ...defaultLayout(), width: 20, height: 10 };
+
+  const result = computePageLayout(documentWith(root, [first]), "page:1", { viewport: { width: 800, height: 600 } });
+  // 区域横跨 100 + 60 = 160px。
+  assert.equal(result.boxes.first?.width, 160);
+  assert.equal(result.boxes.first?.height, 40);
+});
+
+test("grid: 命名区域容器 hug 时按轨道与区域跨度定尺寸", () => {
+  const root = gridRoot([], {
+    columns: [{ type: "auto" }, { type: "auto" }],
+    rows: [{ type: "auto" }],
+    areas: ["left right"],
+    cells: { first: { area: "left" } },
+    widthMode: "hug",
+    heightMode: "hug",
+  });
+  const first = node("first", "root");
+  first.layout = { ...defaultLayout(), width: 70, height: 25 };
+
+  const result = computePageLayout(documentWith(root, [first]), "page:1", { viewport: { width: 800, height: 600 } });
+  assert.equal(result.boxes.root?.width, 70);
+  assert.equal(result.boxes.root?.height, 25);
 });

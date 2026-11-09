@@ -3,6 +3,8 @@ import * as ToggleGroup from "@radix-ui/react-toggle-group";
 import { MAX_LIST_INDENT, TEXT_DEFAULTS, applyTextRunStyle, paragraphIndexAt, paragraphRanges, paragraphStyleAt, runStyleAt, type BlendMode, type ConstraintAxis, type CornerRadii, type DesignNode, type FontStyle, type GridTrack, type ImageNode, type LayoutSpec, type ListType, type Paint, type ShadowSpec, type SizeMode, type TextAlign, type TextNode, type TextPatch, type TextRunStyle, type OverflowMode } from "@ufira/design-schema";
 import { addGridTrack, opacityToPercent, percentToOpacity, removeGridTrack, resolvePadding, switchLayoutMode, type LayoutMode } from "./layout-edit";
 import { GridTrackEditor as GridTrackVisualEditor } from "./grid-track-editor";
+import { GridAreaEditor } from "./grid-area-editor";
+import { reconcileGridAreasWithTracks } from "./grid-areas-model";
 import type { BooleanOperation } from "./boolean";
 
 export interface PropertyPanelProps {
@@ -22,6 +24,8 @@ export interface PropertyPanelProps {
   fontSuggestions?: string[];
   /** 换一张图：只改节点引用的资源，节点本身不重建。 */
   onReplaceImage?(): void;
+  /** 子节点显示名（Grid 命名区域的分配下拉框用）；缺省显示节点 id。 */
+  nodeName?(id: string): string;
 }
 
 /**
@@ -31,17 +35,35 @@ export interface PropertyPanelProps {
  * absolute and stack modes, fixed/fill/hug sizing, gap, padding and alignment —
  * so the editor can drive the same semantics the exporters use.
  */
-export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onSetParagraphStyle, onPatchImage, onReplaceImage, fontSuggestions, onSetBooleanOperation, onReleaseBoolean }: PropertyPanelProps) {
+export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, onSetParagraphStyle, onPatchImage, onReplaceImage, fontSuggestions, onSetBooleanOperation, onReleaseBoolean, nodeName }: PropertyPanelProps) {
   const layout = node.layout;
   const isStack = layout.mode === "stack";  const isGrid = layout.mode === "grid";
   const padding = resolvePadding(layout);
   const grid = layout.grid;
 
   const patchLayout = (changes: Partial<LayoutSpec>) => onPatch({ layout: { ...layout, ...changes } });
+  /** 轨道数变化后模板失配的提示；切换节点时清空。 */
+  const [gridNotice, setGridNotice] = useState<string>();
+  useEffect(() => { setGridNotice(undefined); }, [node.id]);
   /** Grid 配置整体替换：轨道数组是嵌套结构，浅合并会留下旧轨道。 */
   const patchGrid = (changes: Partial<NonNullable<LayoutSpec["grid"]>>) => {
     if (!grid) return;
-    patchLayout({ grid: { ...grid, ...changes } });
+    const next = { ...grid, ...changes };
+    const trackCountChanged =
+      (changes.columns !== undefined && changes.columns.length !== grid.columns.length) ||
+      (changes.rows !== undefined && changes.rows.length !== grid.rows.length);
+    // 轨道数变了，模板就可能与新轨道对不上（区域画在已经删掉的那一列上）。
+    // 这时先把区域固化成行列号再丢掉模板：位置不跳，文档仍然合法。
+    if (trackCountChanged) {
+      const reconciled = reconcileGridAreasWithTracks(next);
+      if (reconciled.dropped) {
+        setGridNotice("轨道数变化后模板对不上了，已把区域位置固化为行列号（模板已清除）");
+        patchLayout({ grid: { ...next, areas: reconciled.areas, cells: reconciled.cells } });
+        return;
+      }
+    }
+    setGridNotice(undefined);
+    patchLayout({ grid: next });
   };
   const patchPadding = (changes: Partial<typeof padding>) => patchLayout({ padding: { ...padding, ...changes } });
   /** 只改一个角：四角数组是整体替换的，先拷贝再赋值。 */
@@ -184,6 +206,19 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
             <GridTrackEditor label="行" tracks={grid.rows} disabled={disabled} onChange={rows => patchGrid({ rows })} />
             <NumberField label="列间距" value={grid.columnGap} min={0} disabled={disabled} onCommit={columnGap => patchGrid({ columnGap })} />
             <NumberField label="行间距" value={grid.rowGap} min={0} disabled={disabled} onCommit={rowGap => patchGrid({ rowGap })} />
+            <GridAreaEditor
+              grid={grid}
+              childIds={node.childIds}
+              nodeName={nodeName}
+              disabled={disabled}
+              onChange={changes => patchGrid(changes)}
+            />
+            {gridNotice && (
+              <div className="warning-row">
+                <span className="warning-code">areas-dropped</span>
+                <span className="warning-message">{gridNotice}</span>
+              </div>
+            )}
           </>
         )}
       </Section>

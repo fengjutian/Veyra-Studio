@@ -1753,7 +1753,7 @@ function App() {
             ? (
               <section className="inspector-section">
                 <Field label="名称" value={selected.name} onCommit={value => patch({ name: value })} />
-                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onSetParagraphStyle={setParagraphStyle} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} fontSuggestions={fontSuggestions}
+                <PropertyPanel node={selected} parent={document.nodes[selected.parentId]} disabled={busy} onPatch={patch} onPatchText={patchText} onSetParagraphStyle={setParagraphStyle} onPatchImage={patchValue => patchImageOf(selected.id, patchValue)} onReplaceImage={() => replaceImageInput.current?.click()} fontSuggestions={fontSuggestions} nodeName={nodeId => document.nodes[nodeId]?.name ?? nodeId}
                   onSetBooleanOperation={operation => void run(() => execute([{ type: "boolean.setOperation", payload: { id: selected.id, operation } }]))}
                   onReleaseBoolean={() => void run(async () => {
                     const children = [...(document.nodes[selected.id]?.childIds ?? [])];

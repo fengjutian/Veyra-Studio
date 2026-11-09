@@ -47,7 +47,7 @@
 | `0.2.0` | 文档与项目可靠性 | Phase 1 | 进行中 | 大部分；缺存储布局迁移、磁盘/加密备份 | Schema 迁移、项目生命周期、导入导出和恢复形成可靠闭环 |
 | `0.3.0` | 人工编辑基础闭环 | Phase 1/2 | 进行中 | 大部分；P1–P6 已提前落地，缺嵌套编组移动与跨容器拖拽约束 | 页面、图层、画布、属性、选择与历史达到可连续编辑水平 |
 | `0.4.0` | 布局、文本与视觉一致性 | Phase 2 | 进行中 | 大部分；段内富文本与字体管理已落地，缺跨浏览器字体基线 | 布局、文本测量、画布和导出使用一致语义并通过基线测试 |
-| `0.5.0` | Token、组件与资产 | Phase 2 | 进行中 | 大部分；组件变体已落地，缺字体 token 渲染语义、组件属性与资源来源元数据 | 可复用设计系统能力完整进入编辑、持久化和导出链路 |
+| `0.5.0` | Token、组件与资产 | Phase 2 | 进行中 | 大部分；组件变体与组件属性已落地，缺字体 token 渲染语义与资源来源元数据 | 可复用设计系统能力完整进入编辑、持久化和导出链路 |
 | `0.6.0` | AI 设计闭环 | Phase 3 | 进行中 | 部分；闭环/审查/流式/凭据已实现，缺真实 Provider 逐家验收与密钥轮换 | 真实 Provider、结构化计划、审批、回滚与失败恢复可用 |
 | `0.7.0` | 交付与质量 | Phase 4 | 进行中 | 大部分；缺设计 lint、资产打包与字体策略 | HTML/CSS、SVG、PNG 和质量诊断形成明确支持矩阵 |
 | `0.8.0` | 外部 Agent 与集成 | Phase 4 | 进行中 | 部分；stdio/HTTP/工具契约已实现，缺 OAuth、多租户与 SSE | 独立 Studio MCP adapter 和受控集成可用，不依赖 Figma |
@@ -274,7 +274,11 @@ AI 原型：
   按单元格定位 → 格子内对齐；子节点超出轨道数时补隐式轨道而非钳位重叠。
   属性面板有轨道编辑器；HTML 导出输出 CSS Grid，SVG/PNG 用解出的绝对盒子。
   v3 → v4 迁移只补版本号与缺省轨道配置，旧文档内容不变。
-  **尚未实现**：拖拽调整轨道、命名网格区域、自动轨道。
+  **已实现**：拖拽调整轨道宽度、增删轨道；**命名区域**（`grid.areas` 模板 +
+  `grid.cells[n].area` 引用，行列与跨度由区域外接矩形推导；解析/校验在
+  `design-schema/src/grid-areas.ts`，HTML 导出 `grid-template-areas` + `grid-area`，
+  规格见 `grid-layout.md` §9）。
+  **尚未实现**：自动轨道（`auto-fill` / `auto-fit`）。
   差距清单与优先级见 `figma-gap-roadmap.md`；
 - 原型交互与运行时：`design-schema/src/interactions.ts` 按 Penpot 的
   interactions 语义定义事件、动作、动画与 overlay 定位，节点上以可选
@@ -283,7 +287,9 @@ AI 原型：
   点击命中向上冒泡、mouse-press 按下触发、mouse-enter/mouse-over 进入触发（enter 优先）、
   mouse-leave 离开触发、after-delay 计时器、屏幕历史与 prev-screen、
   overlay 定位/遮罩/点外部关闭、dissolve/slide/push 动画（DOM 层 CSS keyframes）。
-  规格见 `prototype-runtime.md`。仍未实现：`preserveScroll`、原型内滚动容器与固定元素；
+  规格见 `prototype-runtime.md`。**已实现**：`preserveScroll` 与原型内滚动容器
+  （`overflow` 字段 + 非被动滚轮监听）；仍未实现：固定元素（sticky / fixed）、
+  滚动条 UI 与惯性滚动；
 - 仍未覆盖的编辑边界：编组内嵌套子节点的整体移动、跨容器拖拽的自动换父级约束。
 
 ### `0.4.0`：布局、文本与视觉一致性

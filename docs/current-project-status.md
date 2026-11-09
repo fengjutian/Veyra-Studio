@@ -32,7 +32,14 @@
   HTML 导出输出 CSS Grid，SVG/PNG 用布局引擎解出的绝对盒子。
   语义对齐 Penpot 的 grid-layout，见 `figma-gap-roadmap.md`；
   **已实现**：拖拽调整轨道宽度、增删轨道（属性面板的轨道条，规格见 `grid-layout.md`）；
-  **尚未实现**：命名网格区域、自动轨道（`auto-fill` / `auto-fit`）；
+  **命名区域**（`grid-template-areas`，2026-11-09）：`grid.areas` 用「每行一个字符串、
+  空白分列、`.` 为空位」表达模板，同名单元格必须构成矩形；`grid.cells` 可以用
+  `{ area }` 定位子节点，行列与跨度由区域外接矩形推导，因此改模板时子节点跟着走。
+  解析与矩形判定集中在 `design-schema/src/grid-areas.ts`，文档校验、布局求解、
+  HTML 导出（`grid-template-areas` + `grid-area`）与属性面板读同一份结果；
+  布局求解器本身一行未改。模板行列数必须与轨道数一致，改轨道数时编辑器会把区域
+  固化成行列号再丢模板（位置不跳、文档仍然合法）；
+  **尚未实现**：自动轨道（`auto-fill` / `auto-fit`）；
 - **表现层能力**（混合模式 / 椭圆渐变 / 背景模糊）：三项都是**可选字段**，
   文档格式版本不变（仍是 v4），旧文档无需迁移。
   `AppearanceSpec.blendMode` 取值与 CSS `mix-blend-mode` 对齐（16 种）；
@@ -631,7 +638,7 @@
 - 矢量能力完成到「能画、能改节点、能做布尔」：`vector` 节点已有归一化 `M/L/C/Q` 路径
   （画布、命中、SVG、HTML 共用同一套几何），钢笔能画折线与曲线，编辑态能拖锚点/手柄、
   断对称、删锚点，布尔组能合并/减去/交集/排除并保留运算树；
-  尚未实现：锚点类型切换（corner/smooth）、多选锚点；
+  尚未实现：多选锚点、锚点吸附、带独立手柄的尖角（双击切换角点/平滑点已实现）；
   保留布尔组、曲线级布尔已实现；相位划分见 `editor-tooling-roadmap.md`，
   P3 见 `pen-and-path-editing.md`，P4 见 `boolean-and-mask.md`；
 - **原型已有运行时**：`interaction.patch` 的数据层 + `studio-web/src/prototype/` 的预览，
@@ -642,7 +649,12 @@
 - **Grid 的可视化轨道编辑已实现**：属性面板里有轨道条，能拖拽改轨道宽度、增删轨道，
   宽度代数在 `design-layout/src/grid.ts`（`resolveGridTrackWidths` / `applyGridTrackWidths`），
   编辑期模型在 `studio-web/src/grid-track-model.ts`，规格见 `grid-layout.md`；
-  **尚未实现**：命名网格区域（`grid-template-areas`）、自动轨道（`auto-fill` / `auto-fit`）；
+  **命名区域也已实现**（2026-11-09）：`grid.areas` 模板 + `grid.cells[n].area` 引用，
+  属性面板提供模板文本域（带实时校验）与子节点区域下拉框；轨道数变化导致模板失配时，
+  先把区域固化为行列号再清除模板。解析/校验/矩形判定在
+  `design-schema/src/grid-areas.ts`，编辑期模型在 `studio-web/src/grid-areas-model.ts`，
+  规格见 `grid-layout.md` §9；
+  **尚未实现**：自动轨道（`auto-fill` / `auto-fit`）；
   与 Figma 的差距清单见 `figma-gap-roadmap.md`；
 - SVG 路径导入：`design-schema/src/svg-path.ts` 按 Penpot 的解析语义支持
   `M/L/C/Q/A/H/V/S/T/Z` 及小写相对形式与隐式命令（`M` 之后省略命令字母按 `L` 处理），

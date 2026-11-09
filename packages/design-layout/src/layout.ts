@@ -1,4 +1,4 @@
-import { resolveGap, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
+import { parseGridAreaTemplate, resolveGap, resolveGridCellRect, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
 import { assignCellsByOrder, ensureTracks, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
@@ -180,16 +180,22 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     }
 
     // 显式 cells 的子节点按容器 childIds 的顺序处理，保证输出稳定。
+    // 命名区域在这里解析成具体行列：求解器只认行列号，不认识区域名。
+    const template = grid?.areas ? parseGridAreaTemplate(grid.areas) : undefined;
     const result: GridCellInput[] = [];
     for (const child of children) {
       const cell: GridCell | undefined = explicit[child.node.id];
       if (!cell) continue;
+      const rect = resolveGridCellRect(cell, template);
+      // 模板里没有这个区域（或模板本身有错）：跳过而不是猜一格，
+      // 猜出来的位置会和导出对不上。
+      if (!rect) continue;
       result.push({
         nodeId: child.node.id,
-        row: cell.row,
-        column: cell.column,
-        rowSpan: cell.rowSpan ?? 1,
-        columnSpan: cell.columnSpan ?? 1,
+        row: rect.row,
+        column: rect.column,
+        rowSpan: rect.rowSpan,
+        columnSpan: rect.columnSpan,
         width: child.size.width,
         height: child.size.height,
       });

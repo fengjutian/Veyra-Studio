@@ -97,3 +97,36 @@ test("grid: 导出没有产生诊断", () => {
   const result = exportPageToHtml(gridDocument(), { pageId: PAGE_ID, viewport: VIEWPORT });
   assert.deepEqual(result.diagnostics, []);
 });
+
+/** 把根容器的定位方式换成命名区域。 */
+function withAreas(areas: string[]): DesignDocument {
+  const document = gridDocument();
+  const root = document.nodes.root!;
+  root.layout.grid = {
+    ...root.layout.grid!,
+    areas,
+    cells: { first: { area: "first" }, second: { area: "second" } },
+  };
+  return document;
+}
+
+test("grid: 命名区域导出成 grid-template-areas 与 grid-area", () => {
+  const html = exportPageToHtml(withAreas(["first second"]), { pageId: PAGE_ID, viewport: VIEWPORT }).html;
+  // style 属性整体按 HTML 转义，引号在产物里是 &quot;，浏览器读到的仍是合法 CSS。
+  assert.match(html, /grid-template-areas:&quot;first second&quot;/);
+  // 用区域定位时不再写死行列号——否则改模板在导出物里不会生效。
+  assert.match(html, /grid-area:first/);
+  assert.match(html, /grid-area:second/);
+  assert.doesNotMatch(html, /grid-column:1 \/ span 1/);
+});
+
+test("grid: 命名区域导出时空白被归一化，名字保持不变", () => {
+  const html = exportPageToHtml(withAreas(["  first   second  "]), { pageId: PAGE_ID, viewport: VIEWPORT }).html;
+  assert.match(html, /grid-template-areas:&quot;first second&quot;/);
+});
+
+test("grid: SVG 导出对命名区域的定位与行列号一致", () => {
+  const svg = exportPageToSvg(withAreas(["first second"]), { pageId: PAGE_ID, viewport: VIEWPORT }).svg;
+  assert.match(svg, /data-node-id="first"[\s\S]*?<rect x="0" y="0" width="40"/);
+  assert.match(svg, /data-node-id="second"[\s\S]*?<rect x="110" y="0" width="40"/);
+});

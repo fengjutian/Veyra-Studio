@@ -258,8 +258,14 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
     // Grid 子节点由父容器的 grid 定位，自己不再声明坐标。
     const cell = parent?.layout.grid?.cells?.[node.id];
     if (cell) {
-      declarations.push(`grid-column:${cell.column} / span ${cell.columnSpan ?? 1}`);
-      declarations.push(`grid-row:${cell.row} / span ${cell.rowSpan ?? 1}`);
+      // 用命名区域定位时直接写区域名，行列由 `grid-template-areas` 决定——
+      // 写死行列号会让「改模板」在导出物里失效。
+      if (cell.area !== undefined) {
+        declarations.push(`grid-area:${cell.area}`);
+      } else {
+        declarations.push(`grid-column:${cell.column} / span ${cell.columnSpan ?? 1}`);
+        declarations.push(`grid-row:${cell.row} / span ${cell.rowSpan ?? 1}`);
+      }
     }
   }
   addSize(declarations, "width", node.layout.widthMode, node.layout.width, parent);
@@ -341,8 +347,18 @@ function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNod
       `padding:${px(padding.top)} ${px(padding.right)} ${px(padding.bottom)} ${px(padding.left)}`,
       `align-items:${alignItems(grid.align ?? "start")}`,
     );
+    // 命名区域模板原样交给浏览器：两边都是同一套 CSS 语义，
+    // 归一化只处理多余空白，不改名字。
+    if (grid.areas?.length) {
+      declarations.push(`grid-template-areas:${grid.areas.map(areaRowCss).join(" ")}`);
+    }
   }
   return `${declarations.join(";")};`;
+}
+
+/** 模板的一行 → CSS 字符串字面量（名字在 schema 层已保证可安全入引号）。 */
+function areaRowCss(row: string): string {
+  return `"${row.trim().split(/\s+/).filter(Boolean).join(" ")}"`;
 }
 
 /**
