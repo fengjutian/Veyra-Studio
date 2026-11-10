@@ -3,7 +3,7 @@ import {
   LIST_MARKER_WIDTH,
   MAX_LIST_INDENT,
   absolutePath,
-  applyThemeTokens,
+  applyThemeForPage,
   computeBooleanGeometry,
   ellipticalGeometry,
   ellipticalGradientMatrix,
@@ -101,7 +101,7 @@ interface RenderContext {
 }
 
 export function exportPageToReact(documentInput: DesignDocument, options: ReactExportOptions): ReactExportResult {
-  const document = applyThemeTokens(validateDocument(documentInput), options.themeId);
+  const document = applyThemeForPage(validateDocument(documentInput), options.pageId, options.themeId);
   const page = document.pages[options.pageId];
   if (!page) throw new Error(`Page ${options.pageId} does not exist`);
   if (!finiteSize(options.viewport)) throw new Error("Viewport dimensions must be finite non-negative numbers");

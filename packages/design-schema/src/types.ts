@@ -22,6 +22,16 @@ export interface DesignPage {
   id: PageId;
   name: string;
   childIds: NodeId[];
+  /**
+   * 这一页自带的主题（可选）。
+   *
+   * 翻到这一页时默认用这个主题——「暗色模式演示页」就是靠它：那一页单独是暗色，
+   * 其它页是亮色，不需要用户手动切主题。
+   *
+   * 视图层显式选了某个主题时以视图为准；不选就跟随页面。指向不存在的主题会在
+   * 文档校验阶段报错。
+   */
+  themeId?: string;
 }
 
 export type SizeMode = "fixed" | "fill" | "hug";

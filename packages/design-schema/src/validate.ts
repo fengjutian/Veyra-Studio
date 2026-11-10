@@ -66,6 +66,9 @@ export function validateDocument(input: unknown): DesignDocument {
   for (const page of Object.values(document.pages)) {
     if (page.id !== findRecordKey(document.pages, page)) issues.push(`page record key does not match page.id ${page.id}`);
     if (new Set(page.childIds).size !== page.childIds.length) issues.push(`page ${page.id} contains duplicate child IDs`);
+    // 页面自带的主题必须存在：指向不存在的主题，这一页会安静地用基础值渲染——
+    // 用户以为这一页是暗色，其实不是。
+    if (page.themeId && !themeIds.includes(page.themeId)) issues.push(`page ${page.id} references missing theme ${page.themeId}`);
     for (const childId of page.childIds) {
       claim(childId, `page ${page.id}`);
       const child = document.nodes[childId];

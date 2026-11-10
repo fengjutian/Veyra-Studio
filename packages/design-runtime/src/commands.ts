@@ -209,6 +209,16 @@ export interface DeletePageCommand {
   payload: { id: PageId };
 }
 
+/**
+ * 给某一页指定主题（或清掉：`themeId` 为空）。
+ *
+ * 页面主题是「翻到这一页默认用哪个主题」——暗色演示页靠它。
+ */
+export interface SetPageThemeCommand {
+  type: "page.setTheme";
+  payload: { id: PageId; themeId?: string };
+}
+
 export interface DefineComponentCommand {
   type: "component.define";
   payload: { component: ComponentDefinition };
@@ -374,6 +384,7 @@ export type DesignCommand =
   | CreatePageCommand
   | RenamePageCommand
   | DeletePageCommand
+  | SetPageThemeCommand
   | DefineComponentCommand
   | CreateComponentCommand
   | CreateComponentSetCommand

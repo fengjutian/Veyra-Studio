@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyThemeForPage,
   applyThemeTokens,
   createDocument,
   defaultAppearance,
@@ -174,4 +175,30 @@ test("theme: 自己写的覆盖与继承来的覆盖分得清", () => {
   assert.equal(inheritedTokenSource(document, "theme:child", "gray.900")?.id, "theme:brand");
   assert.equal(inheritedTokenSource(document, "theme:child", "space.md")?.id, "theme:child");
   assert.equal(inheritedTokenSource(document, "theme:child", "text.primary"), undefined);
+});
+
+// ── 按页面切换主题（2026-11-10）──────────────────────────────────────
+
+test("theme: 页面自带的主题在导出时生效", () => {
+  const document = documentWith([dark]);
+  document.pages["page:1"]!.themeId = "theme:dark";
+  assert.equal(tokenColor(applyThemeForPage(document, "page:1"), "text.primary"), "#f5f5f5");
+  // 别的页没有指定主题 → 基础值。
+  document.pages["page:2"] = { id: "page:2", name: "第二页", childIds: [] };
+  assert.equal(tokenColor(applyThemeForPage(document, "page:2"), "text.primary"), "#111111");
+});
+
+test("theme: 显式指定的主题盖过页面自带的主题", () => {
+  const document = documentWith([dark, brand]);
+  document.pages["page:1"]!.themeId = "theme:dark";
+  // 显式选品牌色 → 品牌色赢（导出时用户说了算）。
+  assert.equal(tokenColor(applyThemeForPage(document, "page:1", "theme:brand"), "text.primary"), "#ff6600");
+  // 显式选暗色 → 暗色赢。
+  assert.equal(tokenColor(applyThemeForPage(document, "page:1", "theme:dark"), "text.primary"), "#f5f5f5");
+});
+
+test("theme: 页面指向不存在的主题会被拒绝", () => {
+  const document = documentWith([dark]);
+  document.pages["page:1"]!.themeId = "theme:missing";
+  assert.throws(() => validateDocument(document), /page page:1 references missing theme theme:missing/);
 });

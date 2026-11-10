@@ -10,7 +10,7 @@ import {
 } from "@ufira/design-export";
 import type { ProjectRepository } from "@ufira/design-persistence";
 import type { AssetMetadata, DesignDocument, NodeId } from "@ufira/design-schema";
-import { applyThemeTokens } from "@ufira/design-schema";
+import { applyThemeForPage } from "@ufira/design-schema";
 import { collectImageAssets } from "./assets";
 import { getFontSubsetProvider } from "./font-faces";
 
@@ -214,7 +214,7 @@ export async function preparePackageFontFaces(
   documentInput: DesignDocument,
   options: { pageId: string; nodeIds?: readonly NodeId[]; themeId?: string },
 ): Promise<PackageFontPreparation> {
-  const document = applyThemeTokens(documentInput, options.themeId);
+  const document = applyThemeForPage(documentInput, options.pageId, options.themeId);
   const diagnostics: ExportDiagnostic[] = [];
   const usages = collectExportFonts(document, options);
   const fontTexts = collectExportFontTexts(document, options);

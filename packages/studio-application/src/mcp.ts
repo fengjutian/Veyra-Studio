@@ -46,6 +46,7 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "page.create": true,
   "page.rename": true,
   "page.delete": true,
+  "page.setTheme": true,
   "component.define": true,
   "component.create": true,
   "component.setCreate": true,

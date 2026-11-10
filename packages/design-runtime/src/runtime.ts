@@ -316,6 +316,23 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       return;
     }
     case "page.delete": return deletePage(document, command.payload.id);
+    case "page.setTheme": {
+      const page = document.pages[command.payload.id];
+      if (!page) throw new CommandError(`Page ${command.payload.id} does not exist`);
+      const themeId = command.payload.themeId?.trim();
+      if (!themeId) {
+        // 清掉页面主题，这一页回到基础值 / 视图层选的主题。
+        delete page.themeId;
+        return;
+      }
+      // 主题必须存在：页面指向不存在的主题，这一页会安静地按基础值渲染——
+      // 用户以为这一页是暗色，其实不是。
+      if (!(document.themes ?? []).some(theme => theme.id === themeId)) {
+        throw new CommandError(`Theme ${themeId} does not exist`);
+      }
+      page.themeId = themeId;
+      return;
+    }
     case "component.define": return defineComponent(document, command.payload.component);
     case "component.create": return createComponent(document, command.payload.id, command.payload.nodeId, command.payload.name);
     case "component.setCreate": return createComponentSet(document, command.payload.set);

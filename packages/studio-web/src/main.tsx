@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, applyThemeForPage, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -206,11 +206,8 @@ function App() {
   // 逐项目的存储占用与清理清单。
   const [storageUsage, setStorageUsage] = useState<StorageUsageOverview>();
   // 当前主题：视图状态，不进文档、不涨 revision；切换只影响预览与导出。
+  // undefined = **跟随页面**：翻到带主题的页就用那一页的主题。
   const [activeThemeId, setActiveThemeId] = useState<string>();
-  // 主题合并后的文档：画布、对比度、场景都读它。
-  const themedDocument = useMemo(() => (document ? applyThemeTokens(document, activeThemeId) : undefined), [document, activeThemeId]);
-  const themedTokens = useMemo(() => (document ? themeTokenMap(document, activeThemeId) : {}), [document, activeThemeId]);
-  const activeTheme = document ? findTheme(document, activeThemeId) : undefined;
   // 最近一次导出的诊断与格式，面板据此列出可定位的问题。
   const [exportReport, setExportReport] = useState<{ format: ExportFormat; diagnostics: ExportDiagnostic[] }>();
   // 隔离预览：弹窗里渲染导出器真实产物。
@@ -443,6 +440,14 @@ function App() {
   }, [scroller]);
 
   const activePageId = document && currentPageId && document.pages[currentPageId] ? currentPageId : document?.pageOrder[0];
+  // 页面自带的主题（翻到哪页就用哪页的），显式选择优先于它。
+  // 「跟随页面」= activeThemeId 为空：暗色演示页靠它，别的页还是亮色。
+  const pageThemeId = document?.pages[activePageId ?? ""]?.themeId;
+  const effectiveThemeId = activeThemeId ?? pageThemeId;
+  // 主题合并后的文档：画布、对比度、场景都读它。
+  const themedDocument = useMemo(() => (document ? applyThemeForPage(document, activePageId, activeThemeId) : undefined), [document, activeThemeId, activePageId]);
+  const themedTokens = useMemo(() => (document ? themeTokenMap(document, effectiveThemeId) : {}), [document, effectiveThemeId]);
+  const activeTheme = document ? findTheme(document, effectiveThemeId) : undefined;
   // Hooks must run before the early return below, so the layout is resolved unconditionally.
   useEffect(() => {
     syncCanvasViewport();
@@ -450,7 +455,7 @@ function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [syncCanvasViewport]);
-  const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch, activeThemeId);
+  const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch, effectiveThemeId);
   const hitTestScene = useMemo(
     () => (themedDocument && activePageId) ? buildScene(themedDocument, activePageId, canvasLayout.boxes) : [],
     [themedDocument, activePageId, canvasLayout.boxes],
@@ -1037,6 +1042,27 @@ function App() {
     const name = (await askText({ title: "页面名称", defaultValue: page.name }))?.trim(); if (!name || name === page.name) return;
     await execute([{ type: "page.rename", payload: { id: page.id, name } }]);
   });
+  /**
+   * 给当前页指定主题。
+   *
+   * 「暗色模式演示页」就是靠它：那一页单独用暗色主题，翻到它自动切过去，
+   * 其它页还是亮色——不需要用户来回切主题。
+   */
+  const setPageTheme = () => void run(async () => {
+    const picked = await askChoice({
+      title: `页面「${page.name}」的主题`,
+      description: "翻到这一页时默认用这个主题；主题选择是「跟随页面」时生效。",
+      options: [
+        { value: "", label: "不指定（用基础值）" },
+        ...(document.themes ?? []).map(theme => ({ value: theme.id, label: theme.name })),
+      ],
+    });
+    if (picked === null) return;
+    await execute([{ type: "page.setTheme", payload: { id: page.id, themeId: picked || undefined } }]);
+    setMessage(picked
+      ? `页面「${page.name}」的主题已设为「${findTheme(document, picked)?.name ?? picked}」`
+      : `页面「${page.name}」不再指定主题`);
+  });
   const deletePage = () => void run(async () => {
     if (document.pageOrder.length === 1 || page.childIds.length) return;
     const nextPageId = document.pageOrder.find(id => id !== page.id)!;
@@ -1154,7 +1180,7 @@ function App() {
   const exportScopeLabel = exportTarget.nodeIds ? "（选区）" : "（整页）";
   const exportHtml = () => void run(async () => {
     // 带资源的导出：图片节点在 HTML 里要落成 data URL，否则只会剩一个空框。
-    const result = await project.exportHtmlWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
+    const result = await project.exportHtmlWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
     downloadFile(`${exportFilename}.html`, result.document, "text/html");
     setExportReport({ format: "html", diagnostics: result.diagnostics });
     setMessage(`HTML 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
@@ -1167,7 +1193,7 @@ function App() {
    * 拆成独立文件，体积不涨、字体也不受内联上限约束。
    */
   const exportPackage = () => void run(async () => {
-    const result = await project.exportHtmlPackage({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
+    const result = await project.exportHtmlPackage({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
     const encoder = new TextEncoder();
     const entries = [
       { path: PACKAGE_DOCUMENT_NAME, bytes: encoder.encode(result.document) },
@@ -1178,7 +1204,7 @@ function App() {
     setMessage(`资源包已导出${exportScopeLabel} · ${result.files.length} 个资源文件 · ${result.diagnostics.length} 条诊断`);
   });
   const exportSvg = () => void run(async () => {
-    const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
+    const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
     downloadFile(`${exportFilename}.svg`, result.svg, "image/svg+xml");
     setExportReport({ format: "svg", diagnostics: result.diagnostics });
     setMessage(`SVG 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
@@ -1187,7 +1213,7 @@ function App() {
     const snapshot = project.snapshot();
     // 图片写成 data URL 之后画布不会被外部资源污染，PNG 才能读回像素。
     const resolveAsset = await createAssetResolver(repository, snapshot, page.id, exportTarget.nodeIds);
-    const result = await exportPageToPng(snapshot, { pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, scale: 2, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, resolveAsset, themeId: activeThemeId });
+    const result = await exportPageToPng(snapshot, { pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, scale: 2, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, resolveAsset, themeId: effectiveThemeId });
     downloadDataUrl(`${exportFilename}.png`, result.dataUrl);
     setExportReport({ format: "png", diagnostics: result.diagnostics });
     setMessage(`PNG 已导出${exportScopeLabel} · ${result.width}×${result.height}`);
@@ -1207,7 +1233,7 @@ function App() {
     const result = await exportDocumentToPdf(snapshot, {
       viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
       title: document.meta.name,
-      themeId: activeThemeId,
+      themeId: effectiveThemeId,
       resolveAsset,
     });
     downloadBytes(`${safeFilename(document.meta.name)}.pdf`, result.bytes, "application/pdf");
@@ -1215,7 +1241,7 @@ function App() {
     setMessage(`PDF 已导出 · ${result.pageCount} 页 · ${result.diagnostics.length} 条诊断`);
   });
   // 预览和下载走同一个导出入口，看到的就是交付物本身。
-  const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
+  const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
   /**
    * 导出 React 组件：设计稿直接变成能进工程的代码。
    *
@@ -1232,7 +1258,7 @@ function App() {
       origin: exportTarget.origin,
       nodeIds: exportTarget.nodeIds,
       resolveAsset,
-      themeId: activeThemeId,
+      themeId: effectiveThemeId,
     });
     downloadFile(`${exportFilename}.tsx`, result.code, "text/typescript");
     setExportReport({ format: "react", diagnostics: result.diagnostics });
@@ -1272,7 +1298,7 @@ function App() {
    */
   const buildHtmlPreview = async (source: DesignDocument, scope: { pageId: string; nodeIds?: string[] }) => {
     const resolveAsset = await createAssetResolver(repository, source, scope.pageId, scope.nodeIds);
-    const fonts = await prepareFontFaces(repository, source, { pageId: scope.pageId, nodeIds: scope.nodeIds, themeId: activeThemeId });
+    const fonts = await prepareFontFaces(repository, source, { pageId: scope.pageId, nodeIds: scope.nodeIds, themeId: effectiveThemeId });
     return exportPageToHtml(source, {
       pageId: scope.pageId,
       viewport: exportTarget.viewport,
@@ -1280,7 +1306,7 @@ function App() {
       origin: scope.nodeIds ? exportTarget.origin : undefined,
       title: source.meta.name,
       nodeIds: scope.nodeIds,
-      themeId: activeThemeId,
+      themeId: effectiveThemeId,
       resolveAsset,
       fontFaces: fonts.css ? [fonts.css] : [],
     });
@@ -1578,7 +1604,7 @@ function App() {
 
   /** 写 token：主题激活时写成该主题的覆盖，否则改基础值。 */
   const applyToken = async (name: string, token: TokenValue) => {
-    if (activeTheme && activeThemeId) {
+    if (activeTheme && effectiveThemeId) {
       await execute([{ type: "theme.upsert", payload: { theme: { ...activeTheme, tokens: { ...activeTheme.tokens, [name]: token } } } }]);
       return;
     }
@@ -1594,7 +1620,7 @@ function App() {
     });
     if (!values) return;
     // 继承：把父主题的覆盖带过来，之后再逐项覆盖。父主题只在有其它主题时才问。
-    const others = (document.themes ?? []).filter(theme => theme.id !== activeThemeId);
+    const others = (document.themes ?? []).filter(theme => theme.id !== effectiveThemeId);
     let parentId: string | undefined;
     if (others.length) {
       const picked = await askChoice({
@@ -1627,7 +1653,7 @@ function App() {
    * 注意这不动父主题的覆盖——继承来的值还在。
    */
   const resetWholeTheme = () => void run(async () => {
-    if (!activeThemeId || !activeTheme) return;
+    if (!effectiveThemeId || !activeTheme) return;
     if (!await askConfirm({
       title: "清空主题覆盖",
       description: `清空主题「${activeTheme.name}」的 ${Object.keys(activeTheme.tokens).length} 项覆盖？这些 token 会回到基础值（或父主题继承来的值）。`,
@@ -1638,14 +1664,14 @@ function App() {
     setMessage(`已清空主题「${activeTheme.name}」的覆盖`);
   });
   const deleteActiveTheme = () => void run(async () => {
-    if (!activeThemeId) return;
+    if (!effectiveThemeId) return;
     if (!await askConfirm({
       title: "删除主题",
-      description: `删除主题「${activeTheme?.name ?? activeThemeId}」？只删除它的覆盖值，基础 token 不受影响。`,
+      description: `删除主题「${activeTheme?.name ?? effectiveThemeId}」？只删除它的覆盖值，基础 token 不受影响。`,
       confirmLabel: "删除",
       destructive: true,
     })) return;
-    await execute([{ type: "theme.delete", payload: { id: activeThemeId } }]);
+    await execute([{ type: "theme.delete", payload: { id: effectiveThemeId } }]);
     setActiveThemeId(undefined);
     setMessage("主题已删除");
   });
@@ -1658,7 +1684,7 @@ function App() {
     setMessage(`「${name}」已恢复基础值`);
   });
   const createToken = () => void run(async () => {
-    if (activeThemeId) {
+    if (effectiveThemeId) {
       setMessage("当前在主题模式：主题只能覆盖已有 token，请先切回「基础」再新增");
       return;
     }
@@ -1713,7 +1739,7 @@ function App() {
    * 导入写在一个事务里，因此可以一次撤销。
    */
   const importTokensFromStyleSheet = () => void run(async () => {
-    if (activeThemeId) {
+    if (effectiveThemeId) {
       setMessage("当前在主题模式：主题只能覆盖已有 token，请先切回「基础」再导入");
       return;
     }
@@ -2214,12 +2240,14 @@ function App() {
             return <button key={id} type="button" role="option" aria-selected={active} className={`page-row${active ? " active" : ""}`} disabled={busy} onClick={() => { if (!active) switchPage(id); }}>
               <Icon name="page" size={12} />
               <span className="page-row-name" title={item?.name}>{item?.name ?? id}</span>
+              {item?.themeId ? <span className="page-row-theme" title={`本页主题：${findTheme(document, item.themeId)?.name ?? item.themeId}`}>●</span> : null}
               {item && item.childIds.length > 0 && <span className="page-row-meta">{item.childIds.length}</span>}
             </button>;
           })}
         </div>
         <div className="page-actions">
           <button disabled={busy} onClick={renamePage}><Icon name="rename" />重命名</button>
+          <button disabled={busy} onClick={setPageTheme}>主题</button>
           <Tooltip label={page.childIds.length ? "请先清空页面" : "删除当前页面"}><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} onClick={deletePage}><Icon name="pageDelete" />删除</button></Tooltip>
         </div>
       </div>
@@ -2528,7 +2556,7 @@ function App() {
                   disabled={busy}
                   onChange={event => setActiveThemeId(event.target.value || undefined)}
                 >
-                  <option value="">基础（{document.tokens ? Object.keys(document.tokens).length : 0} 个 token）</option>
+                  <option value="">跟随页面{pageThemeId ? `（本页：${findTheme(document, pageThemeId)?.name ?? pageThemeId}）` : "（本页没有指定主题）"}</option>
                   {(document.themes ?? []).map(theme => (
                     <option key={theme.id} value={theme.id}>{theme.name}（{Object.keys(theme.tokens).length} 项覆盖{theme.extends ? " · 继承" : ""}）</option>
                   ))}
@@ -2542,8 +2570,8 @@ function App() {
               ) : null}
               <div className="storage-actions">
                 <button disabled={busy} onClick={createTheme}>新增主题</button>
-                <button disabled={busy || !activeThemeId} onClick={deleteActiveTheme}>删除当前主题</button>
-                <button disabled={busy || !activeThemeId || !Object.keys(activeTheme?.tokens ?? {}).length} onClick={resetWholeTheme}>清空该主题的覆盖</button>
+                <button disabled={busy || !effectiveThemeId} onClick={deleteActiveTheme}>删除当前主题</button>
+                <button disabled={busy || !effectiveThemeId || !Object.keys(activeTheme?.tokens ?? {}).length} onClick={resetWholeTheme}>清空该主题的覆盖</button>
               </div>
               <p className="empty-hint">
                 切换主题只影响预览与导出，不改基础 token。选中主题后，
@@ -2563,17 +2591,17 @@ function App() {
               onBind={bindToken}
               onUnbind={unbindToken}
               onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))}
-              overridden={activeThemeId ? name => isTokenOverridden(document, activeThemeId, name) : undefined}
-              inheritedFrom={activeThemeId
+              overridden={effectiveThemeId ? name => isTokenOverridden(document, effectiveThemeId, name) : undefined}
+              inheritedFrom={effectiveThemeId
                 ? name => {
-                    const source = inheritedTokenSource(document, activeThemeId, name);
+                    const source = inheritedTokenSource(document, effectiveThemeId, name);
                     // 自己写了的显示「已覆盖」，继承来的才显示「继承」。
-                    if (!source || source.id === activeThemeId) return undefined;
+                    if (!source || source.id === effectiveThemeId) return undefined;
                     return source.name;
                   }
                 : undefined}
-              onResetOverride={activeThemeId ? resetThemeOverride : undefined}
-              themeName={findTheme(document, activeThemeId)?.name}
+              onResetOverride={effectiveThemeId ? resetThemeOverride : undefined}
+              themeName={findTheme(document, effectiveThemeId)?.name}
             />
           </section>
           <section className="inspector-section">

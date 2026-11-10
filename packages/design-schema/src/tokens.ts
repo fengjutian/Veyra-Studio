@@ -72,6 +72,21 @@ export function inheritedTokenSource(document: DesignDocument, themeId: string |
   return undefined;
 }
 
+/**
+ * 某一页实际该用哪个主题。
+ *
+ * 优先级：**显式指定 > 页面自带 > 无主题**。
+ *
+ * - 显式指定（视图层选了某个主题、或导出器传了 themeId）——用户说了算；
+ * - 页面自带（`page.themeId`）——「暗色演示页」靠它，翻到那页自动是暗色；
+ * - 都没有就用基础值。
+ */
+export function effectivePageThemeId(document: DesignDocument, pageId: string | undefined, override?: string): string | undefined {
+  if (override) return override;
+  const page = pageId ? document.pages[pageId] : undefined;
+  return page?.themeId;
+}
+
 /** 合并后的 token 表：基础值 + 主题覆盖（含继承链）。 */
 export function themeTokenMap(document: DesignDocument, themeId: string | undefined): Record<string, TokenValue> {
   const chain = themeChain(document, themeId);
@@ -95,6 +110,20 @@ export function applyThemeTokens(document: DesignDocument, themeId: string | und
   const merged = themeTokenMap(document, themeId);
   if (merged === document.tokens) return document;
   return { ...document, tokens: merged };
+}
+
+/**
+ * 把**这一页该用的主题**合并进文档。
+ *
+ * 页面主题的优先级：显式指定 > 页面自带 > 基础值。所有渲染与导出入口都走这里，
+ * 免得每个入口各写一套「到底用哪个主题」的判断——那正是画布和导出物对不上的来源。
+ */
+export function applyThemeForPage(
+  document: DesignDocument,
+  pageId: string | undefined,
+  themeId?: string,
+): DesignDocument {
+  return applyThemeTokens(document, effectivePageThemeId(document, pageId, themeId));
 }
 
 /**

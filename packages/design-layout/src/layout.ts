@@ -1,4 +1,4 @@
-import { applyThemeTokens, applyTypographyToken, parseGridAreaTemplate, resolveGap, resolveGridCellRect, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
+import { applyThemeForPage, applyTypographyToken, parseGridAreaTemplate, resolveGap, resolveGridCellRect, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
 import { assignCellsByOrder, ensureTracks, expandRepeatTracks, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
@@ -24,7 +24,7 @@ function toGridTrackInput(track: GridTrack, contentSizes: { width: number; heigh
 
 export function computePageLayout(documentInput: DesignDocument, pageId: string, options: LayoutOptions): LayoutResult {
   // 主题在入口合并进 token 表：字体 token 的字号/行高会直接影响测量与 hug 尺寸。
-  const document = applyThemeTokens(validateDocument(documentInput), options.themeId);
+  const document = applyThemeForPage(validateDocument(documentInput), pageId, options.themeId);
   const page = document.pages[pageId];
   if (!page) throw new Error(`Page ${pageId} does not exist`);
   if (!Number.isFinite(options.viewport.width) || !Number.isFinite(options.viewport.height) || options.viewport.width < 0 || options.viewport.height < 0) {

@@ -351,7 +351,14 @@
   flex: none;
   color: var(--workbench-dim);
   font-size: 10px;
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums;}
+
+/* 这一页自带主题的标记：一颗小圆点，提示「翻到这页会换主题」。 */
+.page-row-theme {
+  flex: none;
+  color: #a78bfa;
+  font-size: 9px;
+  line-height: 1;
 }
 
 .page-actions {

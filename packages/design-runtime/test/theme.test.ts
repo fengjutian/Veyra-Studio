@@ -64,3 +64,33 @@ test("theme.delete: 不存在的主题报错", () => {
   const runtime = runtimeWithToken();
   assert.throws(() => runtime.execute(envelope(1, [{ type: "theme.delete", payload: { id: "theme:missing" } }])), CommandError);
 });
+
+test("theme.upsert: 主题可以声明继承自另一个主题", () => {
+  const runtime = runtimeWithToken();
+  runtime.execute(envelope(1, [{ type: "theme.upsert", payload: { theme: dark } }]));
+  runtime.execute(envelope(2, [{ type: "theme.upsert", payload: { theme: { id: "theme:child", name: "子", extends: dark.id, tokens: {} } } }]));
+  assert.equal(runtime.snapshot().themes?.[1]?.extends, dark.id);
+});
+
+test("page.setTheme: 给页面指定主题，清掉时回到未指定", () => {
+  const runtime = runtimeWithToken();
+  runtime.execute(envelope(1, [{ type: "theme.upsert", payload: { theme: dark } }]));
+  runtime.execute(envelope(2, [{ type: "page.setTheme", payload: { id: "page:1", themeId: dark.id } }]));
+  assert.equal(runtime.snapshot().pages["page:1"]?.themeId, dark.id);
+  runtime.execute(envelope(3, [{ type: "page.setTheme", payload: { id: "page:1" } }]));
+  assert.equal(runtime.snapshot().pages["page:1"]?.themeId, undefined);
+});
+
+test("page.setTheme: 指向不存在的主题被拒绝", () => {
+  const runtime = runtimeWithToken();
+  assert.throws(
+    () => runtime.execute(envelope(1, [{ type: "page.setTheme", payload: { id: "page:1", themeId: "theme:missing" } }])),
+    CommandError,
+  );
+  assert.equal(runtime.snapshot().pages["page:1"]?.themeId, undefined);
+});
+
+test("page.setTheme: 页面不存在时报错", () => {
+  const runtime = runtimeWithToken();
+  assert.throws(() => runtime.execute(envelope(1, [{ type: "page.setTheme", payload: { id: "page:missing", themeId: "theme:dark" } }])), CommandError);
+});
