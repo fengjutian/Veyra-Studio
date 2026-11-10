@@ -250,6 +250,20 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   低频兜底轮询（Windows 上文件事件偶尔会丢）。轮询**没有去掉**：改了但没走共享
   存储的变更仍靠它发现，它现在是兜底。跨主机要换 Redis / 数据库后端
   （`McpStateStore` 接口已留好位置）。规格见 `mcp-production.md`；
+- **外部素材服务**（2026-11-10，`external-assets.ts` + `external-asset-providers.ts`）：补上了
+  `0.8.0` 最后一项，规格见 `external-assets.md`——
+  ① **缓存**：外部素材的缓存就是「文档里的资源元数据 + 仓库里的字节」，不另建缓存存储，
+  因此不会出现「缓存和文档对不上」。同一个服务的同一个素材 id 第二次取不发请求；缓存
+  有效期由服务自己声明（`cacheTtlMs`），过期后重新取；服务不可达时有过期缓存就继续用，
+  没有就如实报错，不假装成功；
+  ② **归因**：服务的作者 / 许可证 / 来源写进 `AssetMetadata.origin`（HTTP 服务可从
+  `x-asset-author` / `x-asset-license` / `x-asset-source` 响应头读），缓存键
+  （`provider` + `providerAssetId`）写进 `AssetMetadata.external`。服务声明「要求归因」
+  而素材上缺作者或许可证时，导出诊断报 `external-asset`；归因清单可导出 Markdown；
+  ③ **退出策略**：用户可以退出某个服务——之后不再向它发请求，但**已缓存的素材继续
+  可用**（退出不该让已有设计裂开），没有缓存则拒绝取用。彻底清理是另一件事，由用户
+  显式发起：先算影响面（被节点引用的素材只报告不动手）。服务清单与退出清单落
+  `localStorage`，授权头只在 `sessionStorage`；
 - 画布渲染器：场景先压成纯数据的 `SceneNode` 树（`renderer/scene.ts`，布局盒 + 填充/描边/
   圆角/文字/图片，不碰 DOM），再由 Canvas 2D 渲染器按 `zoom × dpr` 绘制
   （`renderer/canvas-renderer.ts`），缩放时重绘而不是拉伸位图。分层借鉴 tldraw /

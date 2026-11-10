@@ -249,6 +249,14 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       if (!asset.hash.trim()) throw new CommandError("Asset hash cannot be empty");
       if (!asset.mimeType.trim()) throw new CommandError("Asset mime type cannot be empty");
       if (!Number.isInteger(asset.byteLength) || asset.byteLength < 0) throw new CommandError("Asset byte length must be a non-negative integer");
+      // 外部素材的缓存键：provider + 素材 id。缺一段就等于放弃了缓存语义
+      // （同一个 id 在不同服务里是不同东西），所以这里直接拒掉。
+      if (asset.external) {
+        if (!asset.external.provider.trim()) throw new CommandError("External asset provider cannot be empty");
+        if (!asset.external.providerAssetId.trim()) throw new CommandError("External asset provider id cannot be empty");
+        if (Number.isNaN(Date.parse(asset.external.fetchedAt))) throw new CommandError("External asset fetchedAt must be an ISO timestamp");
+        if (asset.external.expiresAt && Number.isNaN(Date.parse(asset.external.expiresAt))) throw new CommandError("External asset expiresAt must be an ISO timestamp");
+      }
       // 资源以内容哈希标识：同一个 id 换了一份不同内容，说明调用方把两张图混成了一个身份。
       const existing = document.assets[asset.id];
       if (existing && existing.hash !== asset.hash) throw new CommandError(`Asset ${asset.id} already exists with a different hash`);

@@ -1,4 +1,5 @@
 import type { ImageNode } from "@ufira/design-schema";
+import { assetIdForHash } from "@ufira/design-schema";
 
 /**
  * 图片插入的浏览器侧工具。
@@ -29,10 +30,13 @@ export function isSupportedImageType(type: string): boolean {
   return (SUPPORTED_IMAGE_TYPES as readonly string[]).includes(type.toLowerCase());
 }
 
-/** 资源 id 由内容哈希推导：同一张图重复插入会落到同一个资源上。 */
-export function assetIdForHash(hash: string): string {
-  return `asset:${hash.slice(0, 16)}`;
-}
+/**
+ * 资源 id 由内容哈希推导：同一张图重复插入会落到同一个资源上。
+ *
+ * 推导规则住在 `design-schema`（应用层与 MCP 也用同一份），这里只做转发，
+ * 免得两处各写一遍、日后对不上。
+ */
+export { assetIdForHash };
 
 /** 图片字节的 SHA-256，和仓库校验资源用的是同一种摘要。 */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {

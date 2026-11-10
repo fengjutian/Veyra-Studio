@@ -4,7 +4,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, applyThemeForPage, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
-import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, prepareVectorPdfFonts, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
+import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, collectExternalAssetDiagnostics, collectExternalAttributions, createAssetResolver, createHttpExternalAssetProvider, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, planExternalProviderPurge, prepareFontFaces, prepareVectorPdfFonts, reconstructDocumentAt, renderAttributionMarkdown, resolveExternalAsset, PACKAGE_DOCUMENT_NAME, type ExternalAssetProvider } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -70,6 +70,15 @@ import { assetIdForHash, fitImageBox, fontFamilyFromFileName, fontFileError, fon
 import { assetLabel, formatBytes, missingAssetIds, relinkError, relinkSuccessMessage } from "./asset-relink";
 import { readFontMetadata } from "./font-metadata";
 import { AssetPanel } from "./asset-panel";
+import { ExternalAssetPanel } from "./external-asset-panel";
+import {
+  providerConfigFromInput,
+  readExternalAssetSettings,
+  setProviderDisabled,
+  validateProviderInput,
+  writeExternalAssetSettings,
+  type ExternalAssetSettings,
+} from "./external-asset-settings";
 import { backupRestoreConfirmation, backupStore, shouldWriteBackup, type BackupSummary } from "./backup-store";
 import { historyRows, type HistoryRow } from "./history-rows";
 import { HistoryPanel } from "./history-panel";
@@ -206,6 +215,8 @@ function App() {
   const [storage, setStorage] = useState<StorageEstimate>();
   // 逐项目的存储占用与清理清单。
   const [storageUsage, setStorageUsage] = useState<StorageUsageOverview>();
+  // 外部素材服务设置：服务清单与退出清单落盘，授权头只活在本次会话。
+  const [externalAssetSettings, setExternalAssetSettings] = useState<ExternalAssetSettings>(() => readExternalAssetSettings());
   // 当前主题：视图状态，不进文档、不涨 revision；切换只影响预览与导出。
   // undefined = **跟随页面**：翻到带主题的页就用那一页的主题。
   const [activeThemeId, setActiveThemeId] = useState<string>();
@@ -481,6 +492,24 @@ function App() {
   useEffect(() => { if (exportScope === "selection" && !selectedIds.length) setExportScope("page"); }, [exportScope, selectedIds.length]);
   // 资源面板和画布共用同一份使用情况与缺失集合。
   const assetUsage = useMemo(() => document ? collectAssetUsage(document) : [], [document]);
+  // 外部素材服务：把配置变成可用的 provider 实例（授权头只在会话里）。
+  const externalProviders = useMemo<ExternalAssetProvider[]>(
+    () => externalAssetSettings.providers.map(config => createHttpExternalAssetProvider({
+      id: config.id,
+      label: config.label,
+      urlTemplate: config.urlTemplate,
+      ...(config.requiresAttribution ? { requiresAttribution: true } : {}),
+      ...(config.cacheTtlMs !== undefined ? { cacheTtlMs: config.cacheTtlMs } : {}),
+      ...(config.attribution ? { attribution: config.attribution } : {}),
+      ...(externalAssetSettings.headers[config.id] ? { headers: externalAssetSettings.headers[config.id] } : {}),
+    })),
+    [externalAssetSettings],
+  );
+  // 归因清单：随文档与服务设置变化。
+  const externalAttributions = useMemo(
+    () => document ? collectExternalAttributions(document, { providers: externalProviders, disabledProviders: externalAssetSettings.disabledProviders }) : [],
+    [document, externalProviders, externalAssetSettings.disabledProviders],
+  );
   // 对比度检查只依赖文档颜色，不需要渲染，因此可以随文档变化实时计算。
   const contrastIssues = useMemo(() => themedDocument ? collectContrastIssues(themedDocument) : [], [themedDocument]);
   const missingIds = useMemo(() => missingAssetIds(missingAssets), [missingAssets]);
@@ -1032,6 +1061,141 @@ function App() {
     await execute([{ type: "asset.upsert", payload: { asset: next } }]);
     setMessage(next.origin ? `资源「${assetLabel(asset)}」的来源已登记` : `资源「${assetLabel(asset)}」的来源已清空`);
   });
+  /** 保存外部素材设置（服务清单 / 退出清单落盘，授权头只在会话里）。 */
+  const saveExternalAssetSettings = (settings: ExternalAssetSettings) => {
+    writeExternalAssetSettings(settings);
+    setExternalAssetSettings(settings);
+  };
+  /** 登记一个外部素材服务。 */
+  const addExternalProvider = () => void run(async () => {
+    const values = await askForm({
+      title: "登记外部素材服务",
+      description: "地址模板里的 {id} 会被替换成素材 id；服务必须支持 https。归因信息留空时以服务返回的响应头为准。",
+      fields: [
+        { key: "id", label: "服务标识（如 iconify）", defaultValue: "" },
+        { key: "label", label: "服务名称", defaultValue: "" },
+        { key: "urlTemplate", label: "地址模板（含 {id}）", defaultValue: "" },
+        { key: "requiresAttribution", label: "该服务要求交付物带归因（是/否）", defaultValue: "yes" },
+        { key: "cacheTtlHours", label: "缓存有效期（小时，0 = 不过期）", defaultValue: "0" },
+        { key: "author", label: "默认作者（可留空）", defaultValue: "" },
+        { key: "license", label: "默认许可证（可留空）", defaultValue: "" },
+        { key: "source", label: "默认来源（素材库名或 URL，可留空）", defaultValue: "" },
+      ],
+      validate: validateProviderInput,
+    });
+    if (!values) return;
+    const config = providerConfigFromInput(values);
+    if (!config) { setMessage("服务配置不合法，没有登记"); return; }
+    if (externalAssetSettings.providers.some(entry => entry.id === config.id)) {
+      setMessage(`服务「${config.id}」已经登记过了`);
+      return;
+    }
+    saveExternalAssetSettings({ ...externalAssetSettings, providers: [...externalAssetSettings.providers, config] });
+    setMessage(`服务「${config.label}」已登记`);
+  });
+  /** 移除一个服务的登记。 */
+  const removeExternalProvider = (providerId: string) => void run(async () => {
+    const config = externalAssetSettings.providers.find(entry => entry.id === providerId);
+    if (!config) return;
+    if (!await askConfirm({ title: "移除外部素材服务", description: `移除「${config.label}」后就不再能从它取素材。已经缓存在项目里的素材不受影响。`, confirmLabel: "移除", destructive: true })) return;
+    saveExternalAssetSettings({
+      ...externalAssetSettings,
+      providers: externalAssetSettings.providers.filter(entry => entry.id !== providerId),
+    });
+    setMessage(`服务「${config.label}」已移除`);
+  });
+  /** 退出（或重新加入）一个外部素材服务。 */
+  const toggleExternalProvider = (providerId: string, disabled: boolean) => {
+    saveExternalAssetSettings(setProviderDisabled(externalAssetSettings, providerId, disabled));
+    const config = externalAssetSettings.providers.find(entry => entry.id === providerId);
+    setMessage(disabled ? `已退出「${config?.label ?? providerId}」，不再向它发请求` : `已重新加入「${config?.label ?? providerId}」`);
+  };
+  /** 清掉某个服务下没有被引用的缓存素材。 */
+  const purgeExternalProvider = (providerId: string) => void run(async () => {
+    const config = externalAssetSettings.providers.find(entry => entry.id === providerId);
+    const plan = planExternalProviderPurge(document, providerId);
+    if (!plan.removable.length && !plan.referenced.length) {
+      setMessage(`服务「${config?.label ?? providerId}」没有缓存素材`);
+      return;
+    }
+    const description = plan.referenced.length
+      ? `「${config?.label ?? providerId}」有 ${plan.removable.length} 份素材没被引用，可以清理；另有 ${plan.referenced.length} 份还在用（${plan.referenced.map(entry => entry.nodeIds.length).join("、")} 处引用），需要先换掉或删掉那些节点。`
+      : `「${config?.label ?? providerId}」的 ${plan.removable.length} 份缓存素材都没有被引用，可以清理。`;
+    if (!await askConfirm({ title: "清理外部素材缓存", description, confirmLabel: "清理", destructive: true })) return;
+    for (const asset of plan.removable) {
+      await execute([{ type: "asset.delete", payload: { id: asset.id } }]);
+      const stillShared = Object.values(project.snapshot().assets).some(entry => entry.hash === asset.hash);
+      if (!stillShared && repository.deleteAsset) await repository.deleteAsset(document.id, asset.hash);
+    }
+    await refreshMissingAssets(project.snapshot());
+    setMessage(`已清理 ${plan.removable.length} 份缓存素材${plan.referenced.length ? `，${plan.referenced.length} 份仍在使用中` : ""}`);
+  });
+  /** 从外部素材服务取一份素材（需要先登记服务）。 */
+  const pickExternalAsset = (providerId: string) => void run(async () => {
+    const provider = externalProviders.find(entry => entry.id === providerId);
+    if (!provider) { setMessage("服务不存在"); return; }
+    const values = await askForm({
+      title: `从「${provider.label}」取素材`,
+      description: "填服务里的素材 id。取过的素材会缓存在项目里，再取一次不会发请求。",
+      fields: [{ key: "externalId", label: "素材 id", defaultValue: "" }],
+      validate: input => (input.externalId?.trim() ? undefined : "素材 id 不能为空"),
+    });
+    if (!values?.externalId) return;
+    importExternalAsset(providerId, values.externalId.trim());
+  });
+  /** 导出归因清单（Markdown）。 */
+  const exportExternalAttribution = () => {
+    const markdown = renderAttributionMarkdown(externalAttributions);
+    if (!markdown) { setMessage("当前文档没有外部素材，无需归因清单"); return; }
+    downloadFile(`${safeFilename(document.meta.name)}-attribution.md`, markdown, "text/markdown");
+    setMessage(`归因清单已导出 · ${externalAttributions.length} 条`);
+  };
+  /**
+   * 从外部素材服务取一份素材并插入画布。
+   *
+   * 缓存由文档里的资源元数据决定：同一个服务的同一个 id 第二次取时不会发请求。
+   * 字节先落仓库，再在同一个事务里登记资源与创建节点——中途失败不会留下
+   * 「引用了不存在资源」的文档。
+   */
+  const importExternalAsset = (providerId: string, externalId: string) => void run(async () => {
+    const provider = externalProviders.find(entry => entry.id === providerId);
+    if (!provider) { setMessage("服务不存在"); return; }
+    const resolution = await resolveExternalAsset({
+      provider,
+      externalId,
+      document,
+      repository,
+      disabledProviders: externalAssetSettings.disabledProviders,
+    });
+    if (resolution.kind === "disabled") { setMessage(resolution.reason); return; }
+    if (resolution.kind === "unknown-provider") { setMessage(`服务「${providerId}」没有登记`); return; }
+    const bytes = resolution.bytes;
+    if (!bytes) { setMessage("没有取到素材字节"); return; }
+    await repository.putAsset(document.id, { hash: resolution.asset.hash, bytes });
+    forgetAssetUrl(document.id, resolution.asset.hash);
+    const box = fitImageBox(await readImageSize(new Blob([bytes.slice().buffer], { type: resolution.asset.mimeType })));
+    const node = makeImageNode(page.id, resolution.asset.id, box, resolution.asset.name ?? externalId);
+    const commands: DesignCommand[] = [];
+    if (!document.assets[resolution.asset.id]) commands.push({ type: "asset.upsert", payload: { asset: resolution.asset } });
+    commands.push({ type: "node.create", payload: { node } });
+    await execute(commands);
+    // 服务那边内容变了 → 资源 id 变了，旧的那条成了没人引用的孤儿。清掉它，
+    // 否则归因清单里会出现两条同一个外部素材。还在被引用的不动（删了文档就失效）。
+    if (resolution.kind === "fetched" && resolution.supersededAssetId) {
+      const stale = document.assets[resolution.supersededAssetId];
+      const stillUsed = stale && Object.values(document.nodes).some(node => node.type === "image" && node.assetId === stale.id);
+      if (stale && !stillUsed) {
+        await execute([{ type: "asset.delete", payload: { id: stale.id } }]);
+        const stillShared = Object.values(project.snapshot().assets).some(entry => entry.hash === stale.hash);
+        if (!stillShared && repository.deleteAsset) await repository.deleteAsset(document.id, stale.hash);
+      }
+    }
+    await refreshMissingAssets(project.snapshot());
+    setSelectedIds([node.id]);
+    setMessage(resolution.kind === "cached"
+      ? `已插入「${resolution.asset.name ?? externalId}」· ${resolution.note ?? "用的是本地缓存"}`
+      : `已插入「${resolution.asset.name ?? externalId}」· 刚从「${provider.label}」取回`);
+  });
   const switchPage = (id: string) => { setCurrentPageId(id); setSelectedIds([]); setPreview(undefined); };
   const createPage = () => void run(async () => {
     const name = (await askText({ title: "页面名称", defaultValue: `页面 ${document.pageOrder.length + 1}` }))?.trim(); if (!name) return;
@@ -1179,12 +1343,23 @@ function App() {
   // 导出文件名和状态文案带上范围，避免"导出的到底是哪一块"说不清。
   const exportFilename = exportTarget.nodeIds ? `${safeFilename(document.meta.name)}-选区` : safeFilename(document.meta.name);
   const exportScopeLabel = exportTarget.nodeIds ? "（选区）" : "（整页）";
+  /**
+   * 把外部素材的归因诊断并进导出诊断。
+   *
+   * 缺归因是交付前必须知道的事：服务要求署名而素材上没有署名信息，交付出去可能
+   * 违反许可。诊断放在导出报告里，用户导出时就能看到，而不是事后被对方追问。
+   */
+  const withExternalAssetDiagnostics = (diagnostics: ExportDiagnostic[]): ExportDiagnostic[] => [
+    ...diagnostics,
+    ...collectExternalAssetDiagnostics(document, { providers: externalProviders, disabledProviders: externalAssetSettings.disabledProviders }),
+  ];
   const exportHtml = () => void run(async () => {
     // 带资源的导出：图片节点在 HTML 里要落成 data URL，否则只会剩一个空框。
     const result = await project.exportHtmlWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
+    const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
     downloadFile(`${exportFilename}.html`, result.document, "text/html");
-    setExportReport({ format: "html", diagnostics: result.diagnostics });
-    setMessage(`HTML 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
+    setExportReport({ format: "html", diagnostics });
+    setMessage(`HTML 已导出${exportScopeLabel} · ${diagnostics.length} 条诊断`);
   });
   /**
    * 导出资源包：主文档 + 图片/字体文件，打成 ZIP。
@@ -1201,14 +1376,16 @@ function App() {
       ...result.files.map(file => ({ path: file.path, bytes: file.bytes })),
     ];
     downloadBytes(`${exportFilename}.zip`, createZip(entries), "application/zip");
-    setExportReport({ format: "html", diagnostics: result.diagnostics });
-    setMessage(`资源包已导出${exportScopeLabel} · ${result.files.length} 个资源文件 · ${result.diagnostics.length} 条诊断`);
+    const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
+    setExportReport({ format: "html", diagnostics });
+    setMessage(`资源包已导出${exportScopeLabel} · ${result.files.length} 个资源文件 · ${diagnostics.length} 条诊断`);
   });
   const exportSvg = () => void run(async () => {
     const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
     downloadFile(`${exportFilename}.svg`, result.svg, "image/svg+xml");
-    setExportReport({ format: "svg", diagnostics: result.diagnostics });
-    setMessage(`SVG 已导出${exportScopeLabel} · ${result.diagnostics.length} 条诊断`);
+    const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
+    setExportReport({ format: "svg", diagnostics });
+    setMessage(`SVG 已导出${exportScopeLabel} · ${diagnostics.length} 条诊断`);
   });
   const exportPng = () => void run(async () => {
     const snapshot = project.snapshot();
@@ -1238,8 +1415,9 @@ function App() {
       resolveAsset,
     });
     downloadBytes(`${safeFilename(document.meta.name)}.pdf`, result.bytes, "application/pdf");
-    setExportReport({ format: "pdf", diagnostics: result.diagnostics });
-    setMessage(`PDF 已导出 · ${result.pageCount} 页 · ${result.diagnostics.length} 条诊断`);
+    const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
+    setExportReport({ format: "pdf", diagnostics });
+    setMessage(`PDF 已导出 · ${result.pageCount} 页 · ${diagnostics.length} 条诊断`);
   });
   /**
    * 导出**矢量** PDF：形状是路径、文字是文字对象，文字可选中、可搜索。
@@ -1259,7 +1437,7 @@ function App() {
       fonts: prepared.fonts,
     });
     downloadBytes(`${safeFilename(document.meta.name)}-矢量.pdf`, result.bytes, "application/pdf");
-    const diagnostics = [...prepared.diagnostics, ...result.diagnostics];
+    const diagnostics = withExternalAssetDiagnostics([...prepared.diagnostics, ...result.diagnostics]);
     setExportReport({ format: "pdf", diagnostics });
     setMessage(`矢量 PDF 已导出 · ${result.pageCount} 页 · ${diagnostics.length} 条诊断`);
   });
@@ -2640,6 +2818,20 @@ function App() {
           )}
         </Tabs.Content>
         <Tabs.Content value="data" className="inspector-body">
+          <section className="inspector-section">
+            <h2>外部素材服务</h2>
+            <ExternalAssetPanel
+              settings={externalAssetSettings}
+              attributions={externalAttributions}
+              disabled={busy}
+              onRemoveProvider={removeExternalProvider}
+              onToggleProvider={toggleExternalProvider}
+              onPurgeProvider={purgeExternalProvider}
+              onPickFromProvider={pickExternalAsset}
+              onExportAttribution={exportExternalAttribution}
+            />
+            <button disabled={busy} onClick={addExternalProvider}>登记外部素材服务</button>
+          </section>
           <section className="inspector-section">
             <h2>存储用量</h2>
             <StoragePanel estimate={storage} usage={storageUsage} disabled={busy} onRefresh={() => { refreshStorage(); refreshStorageUsage(); }} onExportBackup={exportJson} onTrimHistory={trimProjectHistory} onDeleteProject={deleteStorageProject} />

@@ -477,9 +477,13 @@ export const designDocumentSchema = z.object({
       author: z.string().optional(),
       license: z.string().optional(),
       note: z.string().optional(),
-      // 外部素材服务：provider 与 providerAssetId 一起构成缓存键。
-      provider: z.string().optional(),
-      providerAssetId: z.string().optional(),
+    }).optional(),
+    // 外部素材服务：provider + providerAssetId 构成缓存键。
+    external: z.object({
+      provider: z.string().min(1),
+      providerAssetId: z.string().min(1),
+      fetchedAt: z.iso.datetime(),
+      expiresAt: z.iso.datetime().optional(),
     }).optional(),
   })),
   migrations: z.array(z.object({

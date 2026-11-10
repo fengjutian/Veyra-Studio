@@ -1,4 +1,5 @@
 export * from "./types";
+export * from "./assets";
 export * from "./grid-areas";
 export * from "./geometry";
 export * from "./boolean";

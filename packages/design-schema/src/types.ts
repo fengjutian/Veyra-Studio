@@ -587,15 +587,23 @@ export interface AssetOrigin {
   license?: string;
   /** 补充说明（例如「仅限本项目使用」）。 */
   note?: string;
-  /**
-   * 外部素材服务：这份额素材来自哪个服务（例如 `unsplash`）。
-   *
-   * 与 `providerAssetId` 一起构成**缓存键**：同一个服务里的同一个 id 应该对应同一份
-   * 内容，所以再取一次时不必重新请求服务。
-   */
-  provider?: string;
-  /** 该服务内部的素材 id；与 `provider` 必须同时出现或同时不出现。 */
-  providerAssetId?: string;
+}
+
+/**
+ * 资源来自某个外部素材服务的记录。
+ *
+ * `provider` + `providerAssetId` 一起构成**缓存键**：同一个服务里的同一个 id
+ * 应当对应同一份内容，所以再取一次时不必重新请求服务（离线也能用）。
+ */
+export interface ExternalAssetOrigin {
+  /** 服务标识，例如 `unsplash`。 */
+  provider: string;
+  /** 服务内部的素材 id。 */
+  providerAssetId: string;
+  /** 拉取时间（ISO 8601）。 */
+  fetchedAt: string;
+  /** 缓存过期时间（ISO 8601）；缺省表示不过期。 */
+  expiresAt?: string;
 }
 
 export interface AssetMetadata {
@@ -606,6 +614,8 @@ export interface AssetMetadata {
   name?: string;
   /** 来源与授权；旧文档没有这个字段，缺省表示未登记。 */
   origin?: AssetOrigin;
+  /** 来自外部素材服务；本地素材没有这个字段。 */
+  external?: ExternalAssetOrigin;
 }
 
 /**
