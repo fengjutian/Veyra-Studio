@@ -73,6 +73,9 @@ jobs:
       # 端到端：视觉上下文。真的浏览器里离屏渲染整页 → 把 PNG 拿回来逐像素核对
       # （形状颜色、图片资源、缺图占位、限长缩放）。Node 里没有画布，截不出这张图。
       - run: npm run visual:vision:probe -- --require-browser
+      # 端到端：设计 → 代码。导出的 React 组件现场编译渲染，与 HTML 导出逐像素比对。
+      # 单元测试只能断言代码里有几条声明，「长得一样」得靠像素说话。
+      - run: npm run visual:react:probe -- --require-browser
 
   budgets:
     name: 性能预算（layout / export / paint）

@@ -99,7 +99,13 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   `letter-spacing`，SVG 用 `text-anchor` + `x` 表达盒内对齐，缺省样式不写进 CSS，
   旧文档的导出结果保持不变；导出支持按选区裁剪：`nodeIds` 只导出选中节点所在的分支
   （选中节点连同子树，以及通往它们的祖先链），`origin` 把导出坐标整体平移，让选区落在
-  视口左上角；不传这两个参数时导出结果与原来逐字一致；
+  视口左上角；不传这两个参数时导出结果与原来逐字一致；**React 组件导出**
+  （2026-11-10）：新增 `exportPageToReact()`，把一页导出成能进工程的 `.tsx`——
+  样式复用 HTML 导出的同一套计算（`nodeStyle`），两边只差序列化，所以渲染结果一致；
+  文字内容与图片地址提成 props（带段内样式或段落样式的文字不 prop 化，会记诊断）；
+  Token 绑定仍导出成 CSS 变量，变量定义在根元素的 style 上（自定义属性会继承）。
+  端到端探针 `npm run visual:react:probe` 在真实浏览器里把导出的组件与 HTML 导出
+  各渲染一遍，**逐像素比对，实测 0 像素差异**。规格见 `design-to-code.md`；
 - `packages/studio-application`：串联项目创建、命令事务、日志与快照、恢复、布局和
   HTML/SVG 导出的应用服务原型，并提供不修改真实项目的命令预演入口，作为未来工作台与
   AI Orchestrator 的共同入口；

@@ -59,7 +59,7 @@ import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds
 import { exportPageToPng, downloadDataUrl } from "./png-export";
 import { createZip } from "./zip";
 import type { ExportDiagnostic } from "@ufira/design-export";
-import { exportPageToHtml } from "@ufira/design-export";
+import { exportPageToHtml, exportPageToReact } from "@ufira/design-export";
 import { ExportDiagnosticsPanel } from "./export-panel";
 import type { ExportFormat } from "./export-report";
 import { ExportPreviewDialog } from "./export-preview-dialog";
@@ -1191,6 +1191,28 @@ function App() {
   });
   // 预览和下载走同一个导出入口，看到的就是交付物本身。
   const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
+  /**
+   * 导出 React 组件：设计稿直接变成能进工程的代码。
+   *
+   * 样式与 HTML 导出共用同一套计算，所以两者渲染结果一致（端到端探针逐像素比对）。
+   * 文字内容与图片地址提成 props——内容是内容，样式是样式。
+   */
+  const exportReact = () => void run(async () => {
+    const snapshot = project.snapshot();
+    const resolveAsset = await createAssetResolver(repository, snapshot, page.id, exportTarget.nodeIds);
+    const result = exportPageToReact(snapshot, {
+      pageId: page.id,
+      viewport: exportTarget.viewport,
+      componentName: page.name,
+      origin: exportTarget.origin,
+      nodeIds: exportTarget.nodeIds,
+      resolveAsset,
+      themeId: activeThemeId,
+    });
+    downloadFile(`${exportFilename}.tsx`, result.code, "text/typescript");
+    setExportReport({ format: "react", diagnostics: result.diagnostics });
+    setMessage(`React 组件已导出${exportScopeLabel} · ${result.componentName} · ${result.props.length} 个 props · ${result.diagnostics.length} 条诊断`);
+  });
   const previewHtml = () => void run(async () => {
     const result = await project.exportHtmlWithAssets(exportOptions());
     setExportReport({ format: "html", diagnostics: result.diagnostics });
@@ -2329,6 +2351,7 @@ function App() {
             <div className="layer-actions" style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6 }}>
               <Tooltip label="导出单个自包含的 HTML 文件"><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />导出 HTML</button></Tooltip>
               <Tooltip label="导出资源包（HTML + 图片/字体文件，打成 ZIP）"><button disabled={busy} onClick={exportPackage}><Icon name="exportPackage" />导出资源包</button></Tooltip>
+              <Tooltip label="导出 React 组件（文字与图片地址提成 props）"><button disabled={busy} onClick={exportReact}><Icon name="exportHtml" />导出 React</button></Tooltip>
             </div>
           </section>
           <section className="inspector-section">

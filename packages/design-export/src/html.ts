@@ -161,7 +161,7 @@ function renderSiblingList(
  * 只取几何轮廓：圆角矩形的 `cornerRadius` 在这里被忽略（CSS path 里补圆弧会让表达式
  * 明显变长，而蒙版用圆角矩形并不常见），椭圆用 32 段折线近似。
  */
-function maskClipPath(document: DesignDocument, mask: DesignNode): string | undefined {
+export function maskClipPath(document: DesignDocument, mask: DesignNode): string | undefined {
   const { x, y, width, height } = mask.layout;
   if (mask.type === "ellipse") {
     const points: string[] = [];
@@ -240,7 +240,7 @@ function renderVectorPath(
   return `<div ${common}><svg viewBox="0 0 ${num(width)} ${num(height)}" preserveAspectRatio="none" style="display:block;width:100%;height:100%;overflow:visible">${paintDefs}${paths.join("")}</svg></div>`;
 }
 
-function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
+export function nodeStyle(document: DesignDocument, node: DesignNode, parent: DesignNode | undefined, tokenVariables: Record<string, string>, origin?: { x: number; y: number }): string {
   const declarations: string[] = [];
   const inStack = parent?.layout.mode === "stack";
   const inGrid = parent?.layout.mode === "grid";
@@ -430,11 +430,11 @@ function buildCss(document: DesignDocument, options: HtmlExportOptions, tokenVar
 }
 
 /** 文档里有没有节点真的用了混合模式（`normal` 不算）。 */
-function documentUsesBlendMode(document: DesignDocument): boolean {
+export function documentUsesBlendMode(document: DesignDocument): boolean {
   return Object.values(document.nodes).some(node => node.visible !== false && cssBlendMode(node.appearance.blendMode) !== undefined);
 }
 
-function createTokenVariables(document: DesignDocument): Record<string, string> {
+export function createTokenVariables(document: DesignDocument): Record<string, string> {
   const used = new Set<string>();
   const output: Record<string, string> = {};
   for (const name of Object.keys(document.tokens).sort()) {
@@ -448,7 +448,7 @@ function createTokenVariables(document: DesignDocument): Record<string, string> 
   return output;
 }
 
-function boundValue(binding: string | undefined, fallback: string, variables: Record<string, string>): string {
+export function boundValue(binding: string | undefined, fallback: string, variables: Record<string, string>): string {
   return binding && variables[binding] ? `var(${variables[binding]})` : safeCssValue(fallback);
 }
 
@@ -462,7 +462,7 @@ function finiteSize(size: { width: number; height: number }): boolean {
   return Number.isFinite(size.width) && Number.isFinite(size.height) && size.width >= 0 && size.height >= 0;
 }
 
-function safeAssetUrl(url: string): boolean {
+export function safeAssetUrl(url: string): boolean {
   // `svg+xml` 里的 `+` 必须转义，否则正则会把 `data:image/svg` 后面当成任意 `+` 重复。
   return /^(https?:|data:image\/(?:png|jpeg|gif|webp|svg\+xml);|blob:|\/|\.\.?\/)/i.test(url);
 }
@@ -575,12 +575,12 @@ function cssString(value: string): string {
   return `"${value.replace(/["\\\n\r]/g, character => `\\${character}`)}"`;
 }
 
-function px(value: number): string {
+export function px(value: number): string {
   return `${Number(value.toFixed(4))}px`;
 }
 
 /** 无单位的数值（viewBox、stroke-width 这类属性用）。 */
-function num(value: number): string {
+export function num(value: number): string {
   return String(Number(value.toFixed(4)));
 }
 
@@ -608,7 +608,7 @@ function dedupeDiagnostics(diagnostics: ExportDiagnostic[]): ExportDiagnostic[] 
 }
 
 /** 填充层 → CSS 背景值。颜色 token 绑定由 resolveFills 提前压成实色。 */
-function cssPaint(node: DesignNode, paint: Paint, tokenVariables: Record<string, string>): string {
+export function cssPaint(node: DesignNode, paint: Paint, tokenVariables: Record<string, string>): string {
   if (paint.type === "solid") return boundValue(node.bindings?.fill, paint.color, tokenVariables);
   const stops = [...paint.stops].sort((a, b) => a.offset - b.offset)
     .map(stop => `${safeCssValue(stop.color)} ${num(stop.offset * 100)}%`)
