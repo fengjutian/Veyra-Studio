@@ -20,17 +20,66 @@ export function findTheme(document: DesignDocument, themeId: string | undefined)
   return (document.themes ?? []).find(theme => theme.id === themeId);
 }
 
-/** 某个主题是否覆盖了这个 token（面板据此显示「已覆盖」）。 */
+/**
+ * 主题的继承链，从**最远的祖先**到主题自己。
+ *
+ * 顺序很重要：叠加覆盖时祖先先、后代后，后代的值才生效。
+ *
+ * 链上成环或指向不存在的主题时返回 `undefined`——校验阶段会拦下这两种情况，
+ * 这里只是不再无限循环。
+ */
+export function themeChain(document: DesignDocument, themeId: string | undefined): Theme[] | undefined {
+  if (!themeId) return [];
+  const themes = document.themes ?? [];
+  const chain: Theme[] = [];
+  const seen = new Set<string>();
+  let current = themes.find(theme => theme.id === themeId);
+  while (current) {
+    if (seen.has(current.id)) return undefined;
+    seen.add(current.id);
+    chain.push(current);
+    current = current.extends ? themes.find(theme => theme.id === current!.extends) : undefined;
+  }
+  // 链走完了但起点没找到 → 指向不存在的主题。
+  if (chain[0]?.id !== themeId) return undefined;
+  return chain.reverse();
+}
+
+/**
+ * 某个主题自己（不含继承）是否覆盖了这个 token。
+ *
+ * 面板据此显示「已覆盖」并给出「恢复基础值」——只有**自己**写了覆盖才谈得上
+ * 恢复；继承来的值要改就得改父主题。
+ */
 export function isTokenOverridden(document: DesignDocument, themeId: string | undefined, name: string): boolean {
   const theme = findTheme(document, themeId);
   return Boolean(theme && Object.prototype.hasOwnProperty.call(theme.tokens, name));
 }
 
-/** 合并后的 token 表：基础值 + 主题覆盖。 */
+/**
+ * 这个 token 的值来自哪个主题（继承链上最后一个覆盖它的主题）。
+ *
+ * 面板据此显示「继承自 暗色」——继承来的值**不是**当前主题自己写的，用户不能
+ * 在这里「恢复基础值」，得去父主题改。
+ */
+export function inheritedTokenSource(document: DesignDocument, themeId: string | undefined, name: string): Theme | undefined {
+  const chain = themeChain(document, themeId);
+  if (!chain) return undefined;
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    const theme = chain[index]!;
+    if (Object.prototype.hasOwnProperty.call(theme.tokens, name)) return theme;
+  }
+  return undefined;
+}
+
+/** 合并后的 token 表：基础值 + 主题覆盖（含继承链）。 */
 export function themeTokenMap(document: DesignDocument, themeId: string | undefined): Record<string, TokenValue> {
-  const theme = findTheme(document, themeId);
-  if (!theme || !Object.keys(theme.tokens).length) return document.tokens;
-  return { ...document.tokens, ...theme.tokens };
+  const chain = themeChain(document, themeId);
+  if (!chain?.length) return document.tokens;
+  const overrides: Record<string, TokenValue> = {};
+  for (const theme of chain) Object.assign(overrides, theme.tokens);
+  if (!Object.keys(overrides).length) return document.tokens;
+  return { ...document.tokens, ...overrides };
 }
 
 /**
@@ -43,9 +92,9 @@ export function themeTokenMap(document: DesignDocument, themeId: string | undefi
  * 没有主题、或主题没有任何覆盖时原样返回同一个对象，调用方可以据此跳过重算。
  */
 export function applyThemeTokens(document: DesignDocument, themeId: string | undefined): DesignDocument {
-  const theme = findTheme(document, themeId);
-  if (!theme || !Object.keys(theme.tokens).length) return document;
-  return { ...document, tokens: { ...document.tokens, ...theme.tokens } };
+  const merged = themeTokenMap(document, themeId);
+  if (merged === document.tokens) return document;
+  return { ...document, tokens: merged };
 }
 
 /**

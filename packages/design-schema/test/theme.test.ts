@@ -6,6 +6,7 @@ import {
   defaultAppearance,
   defaultLayout,
   findTheme,
+  inheritedTokenSource,
   isTokenOverridden,
   resolveFills,
   themeTokenMap,
@@ -112,4 +113,65 @@ test("theme: 主题把基础 token 覆盖成别名环时被拒绝", () => {
 test("theme: 没有主题覆盖的旧文档依然合法", () => {
   const document = documentWith();
   assert.deepEqual(validateDocument(document), document);
+});
+
+// ── 主题继承（2026-11-10）────────────────────────────────────────────
+
+const brand: Theme = { id: "theme:brand", name: "品牌色", tokens: { "gray.900": { type: "color", value: "#ff6600" } } };
+
+test("theme: 子主题继承父主题的覆盖", () => {
+  const document = documentWith([brand, { id: "theme:child", name: "深色", extends: "theme:brand", tokens: {} }]);
+  const themed = applyThemeTokens(document, "theme:child");
+  assert.equal(tokenColor(themed, "text.primary"), "#ff6600");
+});
+
+test("theme: 子主题自己的覆盖盖过父主题", () => {
+  const document = documentWith([
+    brand,
+    { id: "theme:child", name: "深色", extends: "theme:brand", tokens: { "gray.900": { type: "color", value: "#f5f5f5" } } },
+  ]);
+  const themed = applyThemeTokens(document, "theme:child");
+  assert.equal(tokenColor(themed, "text.primary"), "#f5f5f5");
+  // 父主题不受影响。
+  assert.equal(tokenColor(applyThemeTokens(document, "theme:brand"), "text.primary"), "#ff6600");
+});
+
+test("theme: 继承链多层叠加，祖先先后代后", () => {
+  const document = documentWith([
+    { id: "theme:a", name: "A", tokens: { "gray.900": { type: "color", value: "#111111" }, "space.md": { type: "number", value: 8 } } },
+    { id: "theme:b", name: "B", extends: "theme:a", tokens: { "gray.900": { type: "color", value: "#222222" } } },
+    { id: "theme:c", name: "C", extends: "theme:b", tokens: {} },
+  ]);
+  const map = themeTokenMap(document, "theme:c");
+  // B 盖掉了 A 的颜色；A 的数值没被覆盖，沿用 A 的值。
+  assert.deepEqual(map["gray.900"], { type: "color", value: "#222222" });
+  assert.deepEqual(map["space.md"], { type: "number", value: 8 });
+});
+
+test("theme: 继承链成环会被拒绝", () => {
+  const document = documentWith([
+    { id: "theme:a", name: "A", extends: "theme:b", tokens: {} },
+    { id: "theme:b", name: "B", extends: "theme:a", tokens: {} },
+  ]);
+  assert.throws(() => validateDocument(document), /cyclic extends chain/);
+});
+
+test("theme: 继承不存在的父主题会被拒绝", () => {
+  const document = documentWith([{ id: "theme:child", name: "子", extends: "theme:missing", tokens: {} }]);
+  assert.throws(() => validateDocument(document), /extends missing theme theme:missing/);
+});
+
+test("theme: 自己写的覆盖与继承来的覆盖分得清", () => {
+  const document = documentWith([
+    brand,
+    { id: "theme:child", name: "深色", extends: "theme:brand", tokens: { "space.md": { type: "number", value: 24 } } },
+  ]);
+  // 自己覆盖的：可以「恢复基础值」。
+  assert.equal(isTokenOverridden(document, "theme:child", "space.md"), true);
+  // 继承来的：不是自己写的。
+  assert.equal(isTokenOverridden(document, "theme:child", "gray.900"), false);
+  // 但要说得出它从哪来。
+  assert.equal(inheritedTokenSource(document, "theme:child", "gray.900")?.id, "theme:brand");
+  assert.equal(inheritedTokenSource(document, "theme:child", "space.md")?.id, "theme:child");
+  assert.equal(inheritedTokenSource(document, "theme:child", "text.primary"), undefined);
 });

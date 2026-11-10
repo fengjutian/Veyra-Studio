@@ -11,7 +11,7 @@ import {
   type BindingRequirement,
   type ComponentPropertyField,
 } from "./component-properties";
-import { resolveTokenTarget } from "./tokens";
+import { resolveTokenTarget, themeChain, themeTokenMap } from "./tokens";
 import type { ComponentPropertyBindings, DesignDocument, NodeId, TokenValue } from "./types";
 
 export class DocumentValidationError extends Error {
@@ -47,7 +47,13 @@ export function validateDocument(input: unknown): DesignDocument {
     for (const name of Object.keys(theme.tokens)) {
       if (!document.tokens[name]) issues.push(`theme ${theme.id} overrides missing token ${name}`);
     }
-    checkTokenGraph({ ...document.tokens, ...theme.tokens }, `theme ${theme.id} `, issues);
+    // 继承：父主题必须存在，继承链不能成环。
+    if (theme.extends) {
+      if (!themeIds.includes(theme.extends)) issues.push(`theme ${theme.id} extends missing theme ${theme.extends}`);
+      else if (themeHasCyclicExtends(document, theme.id)) issues.push(`theme ${theme.id} has a cyclic extends chain`);
+    }
+    // 合并视图要过别名检查——继承链上的覆盖合起来同样可能造出环。
+    checkTokenGraph(themeTokenMap(document, theme.id), `theme ${theme.id} `, issues);
   }
 
   const claimed = new Map<NodeId, string>();
@@ -236,6 +242,25 @@ function bindingAccepts(property: string, tokenType: string): boolean {
   // 字体绑定只认 typography token：`string` 是早期的标量类型，没有渲染语义。
   if (property === "typography") return tokenType === "typography";
   return true;
+}
+
+/**
+ * 这个主题沿继承链能不能走回它自己（成环）。
+ *
+ * 环会让「祖先先、后代后」的叠加顺序失去意义——先算谁？成环的主题在合并时
+ * 会无限循环，所以在校验阶段就拒绝。
+ */
+function themeHasCyclicExtends(document: DesignDocument, themeId: string): boolean {
+  const themes = document.themes ?? [];
+  const seen = new Set<string>();
+  let current = themes.find(theme => theme.id === themeId);
+  while (current?.extends) {
+    // 回到自己 = 自环；走进已经走过的节点 = 进入了别处的环。
+    if (current.extends === themeId || seen.has(current.extends)) return true;
+    seen.add(current.extends);
+    current = themes.find(theme => theme.id === current!.extends);
+  }
+  return false;
 }
 
 /**

@@ -614,6 +614,16 @@ export interface MigrationRecord {
 export interface Theme {
   id: string;
   name: string;
+  /**
+   * 继承自另一个主题（可选）。
+   *
+   * 继承链上的覆盖按「祖先先、后代后」叠加：后代覆盖祖先，同一个 token 上
+   * 后代的值生效。主题继承让「暗色」继承「品牌色」成为可能，而不用把品牌色
+   * 的每个值在暗色里重抄一遍。
+   *
+   * 继承链成环、或指向不存在的主题，都在校验阶段报错。
+   */
+  extends?: string;
   /** token 名 → 覆盖值。未覆盖的 token 沿用 `document.tokens`。 */
   tokens: Record<string, TokenValue>;
 }

@@ -445,6 +445,8 @@ export const designDocumentSchema = z.object({
   themes: z.array(z.object({
     id: z.string().min(1),
     name: z.string().min(1),
+    // 继承自另一个主题；父主题存在性与成环由 `validateDocument()` 检查。
+    extends: z.string().min(1).optional(),
     tokens: z.record(z.string(), tokenValueSchema),
   })).optional(),
   assets: z.record(id, z.object({

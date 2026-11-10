@@ -20,6 +20,8 @@ export interface TokenPanelProps {
   themeName?: string;
   /** 这个 token 在当前主题下是否有覆盖。 */
   overridden?(name: string): boolean;
+  /** 这个 token 的值来自哪个主题（继承来的）；返回主题名。 */
+  inheritedFrom?(name: string): string | undefined;
   /** 去掉当前主题下的覆盖，回到基础值。 */
   onResetOverride?(name: string): void;
 }
@@ -64,7 +66,7 @@ function tokenPreview(token: TokenValue): string {
  * 数值 token 能绑圆角/间距——和 `resolveRadius` / `resolveGap` / `resolveStroke`
  * 支持的绑定保持一致，避免出现"能绑但不生效"的选项。
  */
-export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onImport, onUpdate, onBind, onUnbind, onDelete, themeName, overridden, onResetOverride }: TokenPanelProps) {
+export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onImport, onUpdate, onBind, onUnbind, onDelete, themeName, overridden, inheritedFrom, onResetOverride }: TokenPanelProps) {
   const entries = Object.entries(tokens).sort(([left], [right]) => left.localeCompare(right));
   const boundProperty = (name: string): keyof PropertyBindings | undefined =>
     (Object.entries(bindings ?? {}) as Array<[keyof PropertyBindings, string]>).find(([, value]) => value === name)?.[0];
@@ -114,6 +116,10 @@ export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onIm
                         </Tooltip>
                       ) : null}
                     </>
+                  ) : inheritedFrom?.(name) ? (
+                    // 继承来的值不是当前主题自己写的——不能在这里「恢复基础值」，
+                    // 要改得去父主题改。标记说清楚值从哪来。
+                    <span className="token-override-badge token-inherited-badge" title={`继承自「${inheritedFrom(name)}」`}>继承</span>
                   ) : null}
                   <select
                     className="token-bind-select"

@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, applyThemeTokens, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
@@ -1593,10 +1593,49 @@ function App() {
       validate: input => (input.name?.trim() ? undefined : "主题名称不能为空"),
     });
     if (!values) return;
-    const theme = { id: `theme:${crypto.randomUUID()}`, name: values.name.trim(), tokens: {} };
+    // 继承：把父主题的覆盖带过来，之后再逐项覆盖。父主题只在有其它主题时才问。
+    const others = (document.themes ?? []).filter(theme => theme.id !== activeThemeId);
+    let parentId: string | undefined;
+    if (others.length) {
+      const picked = await askChoice({
+        title: "继承自哪个主题？",
+        description: "继承之后，这个主题会先带上父主题的覆盖，再叠加自己的。可以不继承。",
+        options: [
+          { value: "", label: "不继承（从基础值开始）" },
+          ...others.map(theme => ({ value: theme.id, label: theme.name })),
+        ],
+      });
+      if (picked === null) return;
+      parentId = picked || undefined;
+    }
+    const theme = {
+      id: `theme:${crypto.randomUUID()}`,
+      name: values.name.trim(),
+      tokens: {},
+      ...(parentId ? { extends: parentId } : {}),
+    };
     await execute([{ type: "theme.upsert", payload: { theme } }]);
     setActiveThemeId(theme.id);
-    setMessage(`已新增主题「${theme.name}」`);
+    setMessage(theme.extends
+      ? `已新增主题「${theme.name}」，继承自「${findTheme(document, theme.extends)?.name ?? theme.extends}」`
+      : `已新增主题「${theme.name}」`);
+  });
+  /**
+   * 清空当前主题的**全部**覆盖，回到基础值 / 继承来的值。
+   *
+   * 一个一个点「恢复基础值」太慢：主题覆盖了几十个 token 时，要点几十次。
+   * 注意这不动父主题的覆盖——继承来的值还在。
+   */
+  const resetWholeTheme = () => void run(async () => {
+    if (!activeThemeId || !activeTheme) return;
+    if (!await askConfirm({
+      title: "清空主题覆盖",
+      description: `清空主题「${activeTheme.name}」的 ${Object.keys(activeTheme.tokens).length} 项覆盖？这些 token 会回到基础值（或父主题继承来的值）。`,
+      confirmLabel: "清空",
+      destructive: true,
+    })) return;
+    await execute([{ type: "theme.upsert", payload: { theme: { ...activeTheme, tokens: {} } } }]);
+    setMessage(`已清空主题「${activeTheme.name}」的覆盖`);
   });
   const deleteActiveTheme = () => void run(async () => {
     if (!activeThemeId) return;
@@ -2491,13 +2530,20 @@ function App() {
                 >
                   <option value="">基础（{document.tokens ? Object.keys(document.tokens).length : 0} 个 token）</option>
                   {(document.themes ?? []).map(theme => (
-                    <option key={theme.id} value={theme.id}>{theme.name}（{Object.keys(theme.tokens).length} 项覆盖）</option>
+                    <option key={theme.id} value={theme.id}>{theme.name}（{Object.keys(theme.tokens).length} 项覆盖{theme.extends ? " · 继承" : ""}）</option>
                   ))}
                 </select>
               </label>
+              {activeTheme?.extends ? (
+                <p className="empty-hint">
+                  当前主题继承自「{findTheme(document, activeTheme.extends)?.name ?? activeTheme.extends}」：
+                  继承来的值在父主题里改，在这里改会形成覆盖。
+                </p>
+              ) : null}
               <div className="storage-actions">
                 <button disabled={busy} onClick={createTheme}>新增主题</button>
                 <button disabled={busy || !activeThemeId} onClick={deleteActiveTheme}>删除当前主题</button>
+                <button disabled={busy || !activeThemeId || !Object.keys(activeTheme?.tokens ?? {}).length} onClick={resetWholeTheme}>清空该主题的覆盖</button>
               </div>
               <p className="empty-hint">
                 切换主题只影响预览与导出，不改基础 token。选中主题后，
@@ -2518,6 +2564,14 @@ function App() {
               onUnbind={unbindToken}
               onDelete={name => void run(() => execute([{ type: "token.delete", payload: { name } }]))}
               overridden={activeThemeId ? name => isTokenOverridden(document, activeThemeId, name) : undefined}
+              inheritedFrom={activeThemeId
+                ? name => {
+                    const source = inheritedTokenSource(document, activeThemeId, name);
+                    // 自己写了的显示「已覆盖」，继承来的才显示「继承」。
+                    if (!source || source.id === activeThemeId) return undefined;
+                    return source.name;
+                  }
+                : undefined}
               onResetOverride={activeThemeId ? resetThemeOverride : undefined}
               themeName={findTheme(document, activeThemeId)?.name}
             />
