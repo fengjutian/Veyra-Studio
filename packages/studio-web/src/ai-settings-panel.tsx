@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { PROVIDER_PRESETS, capabilityLabels, capabilitySourceLabel, describeProvider } from "@ufira/ai-orchestrator";
-import { maskApiKey, type AiSettings } from "./ai-settings";
+import { maskApiKey, MAX_AI_MAX_TOKENS, MAX_AI_TIMEOUT_MS, MIN_AI_MAX_TOKENS, MIN_AI_TIMEOUT_MS, clampMaxTokens, clampTimeoutMs, type AiSettings } from "./ai-settings";
 import { clearStoredVault, hasStoredVault, openKeyRing, readStoredVault, sealKeyRing } from "./ai-key-vault";
 
 export interface AiSettingsPanelProps {
@@ -145,6 +145,35 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
       <label className="field">
         <span className="field-label">模型</span>
         <input type="text" value={draft.model} placeholder="gpt-4o-mini" onChange={event => update({ model: event.target.value })} />
+      </label>
+      <label className="field">
+        <span className="field-label">请求超时（秒）</span>
+        <input
+          type="number"
+          min={Math.floor(MIN_AI_TIMEOUT_MS / 1000)}
+          max={Math.floor(MAX_AI_TIMEOUT_MS / 1000)}
+          value={Math.round(draft.timeoutMs / 1000)}
+          onChange={event => update({ timeoutMs: clampTimeoutMs(Number(event.target.value) * 1000) })}
+        />
+        <p className="ai-settings-hint">
+          带推理的模型出一份整页计划常要两三分钟，超时给短了会中途掐断；
+          调长不会让快端点变慢，只是不再提前放弃。
+        </p>
+      </label>
+      <label className="field">
+        <span className="field-label">回复 token 上限</span>
+        <input
+          type="number"
+          min={MIN_AI_MAX_TOKENS}
+          max={MAX_AI_MAX_TOKENS}
+          step={1024}
+          value={draft.maxTokens}
+          onChange={event => update({ maxTokens: clampMaxTokens(Number(event.target.value)) })}
+        />
+        <p className="ai-settings-hint">
+          一整页计划本身就要上万 token（每条 node.create 都带完整节点对象），推理模型还要再烧一截在思考上。
+          给小了回复会被截断在半个 JSON 上，看起来就像「模型不会设计」。
+        </p>
       </label>
       <div className="field">
         <span className="field-label">API Key（可多把，用于轮换）</span>

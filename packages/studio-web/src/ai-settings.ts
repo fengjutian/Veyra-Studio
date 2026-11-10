@@ -24,6 +24,22 @@ export interface AiSettings {
   apiKeys: string[];
   /** 当前使用的那一把的下标。 */
   activeKeyIndex: number;
+  /**
+   * 单次请求的超时（毫秒）。
+   *
+   * 为什么要能调：带推理的模型（MiniMax-M3 等）出一份整页计划要一分半到好几分钟，
+   * 规划器原来的 60 秒默认会让「从零生成一页」在真实产品里必然超时——短问短答够用，
+   * 长计划不够。这不是端点慢，是预算不够。
+   */
+  timeoutMs: number;
+  /**
+   * 单次回复的 token 上限。
+   *
+   * 同样要能调：一份整页计划本身就要上万 token（每个 node.create 都带完整节点对象），
+   * 推理模型还要额外烧一大截在思考上。预算不够时回复会被截断在半个 JSON 上，
+   * 解析器只能报「计划缺少 summary」——看着像模型不会设计，其实是钱不够。
+   */
+  maxTokens: number;
 }
 
 /** 只用到这三个方法，方便在没有 DOM 的环境里测试。 */
@@ -37,12 +53,32 @@ export const AI_SETTINGS_KEY = "studio:ai-settings";
 /** 密钥单独一个键，只放在 sessionStorage。 */
 export const AI_SETTINGS_SESSION_KEY = "studio:ai-settings:session";
 
+/**
+ * 超时的下限与上限（毫秒）。
+ *
+ * 下限 10 秒：比这还短的值没有任何意义，只会让每次调用都变成超时。
+ * 上限 10 分钟：再长就是「卡住了」，界面应该让人以为它在跑。
+ */
+export const MIN_AI_TIMEOUT_MS = 10_000;
+export const MAX_AI_TIMEOUT_MS = 600_000;
+
+/**
+ * token 预算的下限与上限。
+ *
+ * 下限 1024：低于它连一条 node.create 都写不完。
+ * 上限 128k：再大多数端点会直接拒收（报 max_tokens 超过模型上限）。
+ */
+export const MIN_AI_MAX_TOKENS = 1_024;
+export const MAX_AI_MAX_TOKENS = 131_072;
+
 export const DEFAULT_AI_SETTINGS: AiSettings = {
   enabled: false,
   baseUrl: "https://api.openai.com/v1",
   model: "gpt-4o-mini",
   apiKeys: [],
   activeKeyIndex: 0,
+  timeoutMs: 300_000,
+  maxTokens: 32_768,
 };
 
 /** 当前使用的那把密钥；没有就空串。 */
@@ -84,6 +120,8 @@ export function readAiSettings(persistent?: AiSettingsStorage, session?: AiSetti
         settings.enabled = parsed.enabled === true;
         settings.baseUrl = typeof parsed.baseUrl === "string" && parsed.baseUrl.trim() ? parsed.baseUrl.trim() : DEFAULT_AI_SETTINGS.baseUrl;
         settings.model = typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : DEFAULT_AI_SETTINGS.model;
+        settings.timeoutMs = clampTimeoutMs(parsed.timeoutMs);
+        settings.maxTokens = clampMaxTokens(parsed.maxTokens);
         if (typeof parsed.apiKey === "string" && parsed.apiKey.trim()) {
           legacyKey = parsed.apiKey.trim();
           // 迁移：旧版密钥挪进会话存储，并把磁盘副本里的密钥抹掉。
@@ -162,7 +200,31 @@ function persistConfig(store: AiSettingsStorage, settings: AiSettings): void {
     enabled: settings.enabled === true,
     baseUrl: settings.baseUrl.trim(),
     model: settings.model.trim(),
+    timeoutMs: clampTimeoutMs(settings.timeoutMs),
+    maxTokens: clampMaxTokens(settings.maxTokens),
   }));
+}
+
+/**
+ * 把超时夹进可用区间。
+ *
+ * 存的值可能来自旧版本（没有这个字段）、手改的 localStorage 或界面输入，
+ * 三种情况都要落到一个说得过去的数上：不是数字就用默认值，太小太小就抬到下限，
+ * 太大就压到上限。
+ */
+export function clampTimeoutMs(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_AI_SETTINGS.timeoutMs;
+  return Math.min(Math.max(Math.round(value), MIN_AI_TIMEOUT_MS), MAX_AI_TIMEOUT_MS);
+}
+
+/**
+ * 把 token 预算夹进可用区间。
+ *
+ * 规矩同超时：不是数字用默认值，太小抬到下限，太大压到上限。
+ */
+export function clampMaxTokens(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_AI_SETTINGS.maxTokens;
+  return Math.min(Math.max(Math.round(value), MIN_AI_MAX_TOKENS), MAX_AI_MAX_TOKENS);
 }
 
 function resolvePersistent(storage?: AiSettingsStorage): AiSettingsStorage | undefined {

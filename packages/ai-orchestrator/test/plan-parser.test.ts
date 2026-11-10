@@ -51,3 +51,31 @@ test("rejects replies without any JSON object", () => {
   assert.throws(() => parsePlanResponse("我不知道怎么做"), PlanParseError);
   assert.throws(() => parsePlanResponse(""), PlanParseError);
 });
+
+test("推理块里的 JSON 碎片不会把真计划顶掉", () => {
+  // 推理模型常常在 `<think>` 里先写一个自己的草稿对象。那也是合法 JSON，
+  // 但不是计划——早先的解析器锁定第一个能 parse 的候选，真计划根本没机会被看到。
+  const raw = '<think>先想想 {"reasoning": "打算建三个节点"}</think>\n\n{"summary":"搭一张登录卡片","commands":[{"type":"document.rename","payload":{"name":"登录页"}}]}';
+  const plan = parsePlanResponse(raw);
+  assert.equal(plan.summary, "搭一张登录卡片");
+  assert.equal(plan.commands[0].type, "document.rename");
+});
+
+test("推理块没闭合时也能从原文里找回计划", () => {
+  const raw = '<think>{"draft": true} 还没想完就被截断了\n\n{"summary":"改名","commands":[{"type":"document.rename","payload":{"name":"新名字"}}]}';
+  const plan = parsePlanResponse(raw);
+  assert.equal(plan.summary, "改名");
+});
+
+test("包装了一层外壳的计划，剥掉外壳后仍能解析", () => {
+  const raw = '{"plan": {"summary":"改名","commands":[{"type":"document.rename","payload":{"name":"新名字"}}]}}';
+  const plan = parsePlanResponse(raw);
+  assert.equal(plan.summary, "改名");
+});
+
+test("回复被截断时，报错要说截断而不是「缺少 summary」", () => {
+  // 模型给了计划但没写完（max_tokens 打满）。这时报「缺少 summary」会把排查方向
+  // 带偏——真正要调的是 token 预算，不是提示词。
+  const truncated = '{"summary":"搭一张登录卡片","commands":[{"type":"node.create","payload":{"node":{"id":"text:login-title"';
+  assert.throws(() => parsePlanResponse(truncated), /被截断/);
+});

@@ -3,8 +3,14 @@ import test from "node:test";
 import {
   AI_SETTINGS_KEY,
   AI_SETTINGS_SESSION_KEY,
+  MAX_AI_MAX_TOKENS,
+  MAX_AI_TIMEOUT_MS,
+  MIN_AI_MAX_TOKENS,
+  MIN_AI_TIMEOUT_MS,
   activeApiKey,
   aiSettingsComplete,
+  clampMaxTokens,
+  clampTimeoutMs,
   clearAiSettings,
   DEFAULT_AI_SETTINGS,
   maskApiKey,
@@ -147,4 +153,44 @@ test("密钥的显示形式只露头尾", () => {
   assert.ok(masked.startsWith("exampl"));
   assert.ok(masked.endsWith("mnop"));
   assert.ok(!masked.includes("ghijkl"));
+});
+
+test("请求超时能被持久化并读回来", () => {
+  const { persistent, session } = stores();
+  writeAiSettings(settings({ enabled: true, baseUrl: "https://api.example.test/v1", model: "m", timeoutMs: 240_000 }), persistent, session);
+  assert.equal(readAiSettings(persistent, session).timeoutMs, 240_000);
+});
+
+test("旧记录没有超时字段时用默认值，不报错", () => {
+  const { persistent, session } = stores();
+  persistent.setItem(AI_SETTINGS_KEY, JSON.stringify({ enabled: true, baseUrl: "https://legacy.test/v1", model: "old" }));
+  assert.equal(readAiSettings(persistent, session).timeoutMs, DEFAULT_AI_SETTINGS.timeoutMs);
+});
+
+test("超时被夹进可用区间：太小抬到下限，太大压到上限，不是数字用默认值", () => {
+  assert.equal(clampTimeoutMs(1), MIN_AI_TIMEOUT_MS);
+  assert.equal(clampTimeoutMs(999_999_999), MAX_AI_TIMEOUT_MS);
+  assert.equal(clampTimeoutMs("abc"), DEFAULT_AI_SETTINGS.timeoutMs);
+  assert.equal(clampTimeoutMs(undefined), DEFAULT_AI_SETTINGS.timeoutMs);
+  assert.equal(clampTimeoutMs(120_000), 120_000);
+});
+
+test("token 预算能被持久化并读回来", () => {
+  const { persistent, session } = stores();
+  writeAiSettings(settings({ enabled: true, baseUrl: "https://api.example.test/v1", model: "m", maxTokens: 32_768 }), persistent, session);
+  assert.equal(readAiSettings(persistent, session).maxTokens, 32_768);
+});
+
+test("token 预算被夹进可用区间", () => {
+  assert.equal(clampMaxTokens(10), MIN_AI_MAX_TOKENS);
+  assert.equal(clampMaxTokens(999_999_999), MAX_AI_MAX_TOKENS);
+  assert.equal(clampMaxTokens("abc"), DEFAULT_AI_SETTINGS.maxTokens);
+  assert.equal(clampMaxTokens(undefined), DEFAULT_AI_SETTINGS.maxTokens);
+  assert.equal(clampMaxTokens(16_384), 16_384);
+});
+
+test("旧记录没有 token 预算时用默认值", () => {
+  const { persistent, session } = stores();
+  persistent.setItem(AI_SETTINGS_KEY, JSON.stringify({ enabled: true, baseUrl: "https://legacy.test/v1", model: "old" }));
+  assert.equal(readAiSettings(persistent, session).maxTokens, DEFAULT_AI_SETTINGS.maxTokens);
 });

@@ -211,6 +211,28 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   页面（从左到右）的截图」——不说明的话模型会把拼图当成一张奇怪的页面来读。探针
   逐像素核对：选区外节点没漏进来、拼接左右顺序正确、页间隙没串页、页名在顶部，
   并有一条「查找器本身有效」的仪表自检。规格见 `visual-context.md`；
+- **空白文档 → 一句话 → 出图**（2026-11-10，已实测通过）：新增端到端探针
+  `npm run visual:from-scratch:probe`（`packages/studio-web/visual/from-scratch-probe.ts`
+  + `harness/from-scratch.ts`）。它走的是产品同一条路——仓库自己的提示与解析器 →
+  命令计划 → dry-run → 结构审查 → 事务提交 → **工作台那套 Canvas 2D 渲染器**出 PNG，
+  起点是一个零节点的空页面。真实模型（MiniMax-M3）以「做一个登录页」实测：**1 次
+  尝试通过**（181 秒），落地 39 条命令 / 37 个节点，出图 960×680、1564 种颜色，
+  是一张完整的中文登录页。探针判据包含「出图非空」——数被画过的像素与不同颜色数，
+  因为一张全透明的 PNG 也是「成功」写出来的。
+  这一趟查出并修掉三个**每一个都足以让从零生成必然失败**的真缺陷：
+  ① 工作台建 planner 时没传 `timeoutMs`，用的是 60 秒默认，而带推理的整页计划实测
+  要 84–124 秒，每次请求都被掐死（流式救不了：计时器覆盖的是总时长）；
+  ② 工作台**压根没设 `max_tokens`**，预算不足时回复被截断在半路（实测
+  `finish_reason=length`、`completion_tokens=8192` 打满、其中 5572 花在推理上），
+  看着像「模型不会设计」，其实是钱不够；
+  ③ 计划解析器锁定「第一个能 parse 的 JSON」而不是「第一个**是计划**的 JSON」——
+  截断后残留的单条命令对象也是合法 JSON，会把真计划顶掉，对外报成
+  「模型返回的计划缺少 summary」，把排查方向带偏。
+  改法：超时与 token 预算都做成设置项（`AiSettings.timeoutMs` 默认 300 秒、
+  `AiSettings.maxTokens` 默认 32768，夹在合法区间里），工作台显式传给 planner；
+  解析器的候选判定从「能 parse」改成「能 normalize 成一份计划」，候选扫描递归
+  下钻一层（外壳包着真计划也能找到），并识别截断、如实报「回复被截断」而不是
+  「缺少 summary」。规格见 `from-scratch-acceptance.md`；
 - MCP adapter 的命令契约（无传输层）：`MCP_TOOLS` 只暴露三个工具——读取、预览、
   应用，避免工具列表过长让模型选错；命令类型用 `Record<DesignCommand["type"], true>`
   强制穷举，新增命令忘了登记会直接编译失败。`authorizeCommands()` 按策略判定
@@ -249,7 +271,10 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   投递按存储键去重）。共享存储有内存与文件两种实现；文件实现靠 `fs.watch` +
   低频兜底轮询（Windows 上文件事件偶尔会丢）。轮询**没有去掉**：改了但没走共享
   存储的变更仍靠它发现，它现在是兜底。跨主机要换 Redis / 数据库后端
-  （`McpStateStore` 接口已留好位置）。规格见 `mcp-production.md`；
+  （`McpStateStore` 接口已留好位置）。规格见 `mcp-production.md`。注意
+  `mcp-store.ts` 只在 node 子入口 `@ufira/studio-application/node` 里导出：它
+  `import "node:fs"`，留在浏览器入口 `src/index.ts` 里会让 Vite 把 `fs` 外部化，
+  网页端一加载就抛 "Module \"fs\" has been externalized" 并白屏；
 - **外部素材服务**（2026-11-10，`external-assets.ts` + `external-asset-providers.ts`）：补上了
   `0.8.0` 最后一项，规格见 `external-assets.md`——
   ① **缓存**：外部素材的缓存就是「文档里的资源元数据 + 仓库里的字节」，不另建缓存存储，
@@ -993,7 +1018,11 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   硬编码颜色，**跨页面一致性**（页面画板尺寸、同名节点跨页长得不一样）、**组件语义**
   （变体集属性没覆盖、实例设了未声明的属性、声明的属性没接线）与**设计内容的可访问性**
   （空文本、字号过小、交互节点没有可读名字）也已纳入 lint；流式响应、超时、取消、
-  重试、凭据不落盘和失败恢复已实现；
+  重试、凭据不落盘和失败恢复已实现；**从零生成一页也已实测通过**（MiniMax-M3，
+  「做一个登录页」→ 1 次尝试 → 39 条命令 → 出图，详见 `from-scratch-acceptance.md`）；
+  仍缺：**其它 Provider 的「从零生成」逐家实测**（每家要各自的密钥），
+  以及生成质量的多轮改进（模型第一版用的是硬编码颜色，没绑 token——体检层已经能
+  把这条列为待修项，但「生成 → 体检 → 改到绑定 token」这条闭环还没跑过真实模型）；
 - 编排循环已经能跑多轮，但**体检器只覆盖 lint、对比度与导出诊断**：视觉上「好不好看、
   排版对不对」不在体检范围内，要让 AI 看图自己改还需要视觉上下文（截图 → 模型 →
   再改图）；真实 Provider 的往返延迟直接乘以轮次，串行执行，暂不做并发；
@@ -1070,6 +1099,7 @@ npm run test:studio-web
 npm run visual:compare:probe   # 版本并排对比
 npm run visual:package:probe   # 资源包交付
 npm run visual:loop:probe      # 编排循环（自主运行）
+npm run visual:from-scratch:probe   # 空白文档 → 一句话 → 出图（需要真实端点与密钥）
 npm run visual:mcp:probe       # MCP HTTP 传输（OAuth / 多租户 / SSE），不需要浏览器
 ```
 

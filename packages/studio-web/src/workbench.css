@@ -12,8 +12,8 @@
  */
 
 .studio {
-  --panel-left: 248px;
-  --panel-right: 300px;
+  --panel-left: 240px;
+  --panel-right: 288px;
   --topbar-height: 48px;
   --workbench-border: #232833;
   --workbench-border-strong: #2c3340;
@@ -36,12 +36,39 @@
   grid-column: 1 / 4;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   min-width: 0;
-  padding: 0 10px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--workbench-border);
   background: #14171e;
   overflow: hidden;
+}
+
+.topbar-left,
+.topbar-center,
+.topbar-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.topbar-left {
+  width: calc(var(--panel-left) - 8px);
+  flex: none;
+  gap: 7px;
+}
+
+.topbar-center {
+  flex: 1 1 auto;
+  justify-content: center;
+  padding: 0 12px;
+}
+
+.topbar-right {
+  width: calc(var(--panel-right) - 8px);
+  flex: none;
+  justify-content: flex-end;
+  gap: 2px;
 }
 
 .brand {
@@ -74,11 +101,15 @@
   white-space: nowrap;
 }
 
+.topbar-left .brand-name {
+  display: none;
+}
+
 .studio .topbar .project-select {
-  flex: none;
-  width: 178px;
-  min-width: 120px;
-  max-width: 220px;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: none;
   height: 28px;
   padding: 0 7px;
   border: 1px solid var(--workbench-border-strong);
@@ -88,12 +119,40 @@
   font-size: 12px;
 }
 
+.panel-toggles {
+  flex: none;
+}
+
 .toolbar-group {
   display: flex;
   align-items: center;
   gap: 2px;
   flex: none;
   min-width: 0;
+}
+
+.canvas-tools {
+  gap: 1px;
+  padding: 3px;
+  border: 1px solid #2a303b;
+  border-radius: 8px;
+  background: #1a1e26;
+  box-shadow: 0 2px 8px #00000033;
+}
+
+.canvas-tools .tooltip-anchor:first-child button {
+  background: var(--workbench-accent);
+  color: #fff;
+}
+
+.canvas-tools .tooltip-anchor:first-child button[aria-pressed="false"] {
+  background: transparent;
+  color: var(--workbench-muted);
+}
+
+.canvas-tools button[aria-pressed="true"] {
+  background: var(--workbench-accent);
+  color: #fff;
 }
 
 /* 顶栏按钮统一成 30×30 的图标键；文字键单独放宽。 */
@@ -151,7 +210,7 @@
 }
 
 .studio .topbar .export-scope {
-  width: 104px;
+  width: 92px;
   flex: none;
   height: 28px;
   padding: 0 5px;
@@ -167,9 +226,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 158px;
+  max-width: 28px;
   margin-left: 2px;
-  padding: 3px 8px;
+  padding: 5px;
   overflow: hidden;
   border: 1px solid var(--workbench-border);
   border-radius: 999px;
@@ -177,6 +236,10 @@
   color: var(--workbench-dim);
   font-size: 11px;
   text-overflow: ellipsis;
+}
+
+.topbar-right .autosave-status {
+  font-size: 0;
 }
 
 .autosave-status::before {
@@ -207,11 +270,7 @@
 }
 
 .studio .topbar .status {
-  flex: 0 1 220px;
-  min-width: 0;
-  margin-left: 4px;
-  color: var(--workbench-dim);
-  font-size: 11px;
+  display: none;
 }
 
 /* ---------- 左侧栏：页面 + 图层双段 ---------- */
@@ -236,13 +295,13 @@
 
 .pages-block {
   flex: none;
-  padding: 10px 12px 8px;
+  padding: 12px 10px 10px;
   border-bottom: 1px solid var(--workbench-border);
 }
 
 .layers-block {
   flex: 1 1 auto;
-  padding: 10px 12px 0;
+  padding: 10px 10px 0;
 }
 
 .panel-head {
@@ -498,15 +557,15 @@
 /* ---------- 中间画布 ---------- */
 
 .workspace {
-  background-color: #101319;
-  background-image: radial-gradient(#262c37 1px, transparent 1px);
+  background-color: #181a20;
+  background-image: radial-gradient(#2b2f38 1px, transparent 1px);
   background-position: -1px -1px;
   background-size: 22px 22px;
 }
 
 .canvas-scroller {
   display: flex;
-  padding: 36px 28px 32px;
+  padding: 48px 40px 40px;
 }
 
 .canvas-stage {
@@ -548,7 +607,7 @@
 }
 
 .canvas {
-  box-shadow: 0 2px 10px #00000066, 0 24px 64px #00000099;
+  box-shadow: 0 1px 2px #00000066, 0 16px 48px #00000080;
 }
 
 /* 图元工具下指针变成十字：先看到"要画东西"，再拖出尺寸。 */
@@ -600,6 +659,128 @@
   background: var(--workbench-hover);
 }
 
+/* ---------- AI 主入口：常驻画布，而不是藏在设置标签里 ---------- */
+
+.ai-command-dock {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  width: min(620px, calc(100% - 220px));
+  min-width: 360px;
+  height: 52px;
+  padding: 5px;
+  border: 1px solid #45405b;
+  border-radius: 14px;
+  background: #171922ed;
+  box-shadow: 0 16px 48px #0000008c, 0 0 0 1px #8b5cf61a;
+  backdrop-filter: blur(16px);
+  transform: translateX(-50%);
+}
+
+.ai-command-dock:focus-within {
+  border-color: #8b5cf6;
+  box-shadow: 0 16px 48px #0000008c, 0 0 0 3px #8b5cf626;
+}
+
+.ai-command-dock.is-planning {
+  border-color: #8b5cf6;
+}
+
+.ai-command-brand {
+  width: 42px;
+  height: 42px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 3px 0;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #9b6dff, #6d3ee8);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: .08em;
+  box-shadow: inset 0 1px #ffffff33;
+}
+
+.ai-command-brand:hover:not(:disabled) {
+  border-color: transparent;
+  background: linear-gradient(145deg, #aa83ff, #7949ed);
+}
+
+.ai-command-main {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0 10px 0 12px;
+}
+
+.ai-command-main input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #f5f3ff;
+  font-size: 13px;
+}
+
+.ai-command-main input::placeholder {
+  color: #858b9a;
+}
+
+.ai-command-model {
+  flex: none;
+  max-width: 112px;
+  margin-left: 8px;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid #343947;
+  border-radius: 999px;
+  color: #7f8796;
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-command-model.is-ready {
+  border-color: #4a3b6b;
+  background: #281f3c;
+  color: #c4b5fd;
+}
+
+.ai-command-submit {
+  height: 40px;
+  flex: none;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #8b5cf6;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ai-command-submit:hover:not(:disabled) {
+  border-color: transparent;
+  background: #9b73f7;
+}
+
+.ai-command-submit:disabled {
+  background: #332b43;
+  color: #777080;
+}
+
 /* ---------- 右侧检查器 ---------- */
 
 .inspector {
@@ -616,7 +797,8 @@
 
 .inspector-head {
   flex: none;
-  padding: 12px 14px 6px;
+  min-height: 40px;
+  padding: 11px 12px 5px;
 }
 
 .inspector-head h2 {
@@ -625,11 +807,11 @@
 }
 
 .inspector-tabs {
-  padding: 0 10px 8px;
+  padding: 0 8px 7px;
 }
 
 .inspector-body {
-  padding: 12px 14px 20px;
+  padding: 12px 12px 20px;
 }
 
 .inspector-foot {
@@ -677,31 +859,25 @@
 
 @media (max-width: 1440px) {
   .studio {
-    --panel-left: 236px;
-    --panel-right: 288px;
+    --panel-left: 224px;
+    --panel-right: 272px;
   }
 
-  .brand-name {
+  .topbar-right .history-tools,
+  .topbar-right [aria-label="项目"] {
     display: none;
-  }
-
-  .studio .topbar .project-select {
-    width: 160px;
   }
 }
 
 @media (max-width: 1180px) {
   .studio {
-    --panel-left: 220px;
-    --panel-right: 272px;
+    --panel-left: 208px;
+    --panel-right: 256px;
   }
 
-  .studio .topbar .status {
+  .topbar-right .export-scope,
+  .topbar-right .toolbar-separator {
     display: none;
-  }
-
-  .studio .topbar .autosave-status {
-    max-width: 118px;
   }
 }
 
@@ -717,6 +893,15 @@
 
   /* 顶栏放不下自动保存状态时先收起来；右侧检查器底部仍然常驻同一状态。 */
   .studio .topbar .autosave-status {
+    display: none;
+  }
+
+  .ai-command-dock {
+    width: calc(100% - 150px);
+    min-width: 300px;
+  }
+
+  .ai-command-model {
     display: none;
   }
 }

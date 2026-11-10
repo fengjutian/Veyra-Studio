@@ -360,7 +360,10 @@ async function main(): Promise<void> {
         temperature: 0.3,
         // 一张页面的计划有十几条 node.create，每条 payload 都带完整节点对象——
         // 上限给窄了会被截断成非法 JSON，解析器连报错都报不到点上。
-        maxTokens: 8192,
+        // 实测 MiniMax-M3 出这一页要 ~12k token（其中约 4.9k 花在推理上）。
+        maxTokens: Number(process.env.STUDIO_PROVIDER_MAX_TOKENS ?? 32768),
+        // 流式与工作台一致：产品走的就是流式，这里也走同一条路。
+        stream: true,
         // planner 的默认超时是 60 秒，而带推理的整页计划经常跑不过它：
         // MiniMax-M3 先出 `<think>` 推理段，再吐十几条 node.create 的 JSON，
         // 整体常在一分半到两三分钟。超时可以用环境变量调。
@@ -391,7 +394,7 @@ async function main(): Promise<void> {
     console.log(`结构审查：${outcome.review.findings.map(finding => `[${finding.severity}] ${finding.message}`).join("；")}`);
   }
 
-  const report = {
+  const report: Record<string, unknown> = {
     mode: usingStub ? "stub" : "real",
     model: usingStub ? "(stub planner)" : provider!.model,
     baseUrl: usingStub ? null : provider!.baseUrl,

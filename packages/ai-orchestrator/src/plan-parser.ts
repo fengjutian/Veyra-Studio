@@ -28,32 +28,87 @@ export class PlanEmptyError extends PlanParseError {
  *
  * 模型经常把 JSON 包在 ```json 围栏里，或者在 JSON 前后加一段说明，所以这里
  * 不做严格的"整段就是 JSON"假设，而是**逐个候选**试：扫出所有配平的 JSON 对象，
- * 一个能解析就用。
+ * 一个能用就用。
  *
  * 逐个试而不是只取第一个，是因为**推理模型**（MiniMax-M3 等）会在正文前面加一段
  * `<think>…</think>` 推理，里面可能带花括号——只取第一个配平对象会取到推理里的
  * 碎片，解析失败或解析出别的东西。候选顺序是：剥掉推理块之后 → 剥掉围栏之后 →
  * 原文，所以正文里的真计划总是排在前面。
+ *
+ * ## 「能 parse」不等于「是计划」
+ *
+ * 候选里混进了推理块的碎片时，它**往往也是合法 JSON**——只是没有 `summary`、
+ * 或者命令类型不在词汇表里。所以判定标准不是「能不能 parse」，而是
+ * 「能不能 normalize 成一份计划」：不是计划就记下原因，接着试下一个候选。
+ *
+ * 这里踩过坑：早期版本 parse 成功就 `break`，于是第一个合法 JSON（推理块里的
+ * `{"reasoning": "..."}` 之类）把整个解析锁死，后面的真计划根本没机会被看到，
+ * 对外报的是「模型返回的计划缺少 summary」——模型明明给对了计划。
  */
 export function parsePlanResponse(raw: string): AiCommandPlan {
   const text = raw.trim();
   if (!text) throw new PlanParseError("模型没有返回任何内容");
 
   const candidates = collectJsonCandidates(text);
-  let parsed: unknown;
-  let failure: string | undefined;
+  let parseFailure: string | undefined;
+  let planFailure: string | undefined;
+  // 「模型说没有要改的」也是合法结论，但要先把其它候选试完：
+  // 推理块里可能先冒出一个空壳，真计划在后面。
+  let emptyPlan: PlanEmptyError | undefined;
+
   for (const candidate of candidates) {
+    let parsed: unknown;
     try {
       parsed = JSON.parse(candidate) as unknown;
-      break;
     } catch (error) {
-      failure = error instanceof Error ? error.message : String(error);
+      parseFailure = error instanceof Error ? error.message : String(error);
+      continue;
+    }
+    try {
+      return normalizePlan(parsed);
+    } catch (error) {
+      if (error instanceof PlanEmptyError) {
+        emptyPlan ??= error;
+        continue;
+      }
+      // 这个候选不是计划（多半是推理块里的 JSON 碎片），记下来，试下一个。
+      // 记**第一个**失败原因：候选是从外往里扫的，外层（也就是模型真正写的那份
+      // 计划）的报错最有信息量。内层的碎片报错会把它盖掉。
+      planFailure ??= error instanceof Error ? error.message : String(error);
     }
   }
-  if (parsed === undefined) {
-    throw new PlanParseError(`模型回复里找不到合法的 JSON 计划${failure ? `：${failure}` : ""}`);
+
+  if (emptyPlan) throw emptyPlan;
+  const truncated = looksTruncated(text) ? "（回复被截断：max_tokens 预算不够，或生成被中断）" : "";
+  throw new PlanParseError(
+    planFailure
+      ? `模型回复里找不到合法的 JSON 计划${truncated}：${planFailure}`
+      : `模型回复里找不到合法的 JSON 计划${truncated}${parseFailure ? `：${parseFailure}` : ""}`,
+  );
+}
+
+/**
+ * 文本里有没配平的 `{` —— 回复多半被截断了。
+ *
+ * 截断的报错必须说清楚：模型确实给了计划，只是没写完。此时若报「缺少 summary」，
+ * 排查的人会跑去改提示词，而真正要调的是 max_tokens——方向完全错了。
+ */
+function looksTruncated(text: string): boolean {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === "{") depth += 1;
+    else if (char === "}") depth -= 1;
   }
-  return normalizePlan(parsed);
+  return depth > 0;
 }
 
 /** 收集所有可能的 JSON 候选：先剥推理块、再剥围栏、最后原文，逐个变体扫配平对象。 */
@@ -89,20 +144,30 @@ function stripFence(text: string): string {
   return match ? match[1] : text;
 }
 
-/** 扫出所有配平的 JSON 对象（不是只取第一个）。 */
+/**
+ * 扫出所有配平的 JSON 对象。
+ *
+ * 嵌套的也要：模型有时把计划包一层外壳（`{"plan": {…}}`），只扫顶层就永远看不到
+ * 里头的计划。外壳先被试掉（它 normalize 不了），里头的接着试。
+ */
 function extractJsonObjects(text: string): string[] {
   const found: string[] = [];
-  let index = text.indexOf("{");
-  while (index !== -1) {
-    const end = findObjectEnd(text, index);
-    if (end === -1) {
-      // 这个 `{` 没有配平（多半是推理里的碎片），换下一个继续找。
-      index = text.indexOf("{", index + 1);
-      continue;
+  const scan = (from: number, to: number): void => {
+    let index = text.indexOf("{", from);
+    while (index !== -1 && index < to) {
+      const end = findObjectEnd(text, index);
+      if (end === -1) {
+        // 这个 `{` 没有配平（多半是推理里的碎片，或回复被截断），换下一个继续找。
+        index = text.indexOf("{", index + 1);
+        continue;
+      }
+      found.push(text.slice(index, end + 1));
+      // 外壳里可能直接装着计划，继续往里扫一层。
+      scan(index + 1, end);
+      index = text.indexOf("{", end + 1);
     }
-    found.push(text.slice(index, end + 1));
-    index = text.indexOf("{", end + 1);
-  }
+  };
+  scan(0, text.length);
   return found;
 }
 

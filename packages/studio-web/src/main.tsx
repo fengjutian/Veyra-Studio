@@ -250,6 +250,10 @@ function App() {
         stream: true,
         // 按端点能力决定要不要发 response_format；未收录的端点保守地关掉。
         jsonMode: describeProvider(aiSettings.baseUrl).capabilities.jsonMode,
+        // 超时可调：带推理的模型出一份整页计划要好几分钟，60 秒的默认会中途掐断。
+        timeoutMs: aiSettings.timeoutMs,
+        // token 预算可调：一份整页计划要上万 token，预算不够回复会被截断在半路。
+        maxTokens: aiSettings.maxTokens,
         onKeyRotated: (index, total, reason) => {
           setAiSettings(current => ({ ...current, activeKeyIndex: index }));
           setMessage(`密钥轮换：${reason}（共 ${total} 把）`);
@@ -2469,32 +2473,35 @@ function App() {
 
   return <div className={`studio${leftPanelOpen ? "" : " left-collapsed"}${rightPanelOpen ? "" : " right-collapsed"}`}>
     <header className="topbar">
-      <div className="brand">
-        <span className="brand-mark" aria-hidden="true">A</span>
-        <strong className="brand-name">AI Design Studio</strong>
+      <div className="topbar-left">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">A</span>
+          <strong className="brand-name">AI Design Studio</strong>
+        </div>
+        <Tooltip label="切换项目">
+          <select className="project-select" aria-label="切换项目" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select>
+        </Tooltip>
+        <div className="toolbar-group panel-toggles" role="group" aria-label="面板">
+          <Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" aria-pressed={leftPanelOpen} onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip>
+          <Tooltip label={rightPanelOpen ? "收起右侧面板" : "展开右侧面板"}><button className="icon-only" aria-label="右侧面板" aria-pressed={rightPanelOpen} onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip>
+        </div>
       </div>
-      <Tooltip label="切换项目">
-        <select className="project-select" aria-label="切换项目" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select>
-      </Tooltip>
-      <div className="toolbar-group" role="group" aria-label="面板">
-        <Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" aria-pressed={leftPanelOpen} onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip>
-        <Tooltip label={rightPanelOpen ? "收起右侧面板" : "展开右侧面板"}><button className="icon-only" aria-label="右侧面板" aria-pressed={rightPanelOpen} onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip>
-      </div>
-      <span className="toolbar-separator" aria-hidden="true" />
-      <div className="toolbar-group" role="group" aria-label="画布工具">
-        {TOOLS.filter(spec => spec.id !== "hand").map(spec => (
-          <Tooltip key={spec.id} label={`${spec.label} · ${spec.shortcut.toUpperCase()}`}>
-            <button className="icon-only" aria-label={spec.label} aria-pressed={tool === spec.id} disabled={busy} onClick={() => setTool(spec.id)}>
-              <Icon name={spec.icon} />
-            </button>
-          </Tooltip>
-        ))}
-        <span className="tool-divider" aria-hidden="true" />
-        <Tooltip label="添加图片"><button className="icon-only" aria-label="添加图片" disabled={busy} onClick={() => imageInput.current?.click()}><Icon name="nodeImage" /></button></Tooltip>
+      <div className="topbar-center">
+        <div className="toolbar-group canvas-tools" role="group" aria-label="画布工具">
+          {TOOLS.filter(spec => spec.id !== "hand").map(spec => (
+            <Tooltip key={spec.id} label={`${spec.label} · ${spec.shortcut.toUpperCase()}`}>
+              <button className="icon-only" aria-label={spec.label} aria-pressed={tool === spec.id} disabled={busy} onClick={() => setTool(spec.id)}>
+                <Icon name={spec.icon} />
+              </button>
+            </Tooltip>
+          ))}
+          <span className="tool-divider" aria-hidden="true" />
+          <Tooltip label="添加图片"><button className="icon-only" aria-label="添加图片" disabled={busy} onClick={() => imageInput.current?.click()}><Icon name="nodeImage" /></button></Tooltip>
+        </div>
       </div>
       <input ref={imageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) insertImage(file); }} />
-      <span className="toolbar-separator" aria-hidden="true" />
-      <div className="toolbar-group" role="group" aria-label="历史">
+      <div className="topbar-right">
+      <div className="toolbar-group history-tools" role="group" aria-label="历史">
         <Tooltip label="撤销 · Ctrl/Cmd+Z"><button className="icon-only" aria-label="撤销" disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" /></button></Tooltip>
         <Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button className="icon-only" aria-label="重做" disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" /></button></Tooltip>
       </div>
@@ -2505,7 +2512,6 @@ function App() {
         <Tooltip label="新建项目"><button className="icon-only" aria-label="新建项目" disabled={busy} onClick={createProject}><Icon name="newProject" /></button></Tooltip>
         <Tooltip label="重命名项目"><button className="icon-only" aria-label="重命名项目" disabled={busy} onClick={renameProject}><Icon name="rename" /></button></Tooltip>
       </div>
-      <span className="toolbar-spacer" aria-hidden="true" />
       <div className="toolbar-group" role="group" aria-label="导出">
         <select className="export-scope" aria-label="导出范围" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select>
         <Tooltip label="导出 HTML"><button className="icon-only" aria-label="导出 HTML" disabled={busy} onClick={exportHtml}><Icon name="exportHtml" /></button></Tooltip>
@@ -2519,6 +2525,7 @@ function App() {
       <Tooltip label="删除当前项目"><button className="icon-only header-danger" aria-label="删除当前项目" disabled={busy} onClick={deleteCurrentProject}><Icon name="trash" /></button></Tooltip>
       <span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span>
       <span className="status" title={message}>{message}</span>
+      </div>
     </header>
 
     <aside className="layers">
@@ -2648,6 +2655,41 @@ function App() {
         <Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => setZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip>
         <Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip>
         <Tooltip label="适应内容"><button className="icon-only zoom-fit" aria-label="适应内容" onClick={fitCanvas}><Icon name="zoomFit" /></button></Tooltip>
+      </div>
+      <div className={`ai-command-dock${planning ? " is-planning" : ""}`}>
+        <button
+          className="ai-command-brand"
+          aria-label="打开 AI 工作区"
+          title="打开 AI 工作区"
+          onClick={() => { setRightPanelOpen(true); setInspectorTab("ai"); }}
+        >
+          <Icon name="aiPlan" />
+          <span>AI</span>
+        </button>
+        <div className="ai-command-main">
+          <input
+            aria-label="给 AI 下达设计指令"
+            placeholder="描述你想创建或修改的设计…"
+            value={prompt}
+            disabled={busy}
+            onChange={event => setPrompt(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === "Enter" && !event.shiftKey && prompt.trim() && !busy) {
+                event.preventDefault();
+                void generateAiPlan();
+              }
+            }}
+          />
+          <span className={`ai-command-model${aiSettingsComplete(aiSettings) ? " is-ready" : ""}`} title={aiSettingsComplete(aiSettings) ? `当前模型：${aiSettings.model}` : "当前使用演示规划器"}>
+            {aiSettingsComplete(aiSettings) ? aiSettings.model : "演示模式"}
+          </span>
+        </div>
+        <Tooltip label={planning ? "正在生成安全变更预览" : "生成安全变更预览 · Enter"}>
+          <button className="ai-command-submit" aria-label="生成安全变更预览" disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}>
+            <Icon name="aiPlan" />
+            <span>{planning ? "生成中" : "生成"}</span>
+          </button>
+        </Tooltip>
       </div>
     </section>
     <aside className="inspector">
