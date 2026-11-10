@@ -791,6 +791,7 @@
 /* ---------- 右侧检查器 ---------- */
 
 .inspector {
+  position: relative;
   width: var(--panel-right);
   display: flex;
   flex-direction: column;
@@ -800,6 +801,35 @@
   overflow: hidden;
   border-left: 1px solid var(--workbench-border);
   background: var(--workbench-panel);
+}
+
+.inspector-resize-handle {
+  position: absolute;
+  z-index: 5;
+  inset: 0 auto 0 -4px;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.inspector-resize-handle::after {
+  position: absolute;
+  inset: 0 auto 0 4px;
+  width: 1px;
+  background: transparent;
+  content: "";
+  transition: background .12s, box-shadow .12s;
+}
+
+.inspector-resize-handle:hover::after,
+.inspector-resize-handle:focus-visible::after,
+.inspector-resize-handle:active::after {
+  background: #8b5cf6;
+  box-shadow: 0 0 0 1px #8b5cf655;
+}
+
+.inspector-resize-handle:focus-visible {
+  outline: 0;
 }
 
 .inspector-head {
@@ -860,6 +890,10 @@
 .studio.right-collapsed .inspector {
   width: 0;
   border: 0;
+}
+
+.studio.right-collapsed .inspector-resize-handle {
+  display: none;
 }
 
 /* ---------- 窄屏：先丢品牌名与状态文案，按钮保持可用 ---------- */

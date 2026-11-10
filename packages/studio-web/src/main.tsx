@@ -105,6 +105,8 @@ import {
   supportsDiskBackup,
 } from "./disk-backup-browser";
 import { inspectorTabs, type InspectorTabId } from "./inspector-tabs";
+import { defaultInspectorWidth } from "./inspector-resize";
+import { InspectorResizeHandle } from "./inspector-resize-handle";
 import { forgetAssetUrl, loadAssetUrl } from "./asset-url";
 import { Icon } from "./icons";
 import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/dialogs";
@@ -114,6 +116,7 @@ import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, D
 import { describePropertyOverride, parsePropertyOverride } from "./theme-properties";
 import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "./ai-vision";
 import { AiSettingsPanel } from "./ai-settings-panel";
+import { AiVariantGallery, type AiVariantJob } from "./ai-variant-gallery";
 import "./styles.css";
 import "./workbench.css";
 import "./renderer/rich-text-editor.css";
@@ -137,7 +140,7 @@ function App() {
   const [preview, setPreview] = useState<AiPlanPreview>();
   // 同一份文档快照可以产生多份候选计划。候选只存在内存里，用户明确选中并确认前
   // 不写文档；提交其中一份后，其余候选因为 baseRevision 过期而统一丢弃。
-  const [aiVariants, setAiVariants] = useState<AiPlanPreview[]>([]);
+  const [aiVariants, setAiVariants] = useState<AiVariantJob[]>([]);
   const [aiVariantCount, setAiVariantCount] = useState<1 | 4 | 6 | 10>(1);
   const [aiVariantProgress, setAiVariantProgress] = useState(0);
   // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
@@ -177,6 +180,7 @@ function App() {
   const [panning, setPanning] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [rightPanelWidth, setRightPanelWidth] = useState(() => defaultInspectorWidth(window.innerWidth));
   // 右侧栏当前分段。原来是属性、导出、历史、存储、AI 全塞在一条长滚动列里。
   const [inspectorTab, setInspectorTab] = useState<InspectorTabId>("properties");
   // 导出范围：整页，或只导出当前选区。
@@ -1767,36 +1771,76 @@ function App() {
           ...(image ? { image } : {}),
           ...(aiPageScope === "current" ? { pageId: page.id } : {}),
         });
-      const variants: AiPlanPreview[] = [];
+      const initialJobs: AiVariantJob[] = Array.from({ length: aiVariantCount }, (_, index) => ({ id: `variant:${crypto.randomUUID()}`, index, status: "queued" }));
+      setAiVariants(initialJobs);
+      let readyCount = 0;
       for (let index = 0; index < aiVariantCount; index += 1) {
         if (controller.signal.aborted) throw new AiCancelledError();
+        setAiVariants(current => current.map(job => job.index === index ? { ...job, status: "generating", error: undefined } : job));
         const variantPrompt = aiVariantCount === 1
           ? scopedPrompt
           : `${scopedPrompt}\n\n候选方案 ${index + 1}/${aiVariantCount}：请给出一个可以独立采用的完整设计方向。与常见的第一选择拉开版式、层级或视觉节奏差异，但仍遵守上述范围和风格。`;
         setMessage(`正在生成候选方案 ${index + 1}/${aiVariantCount}…`);
         setStreamText("");
-        let next: AiPlanPreview;
         try {
-          next = await create(variantPrompt, aiVariantCount === 1);
+          let next: AiPlanPreview;
+          try {
+            next = await create(variantPrompt, aiVariantCount === 1);
+          } catch (error) {
+            if (!(error instanceof PlanParseError) || controller.signal.aborted) throw error;
+            setMessage(`候选 ${index + 1} 返回不完整，正在自动修复重试…`);
+            next = await create(`${variantPrompt}\n\n上一次回复不是完整合法的 JSON。请缩短说明，只输出一个完整 JSON 对象，commands 不要省略。`, false);
+          }
+          readyCount += 1;
+          setAiVariants(current => current.map(job => job.index === index ? { ...job, status: "ready", preview: next, error: undefined } : job));
+          setPreview(current => current ?? next);
         } catch (error) {
-          if (!(error instanceof PlanParseError) || controller.signal.aborted) throw error;
-          setMessage(`候选 ${index + 1} 返回不完整，正在自动修复重试…`);
-          next = await create(`${variantPrompt}\n\n上一次回复不是完整合法的 JSON。请缩短说明，只输出一个完整 JSON 对象，commands 不要省略。`, false);
+          if (controller.signal.aborted || error instanceof AiCancelledError) throw error;
+          setAiVariants(current => current.map(job => job.index === index ? { ...job, status: "failed", error: errorMessage(error) } : job));
         }
-        variants.push(next);
-        setAiVariants([...variants]);
-        setPreview(current => current ?? next);
         setAiVariantProgress(index + 1);
       }
-      setMessage(`${variants.length} 个候选方案已完成 dry-run，选择一个确认提交`);
+      setMessage(readyCount ? `${readyCount} 个候选方案已完成 dry-run，选择一个确认提交` : "候选方案均生成失败，可逐个重试");
     } catch (error) {
       const failure = error instanceof AiCancelledError ? "已取消 AI 生成" : errorMessage(error);
+      setAiVariants(current => current.map(job => job.status === "ready" || job.status === "failed" ? job : { ...job, status: "failed", error: failure }));
       setAiFailure(failure);
       setMessage(failure);
     } finally {
       planAbort.current = undefined;
       operationInFlight.current = false;
       setPlanning(false); setBusy(false); setStreamText("");
+    }
+  };
+
+  /** 单独重跑失败项，不让一个端点抖动迫使用户把整批候选再付一次成本。 */
+  const retryAiVariant = async (job: AiVariantJob) => {
+    if (!editor || busy || !prompt.trim()) return;
+    const controller = new AbortController();
+    planAbort.current = controller;
+    operationInFlight.current = true;
+    setBusy(true); setPlanning(true); setAiFailure(undefined);
+    setAiVariants(current => current.map(item => item.id === job.id ? { ...item, status: "generating", error: undefined } : item));
+    try {
+      const image = await captureVisionIfEnabled();
+      const scopedPrompt = buildAiDesignPrompt(prompt, aiPageScope, aiStyle, page.id, page.name);
+      const variantPrompt = `${scopedPrompt}\n\n候选方案 ${job.index + 1}/${aiVariants.length || aiVariantCount}：请给出一个可以独立采用的完整设计方向。与其它候选拉开版式、层级或视觉节奏差异。`;
+      const next = await editor.createPlan(variantPrompt, selectedIds, {
+        signal: controller.signal,
+        ...(image ? { image } : {}),
+        ...(aiPageScope === "current" ? { pageId: page.id } : {}),
+      });
+      setAiVariants(current => current.map(item => item.id === job.id ? { ...item, status: "ready", preview: next, error: undefined } : item));
+      setPreview(next);
+      setMessage(`候选 ${job.index + 1} 已重新生成`);
+    } catch (error) {
+      const failure = error instanceof AiCancelledError ? "已取消重试" : errorMessage(error);
+      setAiVariants(current => current.map(item => item.id === job.id ? { ...item, status: "failed", error: failure } : item));
+      setMessage(failure);
+    } finally {
+      planAbort.current = undefined;
+      operationInFlight.current = false;
+      setBusy(false); setPlanning(false);
     }
   };
 
@@ -2552,7 +2596,7 @@ function App() {
   });
   const activeInspectorTab = inspectorTabRows.find(tab => tab.id === inspectorTab) ?? inspectorTabRows[0]!;
 
-  return <div className={`studio${leftPanelOpen ? "" : " left-collapsed"}${rightPanelOpen ? "" : " right-collapsed"}`}>
+  return <div className={`studio${leftPanelOpen ? "" : " left-collapsed"}${rightPanelOpen ? "" : " right-collapsed"}`} style={{ "--panel-right": `${rightPanelWidth}px` } as React.CSSProperties}>
     <header className="topbar">
       <div className="topbar-left">
         <div className="brand">
@@ -2827,6 +2871,7 @@ function App() {
       </div>
     </section>
     <aside className="inspector">
+      <InspectorResizeHandle width={rightPanelWidth} onResize={setRightPanelWidth} />
       <div className="inspector-head">
         <h2>{activeInspectorTab.label}</h2>
         <span className="inspector-head-meta" title={activeInspectorTab.meta}>{activeInspectorTab.meta}</span>
@@ -3215,18 +3260,25 @@ function App() {
             {planning && <div className="ai-batch-progress" aria-live="polite"><span style={{ width: `${Math.max(8, aiVariantProgress / aiVariantCount * 100)}%` }} /><strong>{aiVariantProgress}/{aiVariantCount}</strong><small>{aiVariantCount === 1 ? (streamText || "正在等待模型响应…") : `正在生成第 ${Math.min(aiVariantProgress + 1, aiVariantCount)} 个候选`}</small></div>}
             {aiFailure && !planning && <div className="ai-failure" role="alert"><strong>本次生成没有改动文档</strong><span>{aiFailure}</span><button disabled={busy || !aiReady} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />重试</button></div>}
           </section>
-          {aiVariants.length > 0 && <section className="inspector-section ai-results-section">
-            <div className="section-heading"><h2>候选方案</h2><span className="ai-result-count">{aiVariants.length}/{aiVariantCount}</span></div>
-            <div className="ai-variant-grid" role="listbox" aria-label="AI 候选方案">
-              {aiVariants.map((variant, index) => <button key={variant.planId} role="option" aria-selected={preview?.planId === variant.planId} className={`ai-variant-card${preview?.planId === variant.planId ? " is-selected" : ""}`} onClick={() => setPreview(variant)}>
-                <span className="ai-variant-index">{String(index + 1).padStart(2, "0")}</span>
-                <strong>{variant.summary}</strong>
-                <span>{variant.affectedNodeIds.length || "文档级"} 处影响 · {variant.warnings.length} 警告</span>
-                {variant.review.blocking ? <em>审查阻断</em> : <em className="is-safe">可提交</em>}
-              </button>)}
-            </div>
-            {preview && aiReady && <div className={previewStale ? "preview ai-selected-preview stale" : "preview ai-selected-preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length} · 审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={`${finding.code}:${finding.message}`}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，这批候选已过期，请重新生成。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); for (const variant of aiVariants) { if (variant.planId !== preview.planId) editor.cancel(variant.planId); } setDocument(project.snapshot()); setPreview(undefined); setAiVariants([]); setMessage("已采用所选 AI 方案"); })}><Icon name="aiConfirm" />采用此方案</button><button disabled={busy} onClick={() => { for (const variant of aiVariants) editor?.cancel(variant.planId); setPreview(undefined); setAiVariants([]); }}><Icon name="aiCancel" />放弃全部</button></div></div>}
-          </section>}
+          {aiVariants.length > 0 && <AiVariantGallery
+            jobs={aiVariants}
+            selectedId={preview?.planId ? aiVariants.find(job => job.preview?.planId === preview.planId)?.id : undefined}
+            currentPageId={page.id}
+            themeId={effectiveThemeId}
+            stale={Boolean(previewStale)}
+            busy={busy}
+            onSelect={job => job.preview && setPreview(job.preview)}
+            onRetry={job => void retryAiVariant(job)}
+            onAdopt={job => job.preview && editor && void run(async () => {
+              await editor.confirm(job.preview!.planId);
+              for (const variant of aiVariants) if (variant.preview && variant.preview.planId !== job.preview!.planId) editor.cancel(variant.preview.planId);
+              setDocument(project.snapshot()); setPreview(undefined); setAiVariants([]); setMessage("已采用所选 AI 方案");
+            })}
+            onDiscard={() => {
+              for (const variant of aiVariants) if (variant.preview) editor?.cancel(variant.preview.planId);
+              setPreview(undefined); setAiVariants([]);
+            }}
+          />}
           <section className="inspector-section ai-settings-section">
             <details>
               <summary>模型与密钥设置 <span>{aiReady ? "已连接" : "需要配置"}</span></summary>
