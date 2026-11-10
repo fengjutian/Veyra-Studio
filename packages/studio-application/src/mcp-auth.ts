@@ -35,6 +35,7 @@
  */
 
 import type { HttpRequestLike, HttpResponseLike } from "./mcp-http";
+import { createMemoryOAuthState, type OAuthState } from "./mcp-auth-state";
 
 export interface OAuthClient {
   clientId: string;
@@ -99,6 +100,14 @@ export interface OAuthServerOptions {
   authorizationCodeTtlMs?: number;
   /** 本服务器支持的 scope。 */
   scopes?: string[];
+  /**
+   * 状态放在哪儿。
+   *
+   * 默认进程内存——单实例部署够用。多个实例共享同一份状态时（负载均衡后面跑着
+   * 几个进程），给一个共享存储实现（`createStoreOAuthState()`），客户端登记、
+   * 授权码与令牌就跨进程可见了：令牌在哪个实例签发，就在哪个实例验得过。
+   */
+  state?: OAuthState;
   /** 时间源，测试用。 */
   now?(): number;
   /** 生成随机串，测试用。 */
@@ -129,28 +138,11 @@ export interface OAuthServer {
   /** 校验 Bearer 令牌，返回它的声明；无效或过期返回 undefined。 */
   authenticate(token: string): Promise<TokenClaims | undefined>;
   /** 登记一个客户端（动态注册或宿主预登记）。 */
-  registerClient(client: OAuthClient): void;
+  registerClient(client: OAuthClient): Promise<void>;
   /** 吊销一个访问令牌；连同它的刷新令牌一起失效。 */
   revoke(accessToken: string): Promise<boolean>;
   /** 客户端清单（不含密钥）。 */
-  clients(): Array<{ clientId: string; name?: string; redirectUris: string[]; grantTypes: string[] }>;
-}
-
-interface AuthorizationCode {
-  clientId: string;
-  redirectUri: string;
-  scope: string;
-  codeChallenge: string;
-  tenant?: string;
-  subject: string;
-  expiresAt: number;
-}
-
-interface StoredToken {
-  claims: TokenClaims;
-  /** 对应的刷新令牌摘要。 */
-  refreshHash?: string;
-  revoked?: boolean;
+  clients(): Promise<Array<{ clientId: string; name?: string; redirectUris: string[]; grantTypes: string[] }>>;
 }
 
 export const DEFAULT_ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
@@ -162,47 +154,42 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
   const now = options.now ?? (() => Date.now());
   const randomToken = options.randomToken ?? (() => defaultRandomToken());
   const supportedScopes = options.scopes ?? DEFAULT_OAUTH_SCOPES;
+  const accessTokenTtlMs = options.accessTokenTtlMs ?? DEFAULT_ACCESS_TOKEN_TTL_MS;
+  const refreshTokenTtlMs = options.refreshTokenTtlMs ?? DEFAULT_REFRESH_TOKEN_TTL_MS;
+  const authorizationCodeTtlMs = options.authorizationCodeTtlMs ?? DEFAULT_AUTHORIZATION_CODE_TTL_MS;
 
-  const clients = new Map<string, OAuthClient>();
-  /** 动态注册的客户端：默认不被批准（登记本身要有人负责）。 */
-  const dynamicClients = new Set<string>();
-  for (const client of options.clients ?? []) clients.set(client.clientId, client);
-
-  const codes = new Map<string, AuthorizationCode>();
-  const accessTokens = new Map<string, StoredToken>();
-  const refreshTokens = new Map<string, StoredToken>();
+  // 状态放在哪儿：默认进程内存（单实例），给了共享存储就能多实例共用一份。
+  const oauthState: OAuthState = options.state ?? createMemoryOAuthState();
+  for (const client of options.clients ?? []) void oauthState.putClient(client, false);
 
   return {
-    clients: () => [...clients.values()].map(client => ({
+    clients: async () => (await oauthState.clients()).map(client => ({
       clientId: client.clientId,
       ...(client.name ? { name: client.name } : {}),
       redirectUris: [...client.redirectUris],
       grantTypes: client.grantTypes ?? ["authorization_code", "refresh_token"],
     })),
 
-    registerClient(client: OAuthClient): void {
-      clients.set(client.clientId, client);
+    async registerClient(client: OAuthClient): Promise<void> {
+      await oauthState.putClient(client, false);
     },
 
     async revoke(accessToken: string): Promise<boolean> {
       const hash = await digest(accessToken);
-      const stored = accessTokens.get(hash);
+      const stored = await oauthState.getAccessToken(hash);
       if (!stored) return false;
-      stored.revoked = true;
-      if (stored.refreshHash) {
-        const refresh = refreshTokens.get(stored.refreshHash);
-        if (refresh) refresh.revoked = true;
-      }
+      await oauthState.revokeAccessToken(hash);
+      if (stored.refreshHash) await oauthState.revokeRefreshToken(stored.refreshHash);
       return true;
     },
 
     async authenticate(token: string): Promise<TokenClaims | undefined> {
       const value = token.trim();
       if (!value) return undefined;
-      const stored = accessTokens.get(await digest(value));
+      const stored = await oauthState.getAccessToken(await digest(value));
       if (!stored || stored.revoked) return undefined;
       if (stored.claims.expiresAt <= now()) return undefined;
-      return stored.claims;
+      return stored.claims as TokenClaims;
     },
 
     async handle(request: HttpRequestLike): Promise<HttpResponseLike | undefined> {
@@ -216,16 +203,16 @@ export function createOAuthServer(options: OAuthServerOptions): OAuthServer {
         return json(200, protectedResourceMetadata(options.issuer, supportedScopes));
       }
       if (path === "/oauth/register" && method === "POST") {
-        return registerClient(request, clients, dynamicClients, options, now, randomToken);
+        return registerClient(request, oauthState, options, now, randomToken);
       }
       if (path === "/oauth/authorize" && method === "GET") {
-        return authorize(request, clients, dynamicClients, codes, options, now, randomToken, supportedScopes);
+        return authorize(request, oauthState, options, now, randomToken, supportedScopes, authorizationCodeTtlMs);
       }
       if (path === "/oauth/token" && method === "POST") {
-        return token(request, clients, codes, accessTokens, refreshTokens, options, now, randomToken);
+        return token(request, oauthState, options, now, randomToken, accessTokenTtlMs, refreshTokenTtlMs);
       }
       if (path === "/oauth/revoke" && method === "POST") {
-        return revoke(request, accessTokens, refreshTokens);
+        return revoke(request, oauthState);
       }
       return undefined;
     },
@@ -260,8 +247,7 @@ export function protectedResourceMetadata(issuer: string, scopes: string[]): Rec
 
 async function registerClient(
   request: HttpRequestLike,
-  clients: Map<string, OAuthClient>,
-  dynamicClients: Set<string>,
+  oauthState: OAuthState,
   options: OAuthServerOptions,
   now: () => number,
   randomToken: () => string,
@@ -292,8 +278,7 @@ async function registerClient(
     grantTypes: ["authorization_code", "refresh_token"],
     ...(typeof payload.client_name === "string" ? { name: payload.client_name } : {}),
   };
-  clients.set(clientId, client);
-  dynamicClients.add(clientId);
+  await oauthState.putClient(client, true);
   return json(201, {
     client_id: clientId,
     client_secret: clientSecret,
@@ -307,13 +292,12 @@ async function registerClient(
 
 async function authorize(
   request: HttpRequestLike,
-  clients: Map<string, OAuthClient>,
-  dynamicClients: Set<string>,
-  codes: Map<string, AuthorizationCode>,
+  oauthState: OAuthState,
   options: OAuthServerOptions,
   now: () => number,
   randomToken: () => string,
   supportedScopes: string[],
+  authorizationCodeTtlMs: number,
 ): Promise<HttpResponseLike> {
   const params = queryParams(request.url);
   const clientId = params.get("client_id") ?? "";
@@ -324,7 +308,7 @@ async function authorize(
   const codeChallenge = params.get("code_challenge") ?? "";
   const codeChallengeMethod = params.get("code_challenge_method") ?? "";
 
-  const client = clients.get(clientId);
+  const client = await oauthState.getClient(clientId);
   // 客户端不存在或回调地址没登记时，**不能**重定向——否则就成了开放重定向。
   if (!client) return json(400, { error: "invalid_client", error_description: "未登记的客户端" });
   if (!client.redirectUris.includes(redirectUri)) return json(400, { error: "invalid_redirect_uri", error_description: "回调地址未登记" });
@@ -360,35 +344,34 @@ async function authorize(
     codeChallenge,
     tenants: client.tenants ?? [],
   };
-  const approved = options.approve ? await options.approve(approval) : !dynamicClients.has(clientId);
+  const approved = options.approve ? await options.approve(approval) : !(await oauthState.isDynamic(clientId));
   if (!approved) {
     const location = `${redirectUri}?error=access_denied${state ? `&state=${encodeURIComponent(state)}` : ""}`;
     return { status: 302, headers: { Location: location }, body: "" };
   }
 
   const code = `mcp_ac_${randomToken()}`;
-  codes.set(await digest(code), {
+  await oauthState.putCode(await digest(code), {
     clientId,
     redirectUri,
     scope: allowedScopes.join(" "),
     codeChallenge,
     ...(tenant ? { tenant } : {}),
     subject: params.get("subject") ?? clientId,
-    expiresAt: now() + (options.authorizationCodeTtlMs ?? DEFAULT_AUTHORIZATION_CODE_TTL_MS),
-  });
+    expiresAt: now() + authorizationCodeTtlMs,
+  }, authorizationCodeTtlMs);
   const location = `${redirectUri}?code=${encodeURIComponent(code)}${state ? `&state=${encodeURIComponent(state)}` : ""}`;
   return { status: 302, headers: { Location: location }, body: "" };
 }
 
 async function token(
   request: HttpRequestLike,
-  clients: Map<string, OAuthClient>,
-  codes: Map<string, AuthorizationCode>,
-  accessTokens: Map<string, StoredToken>,
-  refreshTokens: Map<string, StoredToken>,
+  oauthState: OAuthState,
   options: OAuthServerOptions,
   now: () => number,
   randomToken: () => string,
+  accessTokenTtlMs: number,
+  refreshTokenTtlMs: number,
 ): Promise<HttpResponseLike> {
   let payload: Record<string, unknown>;
   try {
@@ -399,7 +382,7 @@ async function token(
   const grantType = String(payload.grant_type ?? "");
   const basic = basicCredentials(request);
   const clientId = String(payload.client_id ?? basic?.clientId ?? "");
-  const client = clients.get(clientId);
+  const client = await oauthState.getClient(clientId);
   if (!client) return json(401, { error: "invalid_client", error_description: "未登记的客户端" });
 
   if (grantType === "authorization_code") {
@@ -408,9 +391,8 @@ async function token(
     const codeVerifier = String(payload.code_verifier ?? "");
 
     const hash = await digest(code);
-    const stored = codes.get(hash);
     // 授权码只能用一次：用过就删。
-    codes.delete(hash);
+    const stored = await oauthState.takeCode(hash);
     if (!stored) return json(400, { error: "invalid_grant", error_description: "授权码无效、已用过或已过期" });
     if (stored.expiresAt <= now()) return json(400, { error: "invalid_grant", error_description: "授权码已过期" });
     if (stored.clientId !== clientId) return json(400, { error: "invalid_grant", error_description: "授权码与客户端不匹配" });
@@ -428,11 +410,12 @@ async function token(
       tenant: stored.tenant,
       scope: stored.scope,
       clientId,
-      accessTokens,
-      refreshTokens,
+      oauthState,
       options,
       now,
       randomToken,
+      accessTokenTtlMs,
+      refreshTokenTtlMs,
     });
     return json(200, issued);
   }
@@ -440,7 +423,7 @@ async function token(
   if (grantType === "refresh_token") {
     const presented = String(payload.refresh_token ?? "");
     const hash = await digest(presented);
-    const stored = refreshTokens.get(hash);
+    const stored = await oauthState.getRefreshToken(hash);
     if (!stored || stored.revoked) return json(400, { error: "invalid_grant", error_description: "刷新令牌无效或已被吊销" });
     if (stored.claims.expiresAt <= now()) return json(400, { error: "invalid_grant", error_description: "刷新令牌已过期" });
     if (stored.claims.clientId !== clientId) return json(400, { error: "invalid_grant", error_description: "刷新令牌与客户端不匹配" });
@@ -449,9 +432,10 @@ async function token(
 
     // 轮换：旧的刷新令牌立刻作废，旧 access token 一并作废。
     // 旧令牌被复制走时，最多只能用一次。
-    stored.revoked = true;
-    for (const access of accessTokens.values()) {
-      if (access.refreshHash === hash) access.revoked = true;
+    await oauthState.revokeRefreshToken(hash);
+    for (const access of await oauthState.listAccessTokens()) {
+      if (access.token.refreshHash !== hash) continue;
+      await oauthState.revokeAccessToken(access.hash);
     }
 
     const issued = await issueTokens({
@@ -459,11 +443,12 @@ async function token(
       tenant: stored.claims.tenant,
       scope: stored.claims.scope,
       clientId: stored.claims.clientId,
-      accessTokens,
-      refreshTokens,
+      oauthState,
       options,
       now,
       randomToken,
+      accessTokenTtlMs,
+      refreshTokenTtlMs,
     });
     return json(200, issued);
   }
@@ -476,14 +461,15 @@ async function issueTokens(input: {
   tenant?: string;
   scope: string;
   clientId: string;
-  accessTokens: Map<string, StoredToken>;
-  refreshTokens: Map<string, StoredToken>;
+  oauthState: OAuthState;
   options: OAuthServerOptions;
   now: () => number;
   randomToken: () => string;
+  accessTokenTtlMs: number;
+  refreshTokenTtlMs: number;
 }): Promise<TokenResponse> {
-  const accessTtl = input.options.accessTokenTtlMs ?? DEFAULT_ACCESS_TOKEN_TTL_MS;
-  const refreshTtl = input.options.refreshTokenTtlMs ?? DEFAULT_REFRESH_TOKEN_TTL_MS;
+  const accessTtl = input.accessTokenTtlMs;
+  const refreshTtl = input.refreshTokenTtlMs;
   const accessToken = `mcp_at_${input.randomToken()}`;
   const refreshToken = `mcp_rt_${input.randomToken()}`;
   const accessHash = await digest(accessToken);
@@ -498,8 +484,8 @@ async function issueTokens(input: {
     expiresAt: issuedAt + accessTtl,
     grantId: input.randomToken(),
   };
-  input.accessTokens.set(accessHash, { claims, refreshHash });
-  input.refreshTokens.set(refreshHash, { claims: { ...claims, expiresAt: issuedAt + refreshTtl } });
+  await input.oauthState.putAccessToken(accessHash, { claims, refreshHash }, accessTtl);
+  await input.oauthState.putRefreshToken(refreshHash, { claims: { ...claims, expiresAt: issuedAt + refreshTtl } }, refreshTtl);
   return {
     access_token: accessToken,
     token_type: "Bearer",
@@ -555,8 +541,7 @@ function basicCredentials(request: HttpRequestLike): BasicCredentials | undefine
 
 async function revoke(
   request: HttpRequestLike,
-  accessTokens: Map<string, StoredToken>,
-  refreshTokens: Map<string, StoredToken>,
+  oauthState: OAuthState,
 ): Promise<HttpResponseLike> {
   let payload: Record<string, unknown>;
   try {
@@ -566,14 +551,12 @@ async function revoke(
   }
   const token = String(payload.token ?? "");
   if (!token) return json(400, { error: "invalid_request", error_description: "缺少 token" });
-  const stored = accessTokens.get(await digest(token));
+  const hash = await digest(token);
+  const stored = await oauthState.getAccessToken(hash);
   // RFC 7009：吊销不存在的令牌也返回 200，不泄露信息。
   if (stored) {
-    stored.revoked = true;
-    if (stored.refreshHash) {
-      const refresh = refreshTokens.get(stored.refreshHash);
-      if (refresh) refresh.revoked = true;
-    }
+    await oauthState.revokeAccessToken(hash);
+    if (stored.refreshHash) await oauthState.revokeRefreshToken(stored.refreshHash);
   }
   return json(200, {});
 }

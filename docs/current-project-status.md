@@ -242,6 +242,14 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   `notifications/resources/updated`；变更有两个来源——本进程提交后立刻推
   （给 `StudioProject` 加了 `onCommit` 订阅），以及轮询事务日志发现**别的进程**
   （网页端）提交的改动，修订号账本保证同一个修订号只推一次；
+  ④ **多实例共享状态**（2026-11-10，`mcp-store.ts` + `mcp-auth-state.ts`）：给服务进程
+  一个共享状态目录（`STUDIO_MCP_STATE_DIR`），几个实例指向同一个目录就共享了
+  **OAuth 状态**（客户端登记、授权码、令牌：令牌在哪个实例签发就在哪个实例验得过）与
+  **事件总线**（事件写进共享存储，每个实例的 SSE 订阅者都收到——不必等 2 秒轮询，
+  投递按存储键去重）。共享存储有内存与文件两种实现；文件实现靠 `fs.watch` +
+  低频兜底轮询（Windows 上文件事件偶尔会丢）。轮询**没有去掉**：改了但没走共享
+  存储的变更仍靠它发现，它现在是兜底。跨主机要换 Redis / 数据库后端
+  （`McpStateStore` 接口已留好位置）。规格见 `mcp-production.md`；
 - 画布渲染器：场景先压成纯数据的 `SceneNode` 树（`renderer/scene.ts`，布局盒 + 填充/描边/
   圆角/文字/图片，不碰 DOM），再由 Canvas 2D 渲染器按 `zoom × dpr` 绘制
   （`renderer/canvas-renderer.ts`），缩放时重绘而不是拉伸位图。分层借鉴 tldraw /

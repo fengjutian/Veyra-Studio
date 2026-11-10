@@ -13,6 +13,7 @@
  */
 
 import type { ProjectRepository } from "@ufira/design-persistence";
+import type { McpStateStore } from "./mcp-store";
 import type { McpTenantConfig } from "./mcp-tenants";
 
 /** JSON-RPC 通知（没有 id 的消息）。 */
@@ -21,6 +22,9 @@ export interface McpNotification {
   method: string;
   params?: unknown;
 }
+
+/** 事件在共享存储里的存活时间：够慢的客户端能取到，又不会无限堆积。 */
+export const EVENT_TTL_MS = 5 * 60 * 1000;
 
 export interface McpEventHub {
   /** 订阅某租户的事件；返回取消订阅的函数。 */
@@ -31,8 +35,42 @@ export interface McpEventHub {
   subscriberCount(tenantId?: string): number;
 }
 
-export function createMcpEventHub(): McpEventHub {
+export interface McpEventHubOptions {
+  /**
+   * 共享存储。
+   *
+   * 给了它，事件就**写进共享存储**而不是只在本进程里分发：别的实例订阅同一个
+   * 租户前缀时会立刻收到——这就是「跨进程实时推送」，不必等轮询。
+   *
+   * 没给时行为与从前一致：事件只在本进程内分发。
+   */
+  store?: McpStateStore;
+}
+
+export function createMcpEventHub(options: McpEventHubOptions = {}): McpEventHub {
   const subscribers = new Map<string, Set<(notification: McpNotification) => void>>();
+  /** 已经投递过的事件键：同一条事件不能投两次（文件监听与兜底轮询可能都报）。 */
+  const delivered = new Set<string>();
+
+  const deliver = (tenantId: string, notification: McpNotification, key?: string): void => {
+    if (key) {
+      if (delivered.has(key)) return;
+      delivered.add(key);
+      // 只留最近的一批：无限增长会变成内存泄漏。
+      if (delivered.size > 1024) {
+        const oldest = delivered.values().next().value;
+        if (oldest !== undefined) delivered.delete(oldest);
+      }
+    }
+    // 复制一份再发：监听器可能在回调里取消订阅，边发边改集合会漏发或多发。
+    for (const listener of [...(subscribers.get(tenantId) ?? [])]) {
+      try {
+        listener(notification);
+      } catch {
+        // 一个订阅者出错不能影响其他人——推送失败只影响这一条连接。
+      }
+    }
+  };
 
   return {
     subscriberCount(tenantId?: string): number {
@@ -46,7 +84,14 @@ export function createMcpEventHub(): McpEventHub {
       const listeners = subscribers.get(tenantId) ?? new Set();
       listeners.add(listener);
       subscribers.set(tenantId, listeners);
+      // 共享存储里的事件也要收：那是别的实例推过来的。
+      const unsubscribeStore = options.store?.subscribe(`mcp:event:${tenantId}:`, (key, value) => {
+        const payload = value as { notification?: McpNotification } | undefined;
+        if (!payload?.notification) return;
+        deliver(tenantId, payload.notification, key);
+      });
       return () => {
+        unsubscribeStore?.();
         const current = subscribers.get(tenantId);
         if (!current) return;
         current.delete(listener);
@@ -55,16 +100,16 @@ export function createMcpEventHub(): McpEventHub {
     },
 
     publish(tenantId: string, notification: McpNotification): void {
-      const listeners = subscribers.get(tenantId);
-      if (!listeners?.size) return;
-      // 复制一份再发：监听器可能在回调里取消订阅，边发边改集合会漏发或多发。
-      for (const listener of [...listeners]) {
-        try {
-          listener(notification);
-        } catch {
-          // 一个订阅者出错不能影响其他人——推送失败只影响这一条连接。
-        }
+      if (options.store) {
+        // 写进共享存储：本地订阅者与别的实例都从存储这一条路收到，
+        // 正好只投一次（投递去重键就是存储里的键）。
+        const key = `mcp:event:${tenantId}:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        void options.store.set(key, { notification }, { ttlMs: EVENT_TTL_MS }).catch(() => {
+          // 存储写失败：这条事件丢了。轮询兜底还会发现这次变更。
+        });
+        return;
       }
+      deliver(tenantId, notification);
     },
   };
 }

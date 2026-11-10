@@ -35,7 +35,9 @@ import { installPaperBooleanEngine } from "../src/boolean-engine";
 import { createMcpServer } from "../src/mcp-server";
 import { createMcpHttpHandler, type HttpStreamLike } from "../src/mcp-http";
 import { createOAuthServer, type OAuthClient } from "../src/mcp-auth";
+import { createStoreOAuthState } from "../src/mcp-auth-state";
 import { createMcpEventHub, createTenantRevisionLedger, documentUpdatedNotification, startTenantEventPoller } from "../src/mcp-events";
+import { createFileMcpStore } from "../src/mcp-store";
 import { createTenantProjects, type McpTenantConfig } from "../src/mcp-tenants";
 import type { McpPolicy } from "../src/mcp";
 import type { DesignCommand } from "@ufira/design-runtime";
@@ -63,7 +65,11 @@ const repository = new FileSystemProjectRepository(directory);
 const tenants: McpTenantConfig[] = process.env.STUDIO_MCP_TENANTS
   ? parseJson<McpTenantConfig[]>(process.env.STUDIO_MCP_TENANTS, "STUDIO_MCP_TENANTS")
   : [{ id: "default", projectId }];
-const hub = createMcpEventHub();
+// 共享状态目录：多个实例指向同一个目录，就共享了 OAuth 状态与事件总线。
+// 不给就是单实例模式（状态在进程内存里，事件只在本进程内分发）。
+const stateDirectory = process.env.STUDIO_MCP_STATE_DIR?.trim();
+const store = stateDirectory ? createFileMcpStore({ directory: stateDirectory }) : undefined;
+const hub = createMcpEventHub(store ? { store } : {});
 const ledger = createTenantRevisionLedger();
 const tenantProjects = createTenantProjects({ repository, tenants });
 
@@ -86,7 +92,12 @@ if (oauthIssuer) {
   const clients = process.env.STUDIO_MCP_OAUTH_CLIENTS
     ? parseJson<OAuthClient[]>(process.env.STUDIO_MCP_OAUTH_CLIENTS, "STUDIO_MCP_OAUTH_CLIENTS")
     : [];
-  oauth = createOAuthServer({ issuer: oauthIssuer, clients });
+  oauth = createOAuthServer({
+    issuer: oauthIssuer,
+    clients,
+    // 有共享存储时，客户端登记、授权码与令牌跨实例可见。
+    ...(store ? { state: createStoreOAuthState(store) } : {}),
+  });
   console.error(`已启用 OAuth 2.1 授权服务器（issuer ${oauthIssuer}），预登记客户端 ${clients.length} 个`);
 } else {
   if (!staticToken) {
