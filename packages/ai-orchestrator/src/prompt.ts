@@ -83,7 +83,7 @@ function describeAttachedImage(image: AiPlanRequest["image"]): string {
   if (!image) return "";
   const size = image.width && image.height ? `${image.width}×${image.height}` : "尺寸未知";
   return [
-    `附上了当前画面的截图（${image.mimeType}，${size}）。`,
+    `附上了${image.label ? image.label : "当前画面"}的截图（${image.mimeType}，${size}）。`,
     "分工：文字摘要给的是精确的节点 id、坐标、尺寸与字号；截图给的是观感——挤不挤、对不对齐、够不够醒目、哪里难看。",
     "要改的仍然是摘要里列出的真实节点，用它们的 id 下命令；截图用来判断「改成什么样」，不要凭截图猜 id。",
   ].join("\n");

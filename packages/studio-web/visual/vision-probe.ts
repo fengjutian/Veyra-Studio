@@ -39,6 +39,9 @@ const CACHE = join(here, ".cache");
 /** 画布尺寸（见 `src/canvas-zoom.ts`）。 */
 const CANVAS = { width: 960, height: 680 };
 
+/** 拼页时每页上方留给页名的标题条高度（见 `src/ai-vision.ts`）。 */
+const PAGE_LABEL_HEIGHT = 22;
+
 /** 探针的失败项：收集完一次性报出来，而不是撞到第一个问题就停。 */
 const failures: string[] = [];
 
@@ -66,6 +69,21 @@ function channelDistance(a: Rgb, b: Rgb): number {
 
 function rgb(r: number, g: number, b: number): Rgb {
   return { r, g, b, a: 255 };
+}
+
+/**
+ * 在整张图里找第一个接近给定颜色的像素。
+ *
+ * 用来证明「某个颜色**不**在图里」——这类否定断言没法用固定采样点表达：
+ * 选区外的节点可能漏在任意位置。
+ */
+function findColor(image: RgbaImage, expected: Rgb): { x: number; y: number } | undefined {
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      if (channelDistance(pixelAt(image, x, y), expected) <= TOLERANCE) return { x, y };
+    }
+  }
+  return undefined;
 }
 
 /** 期望颜色与实际颜色的最大通道差（超阈值就算不合格）。 */
@@ -102,6 +120,8 @@ interface HarnessResult {
   error?: string;
   full?: { dataUrl: string; width: number; height: number };
   small?: { dataUrl: string; width: number; height: number };
+  selection?: { dataUrl: string; width: number; height: number };
+  pages?: { dataUrl: string; width: number; height: number };
 }
 
 /** 等 harness 把结果写进 DOM。 */
@@ -181,6 +201,57 @@ async function main(): Promise<void> {
     const distance = channelDistance(scaled, rgb(0xf8, 0x71, 0x71));
     expect(distance <= TOLERANCE, `缩小后的图里 accent 的颜色应该是 rgb(248,113,113)，实际 rgb(${scaled.r},${scaled.g},${scaled.b})`);
     console.log(`  ${distance <= TOLERANCE ? "✔" : "✗"} 限长后内容保留      rgb(${scaled.r},${scaled.g},${scaled.b})`);
+
+    // ── 截选区：相机对准选中的包围盒 ──────────────────────────────────
+    // card 在页面坐标 (40,40) 360×220；选区图里它应该正好铺满 (0,0)-(360,220)。
+    expect(Boolean(result.selection), "harness 没有产出选区截图");
+    if (result.selection) {
+      expect(result.selection.width === 360, `选区截图宽度应该是 360，实际 ${result.selection.width}`);
+      expect(result.selection.height === 220, `选区截图高度应该是 220，实际 ${result.selection.height}`);
+      const selection = decodeDataUrl(result.selection.dataUrl);
+      // card 的空白区：页面坐标 (380,240) → 选区坐标 (340,200)。
+      const blank = pixelAt(selection, 340, 200);
+      const blankDistance = channelDistance(blank, rgb(0xff, 0xff, 0xff));
+      expect(blankDistance <= TOLERANCE, `选区里 card 的空白处应该是白色，实际 rgb(${blank.r},${blank.g},${blank.b})`);
+      console.log(`  ${blankDistance <= TOLERANCE ? "✔" : "✗"} 选区内容对位      rgb(${blank.r},${blank.g},${blank.b})`);
+      // 选区外的东西不该出现：accent 是 #f87171，在 card 之外。
+      const accent = findColor(selection, rgb(0xf8, 0x71, 0x71));
+      expect(accent === undefined, `选区截图里出现了 accent 的颜色（选区外的节点漏进来了）：${accent ? `(${accent.x},${accent.y})` : ""}`);
+      console.log(`  ${accent === undefined ? "✔" : "✗"} 选区外节点没漏进来`);
+      // 仪表自检：同一套 findColor 在**整页**图里必须能找到 accent。少了这条，
+      // 「没找到」既可能是真的没漏进来，也可能是 findColor 坏了——两种情况都显示 ✔。
+      const accentInFull = findColor(image, rgb(0xf8, 0x71, 0x71));
+      expect(accentInFull !== undefined, "findColor 在整页图里都找不到 accent，说明这个检查本身坏了");
+      console.log(`  ${accentInFull !== undefined ? "✔" : "✗"} 查找器本身有效      (${accentInFull?.x},${accentInFull?.y})`);
+    }
+
+    // ── 多页拼接：左右顺序对，页与页不串 ──────────────────────────────
+    // 两页各一块 240×120 的纯色：page:1 红、page:2 蓝。
+    // 拼接宽度 = 240 + 16 + 240 + 16×2 = 528；高度 = 120 + 22（页名条）。
+    expect(Boolean(result.pages), "harness 没有产出拼接截图");
+    if (result.pages) {
+      expect(result.pages.width === 528, `拼接图宽度应该是 528，实际 ${result.pages.width}`);
+      expect(result.pages.height === 142, `拼接图高度应该是 142，实际 ${result.pages.height}`);
+      const pages = decodeDataUrl(result.pages.dataUrl);
+      const left = pixelAt(pages, 100, 80);
+      const leftDistance = channelDistance(left, rgb(0xff, 0x00, 0x00));
+      expect(leftDistance <= TOLERANCE, `拼接图左边应该是第一页的红色，实际 rgb(${left.r},${left.g},${left.b})`);
+      console.log(`  ${leftDistance <= TOLERANCE ? "✔" : "✗"} 左页在左          rgb(${left.r},${left.g},${left.b})`);
+      const right = pixelAt(pages, 400, 80);
+      const rightDistance = channelDistance(right, rgb(0x00, 0x00, 0xff));
+      expect(rightDistance <= TOLERANCE, `拼接图右边应该是第二页的蓝色，实际 rgb(${right.r},${right.g},${right.b})`);
+      console.log(`  ${rightDistance <= TOLERANCE ? "✔" : "✗"} 右页在右          rgb(${right.r},${right.g},${right.b})`);
+      // 两页之间的间隙是白的（页名条区域除外）。
+      const gap = pixelAt(pages, 264, 80);
+      const gapDistance = channelDistance(gap, rgb(0xff, 0xff, 0xff));
+      expect(gapDistance <= TOLERANCE, `两页之间的间隙应该是白色，实际 rgb(${gap.r},${gap.g},${gap.b})`);
+      console.log(`  ${gapDistance <= TOLERANCE ? "✔" : "✗"} 页间隙没串页      rgb(${gap.r},${gap.g},${gap.b})`);
+      // 页名：模型看到的是一张长图，不写页名它分不清哪块是哪页。页名画在顶部
+      // 标题条里（y < 22），那一条应该找得到深色文字像素。
+      const labelPixel = findColor(pages, rgb(0x11, 0x11, 0x11));
+      expect(labelPixel !== undefined && labelPixel.y < PAGE_LABEL_HEIGHT, `拼接图顶部没有页名文字（找到的第一个深色像素在 ${labelPixel ? `(${labelPixel.x},${labelPixel.y})` : "无"}）`);
+      console.log(`  ${labelPixel && labelPixel.y < PAGE_LABEL_HEIGHT ? "✔" : "✗"} 页名画在顶部      (${labelPixel?.x},${labelPixel?.y})`);
+    }
   } finally {
     await browser.close();
     await server.close();

@@ -89,3 +89,31 @@ test("带截图时提示讲清了图与文字摘要各管什么", () => {
   // 截图说明排在文档摘要之前：先说「这是图」，再给「这是数值」。
   assert.ok(user.indexOf("截图") < user.indexOf("当前文档："));
 });
+
+test("截图范围写进提示：模型得知道这张图是整页、选区还是拼图", () => {
+  const { user } = buildPlannerPrompt({
+    prompt: "把标题改成红色",
+    document: documentWithText(),
+    selectedNodeIds: [],
+    image: {
+      dataUrl: "data:image/png;base64,AAA",
+      mimeType: "image/png",
+      width: 528,
+      height: 142,
+      label: "全部 2 个页面（从左到右）",
+    },
+  });
+  // 不说明范围，模型会把拼图当成一张奇怪的页面来读。
+  assert.match(user, /全部 2 个页面（从左到右）/);
+  assert.match(user, /截图/);
+});
+
+test("没有 label 时退回「当前画面」，提示仍然完整", () => {
+  const { user } = buildPlannerPrompt({
+    prompt: "把标题改成红色",
+    document: documentWithText(),
+    selectedNodeIds: [],
+    image: { dataUrl: "data:image/png;base64,AAA", mimeType: "image/png", width: 960, height: 640 },
+  });
+  assert.match(user, /附上了当前画面的截图/);
+});

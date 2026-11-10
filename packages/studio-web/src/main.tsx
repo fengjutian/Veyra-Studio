@@ -100,7 +100,7 @@ import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
-import { capturePageScreenshot } from "./ai-vision";
+import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "./ai-vision";
 import { AiSettingsPanel } from "./ai-settings-panel";
 import "./styles.css";
 import "./workbench.css";
@@ -117,6 +117,8 @@ function App() {
   const [prompt, setPrompt] = useState("添加一个蓝色卡片");
   // 「带截图问 AI」：把当前页面渲染成 PNG 一起发给模型。端点不支持看图时自动失效。
   const [aiVision, setAiVision] = useState(false);
+  // 截图范围：整页 / 只截选中的节点 / 把所有页拼成一张长图。
+  const [aiVisionScope, setAiVisionScope] = useState<"page" | "selection" | "pages">("page");
   const [preview, setPreview] = useState<AiPlanPreview>();
   // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
   const planAbort = useRef<AbortController | undefined>(undefined);
@@ -1496,20 +1498,41 @@ function App() {
   };
 
   /**
-   * 「带截图问 AI」开关打开时，给当前页面截一张图。
+   * 「带截图问 AI」开关打开时，给模型截一张图。
    *
    * 端点不支持看图就不截——发过去只会得到一个 400。与其让用户对着报错猜，
    * 不如一开始就把这个选项关掉。
+   *
+   * 范围有三种：整页、只截选中的节点（问「这个按钮怎么样」时整页里的按钮太小）、
+   * 把所有页横向拼成一张长图（看流程的先后与呼应）。截图的范围会写进提示——
+   * 模型看到的是一张图，不知道它是整页还是拼图，不说明它会读错。
    */
   const captureVisionIfEnabled = async (): Promise<AiImagePayload | undefined> => {
     if (!aiVision || !document || !page) return undefined;
     if (!describeProvider(aiSettings.baseUrl).capabilities.vision) return undefined;
-    const shot = await capturePageScreenshot({ document, pageId: page.id, repository, projectId: document.id });
+    const shared = { document, repository, projectId: document.id };
+    let shot: Awaited<ReturnType<typeof capturePageScreenshot>>;
+    let label: string;
+    if (aiVisionScope === "selection" && selectedIds.length) {
+      shot = await captureSelectionScreenshot({ ...shared, pageId: page.id, nodeIds: selectedIds });
+      label = `当前选区（${selectedIds.length} 个节点）`;
+      if (!shot) {
+        // 选区不在当前页上时截不出来——退回整页并说清楚，别让用户以为没截。
+        shot = await capturePageScreenshot({ ...shared, pageId: page.id });
+        label = "当前页";
+      }
+    } else if (aiVisionScope === "pages" && document.pageOrder.length > 1) {
+      shot = await capturePagesScreenshot({ ...shared, pageId: page.id, pageIds: document.pageOrder });
+      label = `全部 ${document.pageOrder.length} 个页面（从左到右）`;
+    } else {
+      shot = await capturePageScreenshot({ ...shared, pageId: page.id });
+      label = "当前页";
+    }
     if (!shot) {
       setMessage("这一页没有可截图的内容，AI 这次是按文字摘要回答的");
       return undefined;
     }
-    return { dataUrl: shot.dataUrl, mimeType: shot.mimeType, width: shot.width, height: shot.height };
+    return { dataUrl: shot.dataUrl, mimeType: shot.mimeType, width: shot.width, height: shot.height, label };
   };
 
   /**
@@ -2552,6 +2575,16 @@ function App() {
               />
             </label>
             {visionSupported ? <p className="empty-hint">带上截图后，模型能看出挤不挤、齐不齐、哪里难看——这些光看文字摘要看不出来。</p> : <p className="empty-hint">当前端点没有实测过看图能力，这个开关用不了。</p>}
+            {visionSupported && (
+              <label className="field">
+                <span className="field-label">截图范围</span>
+                <select aria-label="截图范围" value={aiVisionScope} onChange={event => setAiVisionScope(event.target.value as "page" | "selection" | "pages")}>
+                  <option value="page">当前页</option>
+                  <option value="selection" disabled={!selectedIds.length}>当前选区{selectedIds.length ? `（${selectedIds.length} 个节点）` : "（没有选中）"}</option>
+                  <option value="pages" disabled={document.pageOrder.length < 2}>全部页面拼接{document.pageOrder.length > 1 ? `（${document.pageOrder.length} 页）` : "（只有一页）"}</option>
+                </select>
+              </label>
+            )}
             <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
             {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
             {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}

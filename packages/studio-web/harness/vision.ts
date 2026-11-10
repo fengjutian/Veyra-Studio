@@ -1,5 +1,6 @@
 import type { ProjectRepository } from "@ufira/design-persistence";
-import { capturePageScreenshot } from "../src/ai-vision";
+import { createDocument } from "@ufira/design-schema";
+import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "../src/ai-vision";
 import { fixtureDocument } from "./fixture";
 
 /**
@@ -27,6 +28,10 @@ interface VisionHarnessResult {
   error?: string;
   full?: { dataUrl: string; width: number; height: number };
   small?: { dataUrl: string; width: number; height: number };
+  /** 只截选区（card）的结果。 */
+  selection?: { dataUrl: string; width: number; height: number };
+  /** 两页拼接的结果。 */
+  pages?: { dataUrl: string; width: number; height: number };
 }
 
 /** fixture 里那张样图的资源哈希（见 `harness/fixture.ts`）。 */
@@ -60,10 +65,66 @@ async function run(): Promise<VisionHarnessResult> {
     });
     if (!full) return { ok: false, error: "capturePageScreenshot 没有返回截图" };
     if (!small) return { ok: false, error: "限长之后 capturePageScreenshot 没有返回截图" };
-    return { ok: true, full, small };
+
+    // 只截 card（360×220 @ 页面坐标 40,40）。选区图里不该出现 accent 的颜色——
+    // accent 在 card 之外。
+    const selection = await captureSelectionScreenshot({
+      document: document_,
+      pageId: "page:1",
+      repository,
+      projectId: "project:vision",
+      nodeIds: ["card"],
+    });
+    if (!selection) return { ok: false, error: "captureSelectionScreenshot 没有返回截图" };
+
+    // 两页拼接：每页一块纯色，位置固定，探针能逐像素核对谁在左边。
+    const twoPages = twoPageDocument();
+    const pages = await capturePagesScreenshot({
+      document: twoPages,
+      pageId: "page:1",
+      repository,
+      projectId: "project:vision",
+      pageIds: ["page:1", "page:2"],
+    });
+    if (!pages) return { ok: false, error: "capturePagesScreenshot 没有返回截图" };
+
+    return { ok: true, full, small, selection, pages };
   } catch (error) {
     return { ok: false, error: `${String(error)}\n${(error as Error)?.stack ?? ""}` };
   }
+}
+
+/**
+ * 两页拼接用的文档：每页一块纯色方块。
+ *
+ * 颜色故意选得极端（纯红 / 纯蓝），探针一眼就能看出哪块在左、哪块在哪——
+ * 拼接的左右顺序错了、色块串位了，这种图立刻暴露。
+ *
+ * 单独造一份文档而不是改 fixture：改了就会留下一堆孤儿节点，文档校验直接失败。
+ */
+function twoPageDocument() {
+  const document = createDocument("doc:harness:pages", "Pages Harness", "page:1");
+  const tile = (id: string, pageId: string, color: string) => {
+    const node = {
+      id,
+      type: "frame" as const,
+      name: id,
+      parentId: pageId,
+      childIds: [],
+      visible: true,
+      locked: false,
+      layout: { mode: "absolute" as const, x: 0, y: 0, width: 240, height: 120, widthMode: "fixed" as const, heightMode: "fixed" as const },
+      appearance: { opacity: 1, fills: [{ type: "solid" as const, color }] },
+    };
+    document.nodes[id] = node;
+    return node;
+  };
+  tile("tile:1", "page:1", "#ff0000");
+  tile("tile:2", "page:2", "#0000ff");
+  document.pages["page:1"].childIds = ["tile:1"];
+  document.pages["page:2"] = { id: "page:2", name: "第二页", childIds: ["tile:2"] };
+  document.pageOrder.push("page:2");
+  return document;
 }
 
 /**

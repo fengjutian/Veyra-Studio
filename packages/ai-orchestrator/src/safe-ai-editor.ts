@@ -27,6 +27,14 @@ export interface AiImagePayload {
   /** 像素宽高；写进提示，模型好定位画面里的东西。 */
   width?: number;
   height?: number;
+  /**
+   * 这张图是什么范围的截图。
+   *
+   * 模型看到的是一张图，不知道它是整页、选区还是好几页拼起来的——不说明的话，
+   * 它会把拼图当成一张奇怪的页面来读。写一句人话告诉它（「当前页」「选区里的 2 个
+   * 节点」「3 个页面，从左到右」），它才知道该按什么视角看。
+   */
+  label?: string;
 }
 
 export interface AiPlanRequest {
