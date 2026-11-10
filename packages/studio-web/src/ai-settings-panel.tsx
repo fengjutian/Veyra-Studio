@@ -35,6 +35,12 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
   // 只在这个会话里配过密钥才提示会失效；本地免鉴权网关不需要吓用户。
   const keyInSession = settings.apiKeys.length > 0;
   const provider = describeProvider(draft.baseUrl);
+  const featuredProviders = PROVIDER_PRESETS.filter(item => ["minimax", "deepseek"].includes(item.id));
+  const selectProvider = (id: string) => {
+    const preset = PROVIDER_PRESETS.find(item => item.id === id);
+    if (preset) update({ enabled: true, baseUrl: preset.baseUrl, model: preset.defaultModel });
+  };
+  const saveEnabled = (value: AiSettings) => onSave({ ...value, enabled: true });
 
   const addKey = () => {
     const value = newKey.trim();
@@ -66,7 +72,7 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
     setVaultBusy(true);
     try {
       await sealKeyRing({ keys: draft.apiKeys, activeIndex: draft.activeKeyIndex }, passphrase);
-      onSave(draft);
+      saveEnabled(draft);
       setVaultStored(true);
       setVaultNote("已加密保存到本机磁盘。下次开标签页时用同一个口令解锁。");
       setPassphrase("");
@@ -91,7 +97,7 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
         setVaultNote("口令不对（或密文已损坏）。");
         return;
       }
-      onSave({ ...draft, apiKeys: ring.keys, activeKeyIndex: ring.activeIndex });
+      saveEnabled({ ...draft, apiKeys: ring.keys, activeKeyIndex: ring.activeIndex });
       setVaultNote(`已解锁，载入 ${ring.keys.length} 把密钥。`);
       setPassphrase("");
     } finally {
@@ -112,21 +118,42 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
       <p className="ai-settings-status">{active
         ? `当前规划器：真实模型 ${settings.model} @ ${settings.baseUrl}`
         : "当前规划器：演示规划器（未配置真实模型，需求不会被理解）"}</p>
-      <label className="field field-inline">
-        <span className="field-label">启用真实模型</span>
-        <input type="checkbox" checked={draft.enabled} onChange={event => update({ enabled: event.target.checked })} />
-      </label>
+      <div className="field ai-provider-featured">
+        <span className="field-label">选择模型服务</span>
+        <div className="ai-provider-cards" role="group" aria-label="推荐模型服务">
+          {featuredProviders.map(preset => {
+            const selected = provider.matched && provider.id === preset.id;
+            const verified = describeProvider(preset.baseUrl).verified;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={`ai-provider-card${selected ? " is-selected" : ""}`}
+                aria-pressed={selected}
+                disabled={disabled}
+                onClick={() => selectProvider(preset.id)}
+              >
+                <span className="ai-provider-card-mark">{preset.id === "minimax" ? "M" : "D"}</span>
+                <span className="ai-provider-card-copy">
+                  <strong>{preset.label}</strong>
+                  <small>{preset.defaultModel}</small>
+                </span>
+                <span className={`ai-provider-card-badge${verified ? " is-verified" : ""}`}>{verified ? "已实测" : "兼容"}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <label className="field">
         <span className="field-label">服务地址</span>
         <input type="text" value={draft.baseUrl} placeholder="https://api.openai.com/v1" onChange={event => update({ baseUrl: event.target.value })} />
       </label>
       <label className="field">
-        <span className="field-label">快速填入</span>
+        <span className="field-label">其他服务 / 接入点</span>
         <select
           value={provider.matched ? provider.id : ""}
           onChange={event => {
-            const preset = PROVIDER_PRESETS.find(item => item.id === event.target.value);
-            if (preset) update({ baseUrl: preset.baseUrl, model: preset.defaultModel });
+            selectProvider(event.target.value);
           }}
         >
           <option value="">自定义</option>
@@ -196,7 +223,7 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
         </div>
       </div>
       <div className="ai-settings-actions">
-        <button disabled={disabled} onClick={() => onSave(draft)}>保存设置</button>
+        <button disabled={disabled} onClick={() => saveEnabled(draft)}>保存并启用</button>
         <button disabled={disabled} onClick={onClear}>清除</button>
       </div>
       <div className="field">

@@ -188,6 +188,8 @@ function App() {
   const [contextIds, setContextIds] = useState<string[]>([]);
   // AI 模型设置只存在浏览器 localStorage，不进文档也不进事务日志。
   const [aiSettings, setAiSettings] = useState<AiSettings>(() => readAiSettings());
+  const aiReady = aiSettingsComplete(aiSettings)
+    && (describeProvider(aiSettings.baseUrl).capabilities.auth === "none" || aiSettings.apiKeys.length > 0);
   const askText = usePrompt();
   const askConfirm = useConfirm();
   const askChoice = useChoice();
@@ -1704,7 +1706,18 @@ function App() {
    * 成功之后才会进入待确认状态。
    */
   const generateAiPlan = async () => {
-    if (!editor || !prompt.trim() || busy) return;
+    if (!prompt.trim() || busy) return;
+    // 计划、流式文本、错误和确认动作都显示在 AI 分段里。生成入口常驻画布后，
+    // 必须先把反馈面板带到用户眼前，否则请求即使成功也会像「点击没反应」。
+    setRightPanelOpen(true);
+    setInspectorTab("ai");
+    if (!aiReady) {
+      setPreview(undefined);
+      setMessage("请先选择 MiniMax 或 DeepSeek，填写 API Key 并启用真实模型");
+      return;
+    }
+    if (!editor) return;
+    setMessage("正在生成 AI 安全变更预览…");
     const controller = new AbortController();
     planAbort.current = controller;
     operationInFlight.current = true;
@@ -2676,18 +2689,37 @@ function App() {
             onKeyDown={event => {
               if (event.key === "Enter" && !event.shiftKey && prompt.trim() && !busy) {
                 event.preventDefault();
-                void generateAiPlan();
+                if (!aiReady) {
+                  setPreview(undefined);
+                  setRightPanelOpen(true);
+                  setInspectorTab("ai");
+                  setMessage("请先配置并启用 MiniMax 或 DeepSeek");
+                } else if (preview) {
+                  setRightPanelOpen(true);
+                  setInspectorTab("ai");
+                } else {
+                  void generateAiPlan();
+                }
               }
             }}
           />
-          <span className={`ai-command-model${aiSettingsComplete(aiSettings) ? " is-ready" : ""}`} title={aiSettingsComplete(aiSettings) ? `当前模型：${aiSettings.model}` : "当前使用演示规划器"}>
-            {aiSettingsComplete(aiSettings) ? aiSettings.model : "演示模式"}
+          <span className={`ai-command-model${aiReady ? " is-ready" : ""}`} title={aiReady ? `当前模型：${aiSettings.model}` : aiSettingsComplete(aiSettings) ? "模型已选择，但尚未填写 API Key" : "尚未配置真实模型"}>
+            {aiReady ? aiSettings.model : aiSettingsComplete(aiSettings) ? "缺少密钥" : "未配置模型"}
           </span>
         </div>
-        <Tooltip label={planning ? "正在生成安全变更预览" : "生成安全变更预览 · Enter"}>
-          <button className="ai-command-submit" aria-label="生成安全变更预览" disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}>
+        <Tooltip label={!aiReady ? "选择 MiniMax 或 DeepSeek 并填写 API Key" : preview ? "打开 AI 工作区查看并确认变更" : planning ? "正在生成安全变更预览" : "生成安全变更预览 · Enter"}>
+          <button
+            className="ai-command-submit"
+            aria-label={!aiReady ? "配置 AI 模型" : preview ? "查看 AI 变更预览" : "生成安全变更预览"}
+            disabled={busy || (aiReady && !preview && !prompt.trim())}
+            onClick={() => !aiReady
+              ? (setPreview(undefined), setRightPanelOpen(true), setInspectorTab("ai"), setMessage("请先选择 MiniMax 或 DeepSeek，填写 API Key 并启用真实模型"))
+              : preview
+                ? (setRightPanelOpen(true), setInspectorTab("ai"))
+                : void generateAiPlan()}
+          >
             <Icon name="aiPlan" />
-            <span>{planning ? "生成中" : "生成"}</span>
+            <span>{!aiReady ? "配置模型" : preview ? "查看预览" : planning ? "生成中" : "生成"}</span>
           </button>
         </Tooltip>
       </div>
@@ -3045,15 +3077,15 @@ function App() {
                 </select>
               </label>
             )}
-            <button disabled={busy || !prompt.trim()} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
+            <button disabled={busy || !prompt.trim() || !aiReady} title={!aiReady ? "先在上方配置并启用 MiniMax 或 DeepSeek，并填写 API Key" : undefined} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
             {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
             {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
-            {preview && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
+            {preview && aiReady && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
           </section>
           <section className="inspector-section">
             <h2>自主运行</h2>
             <p className="empty-hint">按体检结论（设计 lint、对比度、导出诊断）自动多轮修复：体检 → 计划 → 审查 → 提交 → 再体检，直到没有待修项或触发停止条件。每轮都可撤销。</p>
-            <button disabled={busy || !prompt.trim() || loopRunning} onClick={() => void startAutonomousRun()}><Icon name="aiLoop" />自主运行</button>
+            <button disabled={busy || !prompt.trim() || loopRunning || !aiReady} title={!aiReady ? "先配置并启用真实模型，并填写 API Key" : undefined} onClick={() => void startAutonomousRun()}><Icon name="aiLoop" />自主运行</button>
             {loopRunning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消运行</button>}
             {loopRounds.length > 0 && <div className="loop-log" aria-live="polite">{loopRounds.map(round => <div className="loop-round" key={round.round}><span className="loop-round-index">第 {round.round} 轮</span><span className="loop-round-summary">{round.summary}</span><span className="loop-round-meta">落地 {round.appliedCommands} 条命令 · 待修 {round.report.counts.actionable} → {round.after?.counts.actionable ?? "—"}</span>{round.note && <span className="loop-round-note">{round.note}</span>}</div>)}</div>}
             {loopSummary && <p className="loop-summary">{loopSummary}</p>}
