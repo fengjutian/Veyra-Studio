@@ -587,6 +587,15 @@ export interface AssetOrigin {
   license?: string;
   /** 补充说明（例如「仅限本项目使用」）。 */
   note?: string;
+  /**
+   * 外部素材服务：这份额素材来自哪个服务（例如 `unsplash`）。
+   *
+   * 与 `providerAssetId` 一起构成**缓存键**：同一个服务里的同一个 id 应该对应同一份
+   * 内容，所以再取一次时不必重新请求服务。
+   */
+  provider?: string;
+  /** 该服务内部的素材 id；与 `provider` 必须同时出现或同时不出现。 */
+  providerAssetId?: string;
 }
 
 export interface AssetMetadata {
