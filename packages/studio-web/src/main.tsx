@@ -4,7 +4,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, applyThemeForPage, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
-import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
+import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, createAssetResolver, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, prepareFontFaces, prepareVectorPdfFonts, reconstructDocumentAt, PACKAGE_DOCUMENT_NAME } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
@@ -60,7 +60,7 @@ import { exportPageToPng, downloadDataUrl } from "./png-export";
 import { createZip } from "./zip";
 import type { ExportDiagnostic } from "@ufira/design-export";
 import { exportPageToHtml, exportPageToReact } from "@ufira/design-export";
-import { exportDocumentToPdf } from "./pdf-export";
+import { exportDocumentToPdf, exportDocumentToVectorPdf } from "./pdf-export";
 import { ExportDiagnosticsPanel } from "./export-panel";
 import type { ExportFormat } from "./export-report";
 import { ExportPreviewDialog } from "./export-preview-dialog";
@@ -1240,6 +1240,28 @@ function App() {
     downloadBytes(`${safeFilename(document.meta.name)}.pdf`, result.bytes, "application/pdf");
     setExportReport({ format: "pdf", diagnostics: result.diagnostics });
     setMessage(`PDF 已导出 · ${result.pageCount} 页 · ${result.diagnostics.length} 条诊断`);
+  });
+  /**
+   * 导出**矢量** PDF：形状是路径、文字是文字对象，文字可选中、可搜索。
+   *
+   * 字体从仓库里读出来内嵌（能转成 TrueType 子集的才内嵌）；没有字节的系统字体
+   * 退回 PDF 内置 Helvetica，诊断里会写明字形对不上。
+   *
+   * 与图像型 PDF 各有用处：带图的交付物用图像型，要文字可搜的用矢量型。
+   */
+  const exportVectorPdf = () => void run(async () => {
+    const snapshot = project.snapshot();
+    const prepared = await prepareVectorPdfFonts(repository, snapshot, { pageId: page.id, themeId: effectiveThemeId });
+    const result = await exportDocumentToVectorPdf(snapshot, {
+      viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+      title: document.meta.name,
+      themeId: effectiveThemeId,
+      fonts: prepared.fonts,
+    });
+    downloadBytes(`${safeFilename(document.meta.name)}-矢量.pdf`, result.bytes, "application/pdf");
+    const diagnostics = [...prepared.diagnostics, ...result.diagnostics];
+    setExportReport({ format: "pdf", diagnostics });
+    setMessage(`矢量 PDF 已导出 · ${result.pageCount} 页 · ${diagnostics.length} 条诊断`);
   });
   // 预览和下载走同一个导出入口，看到的就是交付物本身。
   const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
@@ -2561,6 +2583,7 @@ function App() {
               <Tooltip label="导出资源包（HTML + 图片/字体文件，打成 ZIP）"><button disabled={busy} onClick={exportPackage}><Icon name="exportPackage" />导出资源包</button></Tooltip>
               <Tooltip label="导出 React 组件（文字与图片地址提成 props）"><button disabled={busy} onClick={exportReact}><Icon name="exportHtml" />导出 React</button></Tooltip>
               <Tooltip label="导出 PDF（整份文档，每页一页；图片型，文字不可选）"><button disabled={busy} onClick={exportPdf}><Icon name="exportPng" />导出 PDF</button></Tooltip>
+              <Tooltip label="导出矢量 PDF（文字可选中、可搜索；图片不内嵌）"><button disabled={busy} onClick={exportVectorPdf}><Icon name="exportPng" />矢量 PDF</button></Tooltip>
             </div>
           </section>
           <section className="inspector-section">

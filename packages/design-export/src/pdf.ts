@@ -89,7 +89,7 @@ export async function exportRastersToPdf(pages: PdfRasterPage[], options: PdfExp
     kids.push(`${pageObject} 0 R`);
 
     const rgb = compositeOverWhite(page.pixels);
-    const compressed = await deflate(rgb);
+    const compressed = await deflatePdfBytes(rgb);
     const filter = compressed === rgb ? "" : " /Filter /FlateDecode";
 
     const pageWidthPoints = page.widthPoints ?? page.width * scale;
@@ -118,6 +118,16 @@ export async function exportRastersToPdf(pages: PdfRasterPage[], options: PdfExp
 
 /** 把对象表拼成完整的 PDF 文件（含 xref 与 trailer）。 */
 function buildPdf(bodies: Uint8Array[]): Uint8Array {
+  return assemblePdf(bodies, 1, 3);
+}
+
+/**
+ * 把对象表拼成完整的 PDF 文件（含 xref 与 trailer）。
+ *
+ * 目录与信息对象的编号由调用方给出——图像型 PDF 里它们固定是 1 和 3，
+ * 矢量 PDF 里字体等对象排在前面，编号就不固定了。
+ */
+export function assemblePdf(bodies: Uint8Array[], rootNumber: number, infoNumber: number): Uint8Array {
   const chunks: Uint8Array[] = [ascii(HEADER)];
   const offsets: number[] = [];
   let length = HEADER.length;
@@ -134,7 +144,7 @@ function buildPdf(bodies: Uint8Array[]): Uint8Array {
   for (const offset of offsets) xrefLines.push(`${String(offset).padStart(10, "0")} 00000 n \n`);
   const xref = ascii(xrefLines.join(""));
   const trailer = ascii(
-    `trailer\n<< /Size ${bodies.length + 1} /Root 1 0 R /Info 3 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
+    `trailer\n<< /Size ${bodies.length + 1} /Root ${rootNumber} 0 R /Info ${infoNumber} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`,
   );
   chunks.push(xref, trailer);
   return concat(chunks);
@@ -164,7 +174,7 @@ function compositeOverWhite(pixels: Uint8Array): Uint8Array {
  * 环境没有 `CompressionStream` 时返回原字节——调用方据此不写 `/Filter`，
  * 产物照样是合法 PDF，只是没压缩。
  */
-async function deflate(bytes: Uint8Array): Promise<Uint8Array> {
+export async function deflatePdfBytes(bytes: Uint8Array): Promise<Uint8Array> {
   const scope = globalThis as { CompressionStream?: new (format: string) => TransformStream<Uint8Array, Uint8Array> };
   if (typeof scope.CompressionStream !== "function") return bytes;
   const stream = new scope.CompressionStream("deflate");

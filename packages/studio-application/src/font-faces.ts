@@ -4,6 +4,7 @@ import {
   collectExportFonts,
   fontUsageKey,
   inlineFonts,
+  isSfntFont,
   matchFontDeclaration,
   type ExportDiagnostic,
   type FontSubsetter,
@@ -141,6 +142,105 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** 一份要内嵌进矢量 PDF 的字体。 */
+export interface VectorPdfFontResource {
+  bytes: Uint8Array;
+  family: string;
+  bold: boolean;
+  italic: boolean;
+}
+
+/** 矢量 PDF 的字体准备结果。 */
+export interface VectorPdfFontPreparation {
+  /** 用法键（`family weight style`）→ 字体字节。 */
+  fonts: Map<string, VectorPdfFontResource>;
+  diagnostics: ExportDiagnostic[];
+}
+
+/**
+ * 准备矢量 PDF 要内嵌的字体。
+ *
+ * PDF 只能内嵌 **sfnt**（TrueType / OpenType）：`woff` / `woff2` 是压缩容器，
+ * PDF 不认。有子集化能力时（HarfBuzz）可以先把它们转成 sfnt 子集再内嵌——
+ * 顺带把体积裁到只用到的字符。
+ *
+ * 没有字体字节的**系统字体**不在这儿处理：它们交给 PDF 内置的 Helvetica 顶替，
+ * 由导出器记诊断。字形对不上这件事必须让人看见，而不是悄悄交付一份字形不对的文件。
+ */
+export async function prepareVectorPdfFonts(
+  repository: ProjectRepository,
+  documentInput: DesignDocument,
+  options: { pageId: string; nodeIds?: readonly NodeId[]; themeId?: string },
+): Promise<VectorPdfFontPreparation> {
+  const document = applyThemeForPage(documentInput, options.pageId, options.themeId);
+  const diagnostics: ExportDiagnostic[] = [];
+  const usages = collectExportFonts(document, options);
+  const fontTexts = collectExportFontTexts(document, options);
+  const fonts = new Map<string, VectorPdfFontResource>();
+
+  for (const usage of usages) {
+    const matched = matchFontDeclaration(document.fonts, usage);
+    if (!matched) continue;
+    const assetId = matched.declaration.assetId;
+    if (!assetId) continue;
+    const asset = document.assets[assetId];
+    if (!asset) continue;
+    const stored = await repository.getAsset(document.id, asset.hash);
+    if (!stored) {
+      diagnostics.push({
+        feature: "pdf-vector-font",
+        support: "unsupported",
+        message: `字体「${usage.family}」的文件读不出来（资产 ${assetId} 缺失），矢量 PDF 没有内嵌它`,
+      });
+      continue;
+    }
+
+    let bytes = stored;
+    const key = fontUsageKey(usage.family, usage.weight, usage.style);
+    const text = fontTexts.get(key) ?? "";
+    if (!isSfntFont(bytes)) {
+      // 压缩容器：只有子集化能把它变成 sfnt。
+      if (!subsetProvider) {
+        diagnostics.push({
+          feature: "pdf-vector-font",
+          support: "approximated",
+          message: `字体「${usage.family}」是 ${asset.mimeType}，PDF 只能内嵌 TrueType / OpenType；没有子集化能力，文字会退回内置 Helvetica`,
+        });
+        continue;
+      }
+      try {
+        const subsetter = await subsetProvider();
+        bytes = subsetter.subset(bytes, text);
+      } catch (error) {
+        diagnostics.push({
+          feature: "pdf-vector-font",
+          support: "approximated",
+          message: `字体「${usage.family}」没法转成 PDF 能内嵌的格式（${error instanceof Error ? error.message : String(error)}），文字会退回内置 Helvetica`,
+        });
+        continue;
+      }
+    } else if (subsetProvider) {
+      // 已经是 sfnt：裁到只用到的字符，PDF 体积小一大截。
+      try {
+        const subsetter = await subsetProvider();
+        const subset = subsetter.subset(bytes, text);
+        if (subset.byteLength < bytes.byteLength) bytes = subset;
+      } catch {
+        // 子集化失败就用原字体：内嵌完整字体仍然是对的，只是大一点。
+      }
+    }
+
+    fonts.set(key, {
+      bytes,
+      family: usage.family,
+      bold: usage.weight >= 600,
+      italic: usage.style === "italic",
+    });
+  }
+
+  return { fonts, diagnostics };
 }
 
 /**

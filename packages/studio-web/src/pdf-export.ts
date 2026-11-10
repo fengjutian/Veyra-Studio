@@ -1,4 +1,4 @@
-import { exportPageToSvg, exportRastersToPdf, type ExportDiagnostic } from "@ufira/design-export";
+import { exportDocumentToVectorPdf as exportVectorPdf, exportPageToSvg, exportRastersToPdf, type ExportDiagnostic, type VectorPdfFont } from "@ufira/design-export";
 import type { AssetMetadata, DesignDocument } from "@ufira/design-schema";
 
 /**
@@ -61,8 +61,43 @@ export async function exportDocumentToPdf(
   return { bytes: result.bytes, pageCount: result.pageCount, diagnostics: [...diagnostics, ...result.diagnostics] };
 }
 
-/** SVG → canvas → 像素。跨域资源会污染画布，那种情况直接报错（不产出半张图）。 */
-async function rasterize(
+/** 矢量 PDF 的导出参数。 */
+export interface VectorPdfExportOptions {
+  viewport: { width: number; height: number };
+  title?: string;
+  themeId?: string;
+  /**
+   * 要内嵌的字体：键是 `family weight style`。
+   *
+   * 没有出现在这里的字体，PDF 里会用内置 Helvetica 顶替——字形会不一样，
+   * 导出诊断里会写明。字体字节由调用方从仓库里读出来（`prepareVectorPdfFonts()`）。
+   */
+  fonts?: Map<string, VectorPdfFont>;
+}
+
+/**
+ * 导出矢量 PDF（文字可选）。
+ *
+ * 与 {@link exportDocumentToPdf} 的图像型相反：形状是矢量路径、文字是文字对象，
+ * 字体以 TrueType 子集内嵌，交付方拿到的是**能搜、能复制**的 PDF。
+ *
+ * 已知限制：图片没有内嵌（要位图解码），蒙版不生效，渐变按第一档颜色近似——
+ * 诊断里会逐条说明。需要带图的交付物仍然用图像型 PDF。
+ */
+export async function exportDocumentToVectorPdf(
+  document: DesignDocument,
+  options: VectorPdfExportOptions,
+): Promise<PdfExportResult> {
+  const result = await exportVectorPdf(document, {
+    viewport: options.viewport,
+    title: options.title,
+    themeId: options.themeId,
+    fonts: options.fonts,
+  });
+  return { bytes: result.bytes, pageCount: result.pageCount, diagnostics: result.diagnostics };
+}
+
+/** SVG → canvas → 像素。跨域资源会污染画布，那种情况直接报错（不产出半张图）。 */async function rasterize(
   svg: string,
   width: number,
   height: number,

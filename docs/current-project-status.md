@@ -112,8 +112,14 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   `CompressionStream("deflate")` 压缩（正好是 PDF 的 `/FlateDecode` 要的 zlib 流），
   同样输入产出同样字节。工作台「导出 PDF」导整份文档的所有页面，渲染路径与 PNG
   导出同源（SVG → canvas）。端到端探针 `npm run visual:pdf:probe` 真实下载一份 PDF
-  并把图像流解出来，确认里面是设计稿而不是白页。**限制**：图片型 PDF，文字不可选、
-  不可搜索；矢量 PDF（内嵌 TrueType、文字可选）未做；
+  并把图像流解出来，确认里面是设计稿而不是白页。**矢量 PDF 已实现**（2026-11-10）：
+  `design-export/src/pdf-vector.ts` 写的是矢量内容——形状是路径、文字是文字对象，
+  字体以 TrueType 子集内嵌（`Type0` / `Identity-H` + `CIDFontType2`）并附 `ToUnicode`
+  CMap，**文字可选中、可搜索、可复制**（PyMuPDF 实测能取出原文）。字形映射与前进宽度
+  由 `design-export/src/truetype.ts` 的最小 sfnt 解析器提供（`cmap` / `hmtx` / `head`）。
+  工作台导出面板新增「矢量 PDF」入口。**限制**：图片不内嵌、蒙版不生效、渐变按第一档
+  近似、投影不画；没有字体字节的系统字体退回 PDF 内置 Helvetica（诊断里写明）。
+  规格见 `vector-pdf.md`；
 - `packages/studio-application`：串联项目创建、命令事务、日志与快照、恢复、布局和
   HTML/SVG 导出的应用服务原型，并提供不修改真实项目的命令预演入口，作为未来工作台与
   AI Orchestrator 的共同入口；
