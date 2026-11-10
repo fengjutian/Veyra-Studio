@@ -86,14 +86,14 @@ mod tests {
     use super::sanitize_file_name;
 
     #[test]
-    fn 只留文件名本身，路径分隔符挡掉() {
+    fn 文件名只保留最后一段() {
         assert_eq!(sanitize_file_name("C:\\Users\\me\\首页.html"), "首页.html");
         assert_eq!(sanitize_file_name("dir/sub/首页.html"), "首页.html");
         assert_eq!(sanitize_file_name("../../etc/passwd"), "passwd");
     }
 
     #[test]
-    fn 去掉控制字符但保留中文与扩展名() {
+    fn 控制字符被去掉但中文与扩展名保留() {
         assert_eq!(sanitize_file_name("首页\n.html"), "首页.html");
         assert_eq!(sanitize_file_name("导出 文件.pdf"), "导出 文件.pdf");
     }

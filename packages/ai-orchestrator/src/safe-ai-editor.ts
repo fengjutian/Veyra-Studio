@@ -77,6 +77,11 @@ export interface CreatePlanOptions {
   selfCheckRound?: number;
   /** 当前画面的截图；传了它模型就能「看图」。 */
   image?: AiImagePayload;
+  /**
+   * 把计划硬性限制在某一页。提示词只能劝模型别越界，这个策略会在 dry-run 后
+   * 检查真实差异，并把修改其它页面的计划标成 blocking。
+   */
+  pageId?: string;
 }
 
 export interface AiCommandPlan {
@@ -190,6 +195,13 @@ export class SafeAiEditor {
     }
     // dry-run 证明"能跑"，审查证明"该不该跑"。
     const review = reviewAiPlan({ before: preview.before, after: preview.after, commands: planned.commands });
+    if (options.pageId) {
+      const scopeFinding = reviewPageScope(preview.before, preview.after, options.pageId);
+      if (scopeFinding) {
+        review.findings.push(scopeFinding);
+        review.blocking = true;
+      }
+    }
     const result: AiPlanPreview = {
       planId,
       prompt,
@@ -242,6 +254,59 @@ export class SafeAiEditor {
       commands: structuredClone(commands),
     };
   }
+}
+
+/**
+ * 找出单页计划是否改到了别的页面。
+ *
+ * 用 dry-run 的 before/after 做事实判断，而不是猜某种命令的 payload：这样新增命令
+ * 也会自动受保护。节点归属沿 parentId 一直追到页面，删除节点看 before，新建节点
+ * 看 after；跨页 reparent 会同时命中页面结构与节点归属检查。
+ */
+function reviewPageScope(before: DesignDocument, after: DesignDocument, pageId: string): ReviewFinding | undefined {
+  if (!before.pages[pageId]) {
+    return { code: "page-scope-missing", severity: "blocking", message: `AI 单页范围不存在：${pageId}` };
+  }
+
+  const outsidePages = new Set<string>();
+  for (const id of new Set([...Object.keys(before.pages), ...Object.keys(after.pages)])) {
+    if (id === pageId) continue;
+    if (!sameValue(before.pages[id], after.pages[id])) outsidePages.add(id);
+  }
+
+  const outsideNodes: NodeId[] = [];
+  for (const id of new Set([...Object.keys(before.nodes), ...Object.keys(after.nodes)])) {
+    if (sameValue(before.nodes[id], after.nodes[id])) continue;
+    const owner = owningPageId(after, id) ?? owningPageId(before, id);
+    if (owner !== pageId) outsideNodes.push(id);
+  }
+
+  if (!outsidePages.size && !outsideNodes.length) return undefined;
+  const details = [
+    outsidePages.size ? `${outsidePages.size} 个其它页面` : "",
+    outsideNodes.length ? `${outsideNodes.length} 个页外节点` : "",
+  ].filter(Boolean).join("、");
+  return {
+    code: "page-scope-violation",
+    severity: "blocking",
+    message: `计划限定为当前页 ${pageId}，但会修改${details}`,
+    ...(outsideNodes.length ? { nodeIds: outsideNodes.slice(0, 10) } : {}),
+  };
+}
+
+function owningPageId(document: DesignDocument, nodeId: NodeId): string | undefined {
+  let owner = document.nodes[nodeId]?.parentId;
+  const visited = new Set<string>();
+  while (owner && !visited.has(owner)) {
+    if (document.pages[owner]) return owner;
+    visited.add(owner);
+    owner = document.nodes[owner]?.parentId;
+  }
+  return undefined;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function collectAffectedNodeIds(commands: DesignCommand[]): NodeId[] {

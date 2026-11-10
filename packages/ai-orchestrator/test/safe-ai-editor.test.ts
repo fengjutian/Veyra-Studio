@@ -178,6 +178,43 @@ test("blocks confirming a plan that deletes a locked node", async () => {
   assert.equal(project.snapshot().revision, 1);
 });
 
+test("blocks a current-page plan that changes another page", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  await project.execute({
+    commandId: "human:pages",
+    documentId: "project:1",
+    baseRevision: 0,
+    actor: { type: "human", id: "user:1" },
+    commands: [
+      { type: "page.create", payload: { page: { id: "page:2", name: "Second", childIds: [] } } },
+      { type: "node.create", payload: { node: { ...frame("other-page-node"), parentId: "page:2" } } },
+    ],
+  });
+  const editor = new SafeAiEditor(project, {
+    async plan() {
+      return { summary: "改错页面", commands: [{ type: "node.patch", payload: { id: "other-page-node", patch: { name: "越界" } } }] };
+    },
+  });
+
+  const preview = await editor.createPlan("只改当前页", [], { pageId: "page:1" });
+  assert.equal(preview.review.blocking, true);
+  assert.equal(preview.review.findings.at(-1)?.code, "page-scope-violation");
+  await assert.rejects(editor.confirm(preview.planId), /未通过结构审查/);
+  assert.equal(project.snapshot().nodes["other-page-node"]?.name, "other-page-node");
+});
+
+test("allows a current-page plan that stays on the requested page", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const editor = new SafeAiEditor(project, plannerFor(frame("in-scope")));
+
+  const preview = await editor.createPlan("只改当前页", [], { pageId: "page:1" });
+  assert.equal(preview.review.findings.some(finding => finding.code === "page-scope-violation"), false);
+  await editor.confirm(preview.planId);
+  assert.ok(project.snapshot().nodes["in-scope"]);
+});
+
 class MemoryRepository implements ProjectRepository {
   document?: DesignDocument;
   transactions: TransactionEntry[] = [];

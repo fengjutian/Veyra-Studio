@@ -1757,6 +1757,7 @@ function App() {
           // 只覆盖显示累计文本；权威内容由 Planner 的 fullText 给出。
           onDelta: (_delta, fullText) => setStreamText(fullText),
           ...(image ? { image } : {}),
+          ...(aiPageScope === "current" ? { pageId: page.id } : {}),
         });
       let next: AiPlanPreview;
       try {
@@ -2214,6 +2215,14 @@ function App() {
       height: Math.max(1, scroller.clientHeight - 92),
     };
     setZoom(fitZoom(bounds, viewport, 8));
+    // 缩放会在下一帧改变 stage 的滚动尺寸；等布局落定后再居中，保证一次点击
+    // 同时完成「看全」与「回到内容中央」，而不是只改右下角的百分比。
+    requestAnimationFrame(() => {
+      const centered = centeredCanvasScroll(scroller.scrollWidth, scroller.scrollHeight, scroller.clientWidth, scroller.clientHeight);
+      scroller.scrollLeft = centered.scrollLeft;
+      scroller.scrollTop = centered.scrollTop;
+      syncCanvasViewport();
+    });
   };
   // 抓手：拖动改变的是视口滚动位置，不是文档，也不涨 revision。
   const startPan = (event: React.PointerEvent<HTMLDivElement>) => {
