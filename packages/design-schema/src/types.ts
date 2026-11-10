@@ -638,6 +638,26 @@ export interface Theme {
   tokens: Record<string, TokenValue>;
 }
 
+/**
+ * 一个 token 分组的元数据（可选）。
+ *
+ * 分组本身仍然由**名字前缀**决定（`color.text.primary` → `color.text`），元数据只是
+ * 覆盖它的显示方式：换个显示名、写句说明、调一下顺序。
+ *
+ * 保持「分组 = 前缀」这个不变，是为了让分组和 token 名始终一致——分组一旦能独立
+ * 存在，就会出现「token 在哪个组」的双写问题。
+ */
+export interface TokenGroupMeta {
+  /** 分组 id（点号路径），例如 `color.text`；未分组是空串。 */
+  id: string;
+  /** 面板上的显示名；缺省用 id 本身。 */
+  label?: string;
+  /** 一句说明，显示在分组标题下面。 */
+  description?: string;
+  /** 排序权重（小的在前）；缺省按 id 字典序。 */
+  order?: number;
+}
+
 export interface DesignDocument {
   schemaVersion: 4;
   id: DocumentId;
@@ -654,6 +674,8 @@ export interface DesignDocument {
   tokens: Record<string, TokenValue>;
   /** 主题：token 值的可选覆盖；旧文档没有它也不需要迁移。 */
   themes?: Theme[];
+  /** token 分组的元数据（显示名、说明、顺序）；可选，旧文档没有它也不需要迁移。 */
+  tokenGroups?: TokenGroupMeta[];
   assets: Record<AssetId, AssetMetadata>;
   /** 迁移历史；新建文档没有这个字段，迁移过的文档才有。 */
   migrations?: MigrationRecord[];

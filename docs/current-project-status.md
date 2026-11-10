@@ -532,6 +532,12 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   基础值」）与**继承来的值**（标记「继承」，要去父主题改，`inheritedTokenSource()`
   说出值来自谁）。另加「**清空该主题的覆盖**」一键重置整个主题。规格见
   `token-system.md` §4.5–4.7；
+- **Token 分组元数据**（2026-11-10）：分组**仍由 token 名字的前缀决定**——分组一旦能独立
+  存在，就会出现「token 在哪个组」的双写问题。文档新增可选 `tokenGroups`，只改面板上的
+  显示方式：显示名、说明、排序权重。命令 `tokenGroup.upsert` / `tokenGroup.delete`
+  （MCP 已登记）；给了 `order` 的分组排前面，没给的按 id 排，**未分组永远最后**。三项都
+  清空等于没有元数据，界面直接删掉这条记录。zod schema 里必须登记这个字段，否则校验会
+  把它剥掉（改了名保存回来就没了）。规格见 `token-system.md` §4.9；
 - **设计 lint**（2026-11-09）：`design-schema/src/lint.ts` 的 `lintDocument()`
   检查五类质量问题——硬编码填充/描边、未绑 token 的自动布局间距、位置不在栅格上、
   同级重名。只提示（不阻止保存、不进事务、不改文档），且只在文档确实有对应 token
@@ -921,8 +927,10 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   SCSS 变量，产出**提案**——类型是推断的、带单位的值不换算（rem/em 猜不得）、
   同名 token 会覆盖，这三件事都要先让人看见；面板上逐条确认（可改名、可不导入）
   后在一个事务里写入。`var(--x)` 变成别名 token，SCSS 插值跳过并说明原因。
-  规格见 `token-system.md` §5。仍缺：分组元数据（重命名/排序/描述）、
-  主题继承与按页面切换、Figma 变量导入；
+  规格见 `token-system.md` §5。**主题继承、按页面切换主题、整主题重置与分组元数据已实现**
+  （2026-11-10）：`Theme.extends` 继承链按「祖先先后代后」叠加、`DesignPage.themeId`
+  让「暗色演示页」自动切主题、`tokenGroups` 元数据改分组显示名/说明/顺序（分组本身仍由
+  名字前缀决定）。仍缺：非文本属性 override（主题只能覆盖 token 值）、Figma 变量导入；
 - 生产级 AI Provider 体验的其余部分：**MiniMax 已实测通过**（鉴权、json 模式、流式、
   规划器往返、编排循环收敛），其余服务（OpenAI / DeepSeek / OpenRouter / Ollama /
   vLLM / LM Studio）的能力结论仍来自官方文档，标为「文档推断（未实测）」——逐家验收

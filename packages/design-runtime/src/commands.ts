@@ -21,6 +21,7 @@ import type {
   PageId,
   TextPatch,
   Theme,
+  TokenGroupMeta,
   TokenValue,
   VectorGeometry,
 } from "@ufira/design-schema";
@@ -191,6 +192,22 @@ export interface UpsertThemeCommand {
 /** 删除一个主题。只删覆盖，不动基础 token。 */
 export interface DeleteThemeCommand {
   type: "theme.delete";
+  payload: { id: string };
+}
+
+/**
+ * 新增或整体替换一个 token 分组的元数据。
+ *
+ * 分组本身仍由名字前缀决定；这里只改它的显示名、说明与排序。
+ */
+export interface UpsertTokenGroupCommand {
+  type: "tokenGroup.upsert";
+  payload: { group: TokenGroupMeta };
+}
+
+/** 删掉一个分组的元数据（分组本身仍由名字前缀决定，不会消失）。 */
+export interface DeleteTokenGroupCommand {
+  type: "tokenGroup.delete";
   payload: { id: string };
 }
 
@@ -381,6 +398,8 @@ export type DesignCommand =
   | DeleteTokenCommand
   | UpsertThemeCommand
   | DeleteThemeCommand
+  | UpsertTokenGroupCommand
+  | DeleteTokenGroupCommand
   | CreatePageCommand
   | RenamePageCommand
   | DeletePageCommand

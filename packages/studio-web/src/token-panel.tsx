@@ -1,4 +1,4 @@
-import type { PropertyBindings, TokenValue } from "@ufira/design-schema";
+import type { PropertyBindings, TokenGroupMeta, TokenValue } from "@ufira/design-schema";
 import { effectiveTokenType, groupTokens } from "./token-groups";
 import { Icon } from "./icons";
 import { Tooltip } from "./ui/tooltip";
@@ -24,6 +24,10 @@ export interface TokenPanelProps {
   inheritedFrom?(name: string): string | undefined;
   /** 去掉当前主题下的覆盖，回到基础值。 */
   onResetOverride?(name: string): void;
+  /** 分组元数据（显示名 / 说明 / 顺序）；只影响面板显示。 */
+  tokenGroups?: TokenGroupMeta[];
+  /** 编辑某个分组的元数据。 */
+  onEditGroup?(groupId: string): void;
 }
 
 /** 每种 token 类型可以绑定的属性。 */
@@ -66,7 +70,7 @@ function tokenPreview(token: TokenValue): string {
  * 数值 token 能绑圆角/间距——和 `resolveRadius` / `resolveGap` / `resolveStroke`
  * 支持的绑定保持一致，避免出现"能绑但不生效"的选项。
  */
-export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onImport, onUpdate, onBind, onUnbind, onDelete, themeName, overridden, inheritedFrom, onResetOverride }: TokenPanelProps) {
+export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onImport, onUpdate, onBind, onUnbind, onDelete, themeName, overridden, inheritedFrom, onResetOverride, tokenGroups, onEditGroup }: TokenPanelProps) {
   const entries = Object.entries(tokens).sort(([left], [right]) => left.localeCompare(right));
   const boundProperty = (name: string): keyof PropertyBindings | undefined =>
     (Object.entries(bindings ?? {}) as Array<[keyof PropertyBindings, string]>).find(([, value]) => value === name)?.[0];
@@ -94,9 +98,17 @@ export function TokenPanel({ tokens, bindings, disabled, canBind, onCreate, onIm
       ) : null}
       {entries.length === 0 && <p className="empty-hint">还没有 token。新增颜色或数值 token 后可以绑定到选中节点。</p>}
       <div className="token-panel-list">
-        {groupTokens(tokens).map(group => (
+        {groupTokens(tokens, tokenGroups).map(group => (
           <div className="token-group" key={group.id || "ungrouped"}>
-            <h3 className="token-group-title">{group.label}</h3>
+            <div className="token-group-header">
+              <h3 className="token-group-title">{group.label}</h3>
+              {onEditGroup ? (
+                <Tooltip label="编辑分组（显示名 / 说明 / 顺序）">
+                  <button className="icon-only" aria-label={`编辑分组 ${group.label}`} disabled={disabled} onClick={() => onEditGroup(group.id)}><Icon name="tokenEdit" /></button>
+                </Tooltip>
+              ) : null}
+            </div>
+            {group.description ? <p className="token-group-description">{group.description}</p> : null}
             {group.entries.map(([name, token]) => {
               const property = boundProperty(name);
               const resolvedType = effectiveTokenType(tokens, name);

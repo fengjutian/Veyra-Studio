@@ -9,7 +9,7 @@
  * - 分组只是面板的组织方式，不影响解析与导出。
  */
 
-import type { TokenValue } from "@ufira/design-schema";
+import type { TokenGroupMeta, TokenValue } from "@ufira/design-schema";
 
 /** 一个分组。 */
 export interface TokenGroup {
@@ -17,6 +17,8 @@ export interface TokenGroup {
   id: string;
   /** 面板上的标题。 */
   label: string;
+  /** 分组说明；来自元数据，没有就不显示。 */
+  description?: string;
   /** 组内 token，按名字排序。 */
   entries: Array<[string, TokenValue]>;
 }
@@ -55,8 +57,15 @@ export function tokenGroupOf(name: string): string {
  * 按名字前缀分组。
  *
  * 组按名字排序，未分组排最后；组内条目也按名字排序，保证面板顺序稳定。
+ *
+ * `metas` 是可选的分组元数据（显示名 / 说明 / 顺序）：它**只影响面板怎么显示**，
+ * 不影响分组本身的划分——分组永远由名字前缀决定。给了 order 的组按 order 排在前，
+ * 没给的接在后面按 id 排；未分组无论有没有 order 都在最后。
  */
-export function groupTokens(tokens: Record<string, TokenValue>): TokenGroup[] {
+export function groupTokens(tokens: Record<string, TokenValue>, metas?: TokenGroupMeta[]): TokenGroup[] {
+  const metaById = new Map<string, TokenGroupMeta>();
+  for (const meta of metas ?? []) metaById.set(meta.id, meta);
+
   const groups = new Map<string, Array<[string, TokenValue]>>();
   for (const [name, token] of Object.entries(tokens)) {
     const id = tokenGroupOf(name);
@@ -65,14 +74,22 @@ export function groupTokens(tokens: Record<string, TokenValue>): TokenGroup[] {
     else groups.set(id, [[name, token]]);
   }
   return [...groups.entries()]
-    .map(([id, entries]) => ({
-      id,
-      label: id || UNGROUPED_LABEL,
-      entries: [...entries].sort(([left], [right]) => left.localeCompare(right)),
-    }))
+    .map(([id, entries]) => {
+      const meta = metaById.get(id);
+      return {
+        id,
+        label: meta?.label ?? (id || UNGROUPED_LABEL),
+        description: meta?.description,
+        entries: [...entries].sort(([left], [right]) => left.localeCompare(right)),
+      };
+    })
     .sort((left, right) => {
       if (!left.id) return 1;
       if (!right.id) return -1;
+      // 有 order 的排前面；都没有 order 时按 id 排，顺序稳定可预期。
+      const leftOrder = metaById.get(left.id)?.order ?? Number.POSITIVE_INFINITY;
+      const rightOrder = metaById.get(right.id)?.order ?? Number.POSITIVE_INFINITY;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
       return left.id.localeCompare(right.id);
     });
 }

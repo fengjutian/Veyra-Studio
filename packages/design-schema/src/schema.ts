@@ -449,6 +449,13 @@ export const designDocumentSchema = z.object({
     extends: z.string().min(1).optional(),
     tokens: z.record(z.string(), tokenValueSchema),
   })).optional(),
+  // 分组元数据：只影响面板显示，不影响解析与导出。
+  tokenGroups: z.array(z.object({
+    id: z.string(),
+    label: z.string().optional(),
+    description: z.string().optional(),
+    order: z.number().optional(),
+  })).optional(),
   assets: z.record(id, z.object({
     id,
     hash: z.string().min(1),

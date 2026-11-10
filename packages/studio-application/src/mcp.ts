@@ -77,6 +77,8 @@ const SUPPORTED_COMMANDS: Record<DesignCommand["type"], true> = {
   "interaction.patch": true,
   "theme.upsert": true,
   "theme.delete": true,
+  "tokenGroup.upsert": true,
+  "tokenGroup.delete": true,
   "history.restore": true,
 };
 

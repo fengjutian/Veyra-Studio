@@ -1683,6 +1683,44 @@ function App() {
     await execute([{ type: "theme.upsert", payload: { theme: { ...activeTheme, tokens } } }]);
     setMessage(`「${name}」已恢复基础值`);
   });
+  /**
+   * 编辑分组的显示名 / 说明 / 顺序。
+   *
+   * 分组本身仍由 token 名字的前缀决定，这里只改它在面板上的**显示方式**——
+   * 分组一旦能独立存在，就会出现「token 在哪个组」的双写问题。
+   * 三项都清空等于没有元数据，直接把这条记录删掉，不留空壳。
+   */
+  const editTokenGroup = (groupId: string) => void run(async () => {
+    const existing = (document.tokenGroups ?? []).find(item => item.id === groupId);
+    const values = await askForm({
+      title: groupId ? `编辑分组「${groupId}」` : "编辑「未分组」",
+      description: "分组由 token 名字的前缀决定，这里只改它的显示名、说明和顺序。三项都留空会清除这份元数据。",
+      fields: [
+        { key: "label", label: "显示名（留空则用分组名）", defaultValue: existing?.label ?? "" },
+        { key: "description", label: "说明（留空则不显示）", type: "textarea", defaultValue: existing?.description ?? "" },
+        { key: "order", label: "排序权重（小的在前，留空按名字排）", defaultValue: existing?.order === undefined ? "" : String(existing.order) },
+      ],
+      confirmLabel: "保存",
+      validate: input => {
+        const raw = input.order?.trim();
+        return raw && !Number.isFinite(Number(raw)) ? "排序权重要是数字" : undefined;
+      },
+    });
+    if (!values) return;
+    const label = values.label?.trim();
+    const description = values.description?.trim();
+    const rawOrder = values.order?.trim();
+    const order = rawOrder ? Number(rawOrder) : undefined;
+    if (!label && !description && order === undefined) {
+      // 三项都空了：这份元数据没有意义，删掉比留一条空记录干净。
+      if (!existing) return;
+      await execute([{ type: "tokenGroup.delete", payload: { id: groupId } }]);
+      setMessage("已清除该分组的显示设置");
+      return;
+    }
+    await execute([{ type: "tokenGroup.upsert", payload: { group: { id: groupId, label, description, order } } }]);
+    setMessage(label ? `分组已改名为「${label}」` : "分组显示设置已保存");
+  });
   const createToken = () => void run(async () => {
     if (effectiveThemeId) {
       setMessage("当前在主题模式：主题只能覆盖已有 token，请先切回「基础」再新增");
@@ -2602,6 +2640,8 @@ function App() {
                 : undefined}
               onResetOverride={effectiveThemeId ? resetThemeOverride : undefined}
               themeName={findTheme(document, effectiveThemeId)?.name}
+              tokenGroups={document.tokenGroups}
+              onEditGroup={editTokenGroup}
             />
           </section>
           <section className="inspector-section">

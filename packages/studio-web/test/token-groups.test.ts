@@ -30,6 +30,38 @@ test("分组：空 token 表返回空数组", () => {
   assert.deepEqual(groupTokens({}), []);
 });
 
+test("分组：元数据改显示名与说明", () => {
+  const groups = groupTokens(
+    { "color.text.primary": color },
+    [{ id: "color.text", label: "文字色", description: "正文与标题" }],
+  );
+  assert.equal(groups[0]?.label, "文字色");
+  assert.equal(groups[0]?.description, "正文与标题");
+});
+
+test("分组：没有元数据时显示名仍是分组名，也没有说明", () => {
+  const groups = groupTokens({ "color.text.primary": color });
+  assert.equal(groups[0]?.label, "color.text");
+  assert.equal(groups[0]?.description, undefined);
+});
+
+test("分组：给了 order 的排前面，没给的按 id 接在后面", () => {
+  const groups = groupTokens(
+    { "a.one.primary": color, "b.two.primary": color, "c.three.primary": color },
+    [{ id: "c.three", order: 1 }, { id: "b.two", order: 5 }],
+  );
+  assert.deepEqual(groups.map(group => group.id), ["c.three", "b.two", "a.one"]);
+});
+
+test("分组：未分组永远排最后，哪怕它有 order", () => {
+  const groups = groupTokens(
+    { loose: color, "a.one.primary": color },
+    [{ id: "", order: 0 }],
+  );
+  assert.deepEqual(groups.map(group => group.id), ["a.one", ""]);
+  assert.equal(groups[1]?.label, UNGROUPED_LABEL);
+});
+
 test("别名：最终类型沿链解析", () => {
   const tokens: Record<string, TokenValue> = {
     base: color,

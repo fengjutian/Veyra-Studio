@@ -1,4 +1,4 @@
-import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, effectiveComponentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, validatePropertyValue, withPropertyBinding, BINDING_REQUIREMENTS, COMPONENT_PROPERTY_FIELDS, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, effectiveComponentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, validatePropertyValue, withPropertyBinding, BINDING_REQUIREMENTS, COMPONENT_PROPERTY_FIELDS, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint, type TokenGroupMeta } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -305,6 +305,34 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
         throw new CommandError(`Theme ${command.payload.id} does not exist`);
       }
       document.themes = themes.filter(item => item.id !== command.payload.id);
+      return;
+    }
+    case "tokenGroup.upsert": {
+      const { group } = command.payload;
+      // 空 id 是合法分组（未分组），所以这里不拦空串——只拦类型不对的值。
+      const next: TokenGroupMeta = { id: group.id };
+      const label = group.label?.trim();
+      if (label) next.label = label;
+      const description = group.description?.trim();
+      if (description) next.description = description;
+      if (group.order !== undefined) {
+        if (!Number.isFinite(group.order)) throw new CommandError("Token group order must be a finite number");
+        next.order = group.order;
+      }
+      const metas = document.tokenGroups ?? [];
+      const index = metas.findIndex(item => item.id === group.id);
+      // 同一分组只保留一份元数据：重复 upsert 是覆盖，不是追加。
+      document.tokenGroups = index >= 0
+        ? metas.map((item, position) => (position === index ? next : item))
+        : [...metas, next];
+      return;
+    }
+    case "tokenGroup.delete": {
+      const metas = document.tokenGroups ?? [];
+      if (!metas.some(item => item.id === command.payload.id)) {
+        throw new CommandError(`Token group ${command.payload.id} does not exist`);
+      }
+      document.tokenGroups = metas.filter(item => item.id !== command.payload.id);
       return;
     }
     case "page.create": return createPage(document, command.payload.page, command.payload.index);
