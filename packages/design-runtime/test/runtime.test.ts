@@ -106,6 +106,17 @@ test("manages pages without allowing the last or a non-empty page to be deleted"
   assert.throws(() => runtime.execute(envelope(3, [{ type: "page.delete", payload: { id: "page:1" } }])), /at least one page/);
 });
 
+test("resizes a page through an undoable domain command", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{ type: "page.resize", payload: { id: "page:1", width: 1440, height: 1024 } }]));
+  assert.equal(runtime.snapshot().pages["page:1"].width, 1440);
+  assert.equal(runtime.snapshot().pages["page:1"].height, 1024);
+  runtime.undo({ commandId: "undo:size", actor: { type: "human", id: "user:1" } });
+  assert.equal(runtime.snapshot().pages["page:1"].width, 960);
+  assert.equal(runtime.snapshot().pages["page:1"].height, 680);
+  assert.throws(() => runtime.execute(envelope(2, [{ type: "page.resize", payload: { id: "page:1", width: 0, height: 680 } }])), /between 64 and 8192/);
+});
+
 test("protects tokens that are still bound", () => {
   const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   const node = frame("node:1");

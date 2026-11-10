@@ -100,7 +100,7 @@ export function summarizeDocument(document: DesignDocument, selectedNodeIds: str
   for (const pageId of document.pageOrder) {
     const page = document.pages[pageId];
     if (!page) continue;
-    lines.push(`- ${page.id} 名称="${page.name}" 顶层对象 ${page.childIds.length} 个 主题=${page.themeId ?? "（跟随基础主题）"}`);
+    lines.push(`- ${page.id} 名称="${page.name}" 尺寸=${page.width ?? 960}×${page.height ?? 680} 顶层对象 ${page.childIds.length} 个 主题=${page.themeId ?? "（跟随基础主题）"}`);
   }
 
   lines.push("节点树：");

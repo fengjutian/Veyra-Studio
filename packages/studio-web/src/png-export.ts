@@ -1,5 +1,6 @@
 import { exportPageToSvg, type ExportDiagnostic } from "@ufira/design-export";
 import type { AssetMetadata } from "@ufira/design-schema";
+import { saveDataUrl, type SaveResult } from "./file-sink";
 
 export interface PngExportResult {
   dataUrl: string;
@@ -74,11 +75,11 @@ function createCanvas(width: number, height: number): HTMLCanvasElement {
 }
 
 /**
- * Downloads a data URL as a file.
+ * Saves a data URL as a file.
+ *
+ * Desktop (Tauri) gets the native "Save As" dialog; the browser keeps the
+ * download it has always had. The difference lives in `file-sink`.
  */
-export function downloadDataUrl(filename: string, dataUrl: string): void {
-  const link = globalThis.document.createElement("a");
-  link.href = dataUrl;
-  link.download = filename;
-  link.click();
+export async function downloadDataUrl(filename: string, dataUrl: string): Promise<SaveResult> {
+  return saveDataUrl(filename, dataUrl);
 }

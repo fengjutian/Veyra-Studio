@@ -2,7 +2,7 @@ import { computePageLayout } from "@ufira/design-layout";
 import type { DesignDocument, NodeId } from "@ufira/design-schema";
 import type { ProjectRepository } from "@ufira/design-persistence";
 import { loadAssetUrl } from "./asset-url";
-import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./canvas-zoom";
+import { pageSize } from "./page-size";
 import { createCanvas2DRenderer } from "./renderer/canvas-renderer";
 import { buildNode, buildScene, type SceneBox, type SceneNode } from "./renderer/scene";
 
@@ -76,8 +76,9 @@ export async function capturePageScreenshot(options: PageScreenshotOptions): Pro
   };
   if (!scope.document?.createElement || !scope.Image) return undefined;
 
+  const viewport = pageSize(options.document.pages[options.pageId]);
   const boxes = computePageLayout(options.document, options.pageId, {
-    viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+    viewport,
   }).boxes;
   const scene = buildScene(options.document, options.pageId, boxes);
   if (!scene.length) return undefined;
@@ -86,8 +87,8 @@ export async function capturePageScreenshot(options: PageScreenshotOptions): Pro
   const canvas = scope.document.createElement("canvas");
   const renderer = createCanvas2DRenderer(canvas);
   renderer.paint(scene, {
-    width: CANVAS_WIDTH,
-    height: CANVAS_HEIGHT,
+    width: viewport.width,
+    height: viewport.height,
     zoom: 1,
     devicePixelRatio: 1,
     images,
@@ -123,8 +124,9 @@ export async function captureSelectionScreenshot(
   };
   if (!scope.document?.createElement || !scope.Image) return undefined;
 
+  const viewport = pageSize(options.document.pages[options.pageId]);
   const boxes = computePageLayout(options.document, options.pageId, {
-    viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+    viewport,
   }).boxes;
   // 只取当前页的顶层节点作为选区根：选区本来就是页面上的顶层对象。
   const pageChildIds = new Set(options.document.pages[options.pageId]?.childIds ?? []);
@@ -179,7 +181,7 @@ export async function capturePagesScreenshot(
       const page = options.document.pages[pageId];
       if (!page) return undefined;
       const boxes = computePageLayout(options.document, pageId, {
-        viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+        viewport: pageSize(page),
       }).boxes;
       const scene = buildScene(options.document, pageId, boxes);
       const bounds = sceneBounds(scene);

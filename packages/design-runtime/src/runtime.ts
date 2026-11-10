@@ -369,6 +369,17 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       page.name = command.payload.name;
       return;
     }
+    case "page.resize": {
+      const page = document.pages[command.payload.id];
+      if (!page) throw new CommandError(`Page ${command.payload.id} does not exist`);
+      const { width, height } = command.payload;
+      if (!Number.isInteger(width) || !Number.isInteger(height) || width < 64 || height < 64 || width > 8192 || height > 8192) {
+        throw new CommandError("Page size must use whole pixels between 64 and 8192");
+      }
+      page.width = width;
+      page.height = height;
+      return;
+    }
     case "page.delete": return deletePage(document, command.payload.id);
     case "page.setTheme": {
       const page = document.pages[command.payload.id];

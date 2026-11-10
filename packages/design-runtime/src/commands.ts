@@ -221,6 +221,11 @@ export interface RenamePageCommand {
   payload: { id: PageId; name: string };
 }
 
+export interface ResizePageCommand {
+  type: "page.resize";
+  payload: { id: PageId; width: number; height: number };
+}
+
 export interface DeletePageCommand {
   type: "page.delete";
   payload: { id: PageId };
@@ -402,6 +407,7 @@ export type DesignCommand =
   | DeleteTokenGroupCommand
   | CreatePageCommand
   | RenamePageCommand
+  | ResizePageCommand
   | DeletePageCommand
   | SetPageThemeCommand
   | DefineComponentCommand

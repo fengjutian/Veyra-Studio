@@ -363,7 +363,7 @@ export function createDocument(id: string, name: string, pageId = "page:1"): Des
     revision: 0,
     meta: { name, createdAt: now, updatedAt: now },
     pageOrder: [pageId],
-    pages: { [pageId]: { id: pageId, name: "Page 1", childIds: [] } },
+    pages: { [pageId]: { id: pageId, name: "Page 1", childIds: [], width: 960, height: 680 } },
     nodes: {},
     components: {},
     tokens: {},

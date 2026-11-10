@@ -22,6 +22,9 @@ export interface DesignPage {
   id: PageId;
   name: string;
   childIds: NodeId[];
+  /** Page viewport in CSS pixels. Missing values keep legacy documents at 960 × 680. */
+  width?: number;
+  height?: number;
   /**
    * 这一页自带的主题（可选）。
    *

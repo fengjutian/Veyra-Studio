@@ -1,5 +1,6 @@
 import { exportDocumentToVectorPdf as exportVectorPdf, exportPageToSvg, exportRastersToPdf, type ExportDiagnostic, type VectorPdfFont } from "@ufira/design-export";
 import type { AssetMetadata, DesignDocument } from "@ufira/design-schema";
+import { pageSize } from "./page-size";
 
 /**
  * PDF 导出（图像型）。
@@ -38,22 +39,23 @@ export async function exportDocumentToPdf(
   const pages: Array<{ pixels: Uint8Array; width: number; height: number; widthPoints: number; heightPoints: number }> = [];
 
   for (const pageId of document.pageOrder) {
+    const viewport = pageSize(document.pages[pageId]);
     const svg = exportPageToSvg(document, {
       pageId,
-      viewport: options.viewport,
+      viewport,
       title: options.title,
       themeId: options.themeId,
       resolveAsset: options.resolveAsset,
     });
     diagnostics.push(...svg.diagnostics);
-    const pixels = await rasterize(svg.svg, options.viewport.width * scale, options.viewport.height * scale, diagnostics);
+    const pixels = await rasterize(svg.svg, viewport.width * scale, viewport.height * scale, diagnostics);
     pages.push({
       pixels,
-      width: Math.round(options.viewport.width * scale),
-      height: Math.round(options.viewport.height * scale),
+      width: Math.round(viewport.width * scale),
+      height: Math.round(viewport.height * scale),
       // 页面尺寸按设计尺寸算，与位图分辨率无关。
-      widthPoints: options.viewport.width * 0.75,
-      heightPoints: options.viewport.height * 0.75,
+      widthPoints: viewport.width * 0.75,
+      heightPoints: viewport.height * 0.75,
     });
   }
 

@@ -417,7 +417,14 @@ export const designDocumentSchema = z.object({
   revision: z.number().int().nonnegative(),
   meta: z.object({ name: z.string().min(1), createdAt: z.iso.datetime(), updatedAt: z.iso.datetime() }),
   pageOrder: z.array(id),
-  pages: z.record(id, z.object({ id, name: z.string(), childIds: z.array(id), themeId: z.string().min(1).optional() })),
+  pages: z.record(id, z.object({
+    id,
+    name: z.string(),
+    childIds: z.array(id),
+    width: z.number().int().min(64).max(8192).optional(),
+    height: z.number().int().min(64).max(8192).optional(),
+    themeId: z.string().min(1).optional(),
+  })),
   nodes: z.record(id, designNodeSchema),
   components: z.record(id, z.object({
     id,

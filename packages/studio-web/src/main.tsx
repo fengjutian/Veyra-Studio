@@ -31,8 +31,9 @@ import { useCanvasLayout } from "./canvas-layout";
 import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
 import { registerFontSubsetter } from "./font-subset-client";
 import { collectFontFamilies, collectMissingFonts, loadDocumentFonts, prepareFonts } from "./font-loading";
-import { CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
-import { clampScroll, panScroll } from "./canvas-pan";
+import { clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
+import { PAGE_SIZE_PRESETS, matchingPageSizePreset, pageSize } from "./page-size";
+import { canStartCanvasPan, centeredCanvasScroll, clampScroll, panScroll } from "./canvas-pan";
 import { formatVariant, listComponents, makeInstanceNode, variantOptions } from "./components";
 import { currentValuesFromForm, nextValuesFromForm, parseVariantProperties, validateVariantForm, variantCurrentFields, variantNextFields } from "./variant-form";
 import { PropertyPanel } from "./property-panel";
@@ -57,6 +58,7 @@ import { CanvasA11yLayer } from "./renderer/a11y-layer";
 import { BatchPanel } from "./batch-panel";
 import { planAppearancePatches, planLayoutPatches, planTextPatches, selectAllIds, type BatchAppearanceChanges, type BatchLayoutChanges, type BatchTextChanges } from "./batch-edit";
 import { exportPageToPng, downloadDataUrl } from "./png-export";
+import { saveBytes, saveMessage, saveText, type SaveResult } from "./file-sink";
 import { createZip } from "./zip";
 import type { ExportDiagnostic } from "@ufira/design-export";
 import { exportPageToHtml, exportPageToReact } from "@ufira/design-export";
@@ -461,6 +463,7 @@ function App() {
   }, [scroller]);
 
   const activePageId = document && currentPageId && document.pages[currentPageId] ? currentPageId : document?.pageOrder[0];
+  const activePageSize = pageSize(document?.pages[activePageId ?? ""]);
   // 页面自带的主题（翻到哪页就用哪页的），显式选择优先于它。
   // 「跟随页面」= activeThemeId 为空：暗色演示页靠它，别的页还是亮色。
   const pageThemeId = document?.pages[activePageId ?? ""]?.themeId;
@@ -476,7 +479,7 @@ function App() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [syncCanvasViewport]);
-  const canvasLayout = useCanvasLayout(document, activePageId ?? "", { width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, fontEpoch, effectiveThemeId);
+  const canvasLayout = useCanvasLayout(document, activePageId ?? "", activePageSize, fontEpoch, effectiveThemeId);
   const hitTestScene = useMemo(
     () => (themedDocument && activePageId) ? buildScene(themedDocument, activePageId, canvasLayout.boxes) : [],
     [themedDocument, activePageId, canvasLayout.boxes],
@@ -495,8 +498,8 @@ function App() {
       const bounds = selectionBounds(canvasLayout.boxes, selectedIds);
       if (bounds) return { viewport: { width: bounds.width, height: bounds.height }, origin: { x: bounds.x, y: bounds.y }, nodeIds: selectedIds };
     }
-    return { viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT } };
-  }, [exportScope, canvasLayout.boxes, selectedIds]);
+    return { viewport: activePageSize };
+  }, [exportScope, canvasLayout.boxes, selectedIds, activePageSize.width, activePageSize.height]);
   // 选区没了就把范围退回整页，避免导出一个空视口。
   useEffect(() => { if (exportScope === "selection" && !selectedIds.length) setExportScope("page"); }, [exportScope, selectedIds.length]);
   // 资源面板和画布共用同一份使用情况与缺失集合。
@@ -537,10 +540,15 @@ function App() {
     initialFitDone.current = true;
     const frame = requestAnimationFrame(() => {
       const viewport = { width: Math.max(1, scroller.clientWidth - 56), height: Math.max(1, scroller.clientHeight - 92) };
-      setZoom(fitZoom({ width: CANVAS_WIDTH, height: CANVAS_HEIGHT }, viewport, 12));
+      setZoom(fitZoom(activePageSize, viewport, 12));
+      requestAnimationFrame(() => {
+        const centered = centeredCanvasScroll(scroller.scrollWidth, scroller.scrollHeight, scroller.clientWidth, scroller.clientHeight);
+        scroller.scrollLeft = centered.scrollLeft;
+        scroller.scrollTop = centered.scrollTop;
+      });
     });
     return () => cancelAnimationFrame(frame);
-  }, [scroller, document]);
+  }, [scroller, document, activePageSize.width, activePageSize.height]);
 
   // 这个 hook 必须在提前 return 之前调用：加载态渲染的 hook 数量要和项目加载后
   // 完全一致，否则 React 会直接抛「渲染了比上次更多的 hook」，整棵 App 崩掉。
@@ -716,8 +724,8 @@ function App() {
   });
   const downloadBackup = (row: BackupSummary) => void run(async () => {
     const snapshot = await backupStore.read(document.id, row.createdAt);
-    downloadFile(`${safeFilename(snapshot.meta.name)}-备份-r${row.revision}.json`, JSON.stringify(snapshot, null, 2), "application/json");
-    setMessage(`备份 r${row.revision} 已下载`);
+    const saved = await downloadFile(`${safeFilename(snapshot.meta.name)}-备份-r${row.revision}.json`, JSON.stringify(snapshot, null, 2), "application/json");
+    setMessage(saveMessage(saved, `备份 r${row.revision} 已下载`));
   });
   /** 选一个本地目录作为磁盘备份目标（需要用户手势，所以只能在点击里调）。 */
   const enableDiskBackup = () => void run(async () => {
@@ -844,7 +852,7 @@ function App() {
     if (isVectorTool(drawTool)) {
       // 直线/多边形/星形：几何由 start→end 决定（归一化矩形丢掉了方向），
       // 先钳制端点再建几何，避免先建后裁导致路径与盒子错位。
-      const shape = vectorShapeFromDrag(drawTool, info);
+      const shape = vectorShapeFromDrag(drawTool, info, activePageSize);
       const box = { x: Math.round(shape.box.x), y: Math.round(shape.box.y), width: Math.max(1, Math.round(shape.box.width)), height: Math.max(1, Math.round(shape.box.height)) };
       const node = makeVectorNode(drawTool, page.id, box, shape.geometry);
       void run(async () => {
@@ -854,7 +862,7 @@ function App() {
       });
       return;
     }
-    const target = clampRect(info.dragged ? rect : defaultRectFor(drawTool, { x: rect.x, y: rect.y }), { width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+    const target = clampRect(info.dragged ? rect : defaultRectFor(drawTool, { x: rect.x, y: rect.y }), activePageSize);
     const box = { x: Math.round(target.x), y: Math.round(target.y), width: Math.round(target.width), height: Math.round(target.height) };
     // 整块拖到画板外：没有可建的面积，只把工具收回来。
     if (box.width < 1 || box.height < 1) return;
@@ -1153,12 +1161,12 @@ function App() {
     importExternalAsset(providerId, values.externalId.trim());
   });
   /** 导出归因清单（Markdown）。 */
-  const exportExternalAttribution = () => {
+  const exportExternalAttribution = () => void run(async () => {
     const markdown = renderAttributionMarkdown(externalAttributions);
     if (!markdown) { setMessage("当前文档没有外部素材，无需归因清单"); return; }
-    downloadFile(`${safeFilename(document.meta.name)}-attribution.md`, markdown, "text/markdown");
-    setMessage(`归因清单已导出 · ${externalAttributions.length} 条`);
-  };
+    const saved = await downloadFile(`${safeFilename(document.meta.name)}-attribution.md`, markdown, "text/markdown");
+    setMessage(saveMessage(saved, `归因清单已导出 · ${externalAttributions.length} 条`));
+  });
   /**
    * 从外部素材服务取一份素材并插入画布。
    *
@@ -1209,8 +1217,20 @@ function App() {
   const createPage = () => void run(async () => {
     const name = (await askText({ title: "页面名称", defaultValue: `页面 ${document.pageOrder.length + 1}` }))?.trim(); if (!name) return;
     const id = `page:${crypto.randomUUID()}`;
-    await execute([{ type: "page.create", payload: { page: { id, name, childIds: [] } } }]);
+    await execute([{ type: "page.create", payload: { page: { id, name, childIds: [], ...activePageSize } } }]);
     switchPage(id);
+  });
+  const resizePage = (width: number, height: number) => void run(async () => {
+    await execute([{ type: "page.resize", payload: { id: page.id, width, height } }]);
+    if (scroller) {
+      const viewport = { width: Math.max(1, scroller.clientWidth - 56), height: Math.max(1, scroller.clientHeight - 92) };
+      setZoom(fitZoom({ width, height }, viewport, 12));
+      requestAnimationFrame(() => {
+        const centered = centeredCanvasScroll(scroller.scrollWidth, scroller.scrollHeight, scroller.clientWidth, scroller.clientHeight);
+        scroller.scrollLeft = centered.scrollLeft;
+        scroller.scrollTop = centered.scrollTop;
+      });
+    }
   });
   const renamePage = () => void run(async () => {
     const name = (await askText({ title: "页面名称", defaultValue: page.name }))?.trim(); if (!name || name === page.name) return;
@@ -1366,9 +1386,9 @@ function App() {
     // 带资源的导出：图片节点在 HTML 里要落成 data URL，否则只会剩一个空框。
     const result = await project.exportHtmlWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
     const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
-    downloadFile(`${exportFilename}.html`, result.document, "text/html");
+    const saved = await downloadFile(`${exportFilename}.html`, result.document, "text/html");
     setExportReport({ format: "html", diagnostics });
-    setMessage(`HTML 已导出${exportScopeLabel} · ${diagnostics.length} 条诊断`);
+    setMessage(saveMessage(saved, `HTML 已导出${exportScopeLabel} · ${diagnostics.length} 条诊断`));
   });
   /**
    * 导出资源包：主文档 + 图片/字体文件，打成 ZIP。
@@ -1384,26 +1404,26 @@ function App() {
       { path: PACKAGE_DOCUMENT_NAME, bytes: encoder.encode(result.document) },
       ...result.files.map(file => ({ path: file.path, bytes: file.bytes })),
     ];
-    downloadBytes(`${exportFilename}.zip`, createZip(entries), "application/zip");
+    const saved = await downloadBytes(`${exportFilename}.zip`, createZip(entries), "application/zip");
     const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
     setExportReport({ format: "html", diagnostics });
-    setMessage(`资源包已导出${exportScopeLabel} · ${result.files.length} 个资源文件 · ${diagnostics.length} 条诊断`);
+    setMessage(saveMessage(saved, `资源包已导出${exportScopeLabel} · ${result.files.length} 个资源文件 · ${diagnostics.length} 条诊断`));
   });
   const exportSvg = () => void run(async () => {
     const result = await project.exportSvgWithAssets({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
-    downloadFile(`${exportFilename}.svg`, result.svg, "image/svg+xml");
+    const saved = await downloadFile(`${exportFilename}.svg`, result.svg, "image/svg+xml");
     const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
     setExportReport({ format: "svg", diagnostics });
-    setMessage(`SVG 已导出${exportScopeLabel} · ${diagnostics.length} 条诊断`);
+    setMessage(saveMessage(saved, `SVG 已导出${exportScopeLabel} · ${diagnostics.length} 条诊断`));
   });
   const exportPng = () => void run(async () => {
     const snapshot = project.snapshot();
     // 图片写成 data URL 之后画布不会被外部资源污染，PNG 才能读回像素。
     const resolveAsset = await createAssetResolver(repository, snapshot, page.id, exportTarget.nodeIds);
     const result = await exportPageToPng(snapshot, { pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, scale: 2, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, resolveAsset, themeId: effectiveThemeId });
-    downloadDataUrl(`${exportFilename}.png`, result.dataUrl);
+    const saved = await downloadDataUrl(`${exportFilename}.png`, result.dataUrl);
     setExportReport({ format: "png", diagnostics: result.diagnostics });
-    setMessage(`PNG 已导出${exportScopeLabel} · ${result.width}×${result.height}`);
+    setMessage(saveMessage(saved, `PNG 已导出${exportScopeLabel} · ${result.width}×${result.height}`));
   });
   /**
    * 导出 PDF：整份文档，每页一页。
@@ -1418,15 +1438,15 @@ function App() {
     const snapshot = project.snapshot();
     const resolveAsset = await createAssetResolver(repository, snapshot, page.id, undefined);
     const result = await exportDocumentToPdf(snapshot, {
-      viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+      viewport: activePageSize,
       title: document.meta.name,
       themeId: effectiveThemeId,
       resolveAsset,
     });
-    downloadBytes(`${safeFilename(document.meta.name)}.pdf`, result.bytes, "application/pdf");
+    const saved = await downloadBytes(`${safeFilename(document.meta.name)}.pdf`, result.bytes, "application/pdf");
     const diagnostics = withExternalAssetDiagnostics(result.diagnostics);
     setExportReport({ format: "pdf", diagnostics });
-    setMessage(`PDF 已导出 · ${result.pageCount} 页 · ${diagnostics.length} 条诊断`);
+    setMessage(saveMessage(saved, `PDF 已导出 · ${result.pageCount} 页 · ${diagnostics.length} 条诊断`));
   });
   /**
    * 导出**矢量** PDF：形状是路径、文字是文字对象，文字可选中、可搜索。
@@ -1440,15 +1460,15 @@ function App() {
     const snapshot = project.snapshot();
     const prepared = await prepareVectorPdfFonts(repository, snapshot, { pageId: page.id, themeId: effectiveThemeId });
     const result = await exportDocumentToVectorPdf(snapshot, {
-      viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+      viewport: activePageSize,
       title: document.meta.name,
       themeId: effectiveThemeId,
       fonts: prepared.fonts,
     });
-    downloadBytes(`${safeFilename(document.meta.name)}-矢量.pdf`, result.bytes, "application/pdf");
+    const saved = await downloadBytes(`${safeFilename(document.meta.name)}-矢量.pdf`, result.bytes, "application/pdf");
     const diagnostics = withExternalAssetDiagnostics([...prepared.diagnostics, ...result.diagnostics]);
     setExportReport({ format: "pdf", diagnostics });
-    setMessage(`矢量 PDF 已导出 · ${result.pageCount} 页 · ${diagnostics.length} 条诊断`);
+    setMessage(saveMessage(saved, `矢量 PDF 已导出 · ${result.pageCount} 页 · ${diagnostics.length} 条诊断`));
   });
   // 预览和下载走同一个导出入口，看到的就是交付物本身。
   const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: effectiveThemeId });
@@ -1470,9 +1490,9 @@ function App() {
       resolveAsset,
       themeId: effectiveThemeId,
     });
-    downloadFile(`${exportFilename}.tsx`, result.code, "text/typescript");
+    const saved = await downloadFile(`${exportFilename}.tsx`, result.code, "text/typescript");
     setExportReport({ format: "react", diagnostics: result.diagnostics });
-    setMessage(`React 组件已导出${exportScopeLabel} · ${result.componentName} · ${result.props.length} 个 props · ${result.diagnostics.length} 条诊断`);
+    setMessage(saveMessage(saved, `React 组件已导出${exportScopeLabel} · ${result.componentName} · ${result.props.length} 个 props · ${result.diagnostics.length} 条诊断`));
   });
   const previewHtml = () => void run(async () => {
     const result = await project.exportHtmlWithAssets(exportOptions());
@@ -1551,7 +1571,10 @@ function App() {
     setPreviewOpen(true);
     setMessage(plan.note ? `版本对比：${plan.note}` : `版本对比：${titles.historical} ↔ 当前`);
   });
-  const exportJson = () => { downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json"); setMessage("项目 JSON 已导出"); };
+  const exportJson = () => void run(async () => {
+    const saved = await downloadFile(`${safeFilename(document.meta.name)}.design.json`, JSON.stringify(document, null, 2), "application/json");
+    setMessage(saveMessage(saved, "项目 JSON 已导出"));
+  });
   /**
    * 导入时的重名处理：让用户自己起名。
    *
@@ -2185,7 +2208,7 @@ function App() {
   // 「适应内容」框住真正有内容的区域，而不是整块 960x680 的画布。
   const fitCanvas = () => {
     if (!scroller) return;
-    const bounds = contentBounds(canvasLayout.boxes) ?? { x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT };
+    const bounds = contentBounds(canvasLayout.boxes) ?? { x: 0, y: 0, ...activePageSize };
     const viewport = {
       width: Math.max(1, scroller.clientWidth - 56),
       height: Math.max(1, scroller.clientHeight - 92),
@@ -2194,7 +2217,8 @@ function App() {
   };
   // 抓手：拖动改变的是视口滚动位置，不是文档，也不涨 revision。
   const startPan = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!panMode && event.button !== 1) return;
+    const overCanvas = Boolean((event.target as HTMLElement | null)?.closest?.(".canvas"));
+    if (!canStartCanvasPan(event.button, panMode, overCanvas)) return;
     event.preventDefault();
     panPointer.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -2581,6 +2605,40 @@ function App() {
           <button disabled={busy} onClick={setPageTheme}>主题</button>
           <Tooltip label={page.childIds.length ? "请先清空页面" : "删除当前页面"}><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} onClick={deletePage}><Icon name="pageDelete" />删除</button></Tooltip>
         </div>
+        <div className="page-size-control">
+          <label>
+            <span>页面尺寸</span>
+            <select
+              value={matchingPageSizePreset(activePageSize.width, activePageSize.height)}
+              disabled={busy}
+              onChange={event => {
+                const preset = PAGE_SIZE_PRESETS.find(item => item.id === event.target.value);
+                if (preset) resizePage(preset.width, preset.height);
+              }}
+            >
+              {[...new Set(PAGE_SIZE_PRESETS.map(item => item.group))].map(group => (
+                <optgroup key={group} label={group}>
+                  {PAGE_SIZE_PRESETS.filter(item => item.group === group).map(item => (
+                    <option key={item.id} value={item.id}>{item.label} · {item.width} × {item.height}</option>
+                  ))}
+                </optgroup>
+              ))}
+              <option value="custom">自定义</option>
+            </select>
+          </label>
+          <div className="page-size-custom" key={`${page.id}:${activePageSize.width}:${activePageSize.height}`}>
+            <label><span>宽</span><input type="number" min={64} max={8192} defaultValue={activePageSize.width} data-page-width /></label>
+            <span aria-hidden="true">×</span>
+            <label><span>高</span><input type="number" min={64} max={8192} defaultValue={activePageSize.height} data-page-height /></label>
+            <button disabled={busy} onClick={event => {
+              const root = event.currentTarget.parentElement;
+              const width = Number((root?.querySelector("[data-page-width]") as HTMLInputElement | null)?.value);
+              const height = Number((root?.querySelector("[data-page-height]") as HTMLInputElement | null)?.value);
+              if (Number.isInteger(width) && Number.isInteger(height) && width >= 64 && height >= 64 && width <= 8192 && height <= 8192) resizePage(width, height);
+              else setMessage("页面宽高必须是 64–8192 之间的整数");
+            }}>应用</button>
+          </div>
+        </div>
       </div>
       <div className="panel-block layers-block">
         <div className="panel-head">
@@ -2614,10 +2672,10 @@ function App() {
             <div className="canvas-stage">
               <div className="canvas-frame" aria-hidden="true">
                 <span className="canvas-frame-name">{page.name}</span>
-                <span className="canvas-frame-size">{CANVAS_WIDTH} × {CANVAS_HEIGHT}</span>
+                <span className="canvas-frame-size">{activePageSize.width} × {activePageSize.height}</span>
               </div>
               <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}${canvasDrag.hoverRotate && tool === "select" ? " rotate-hover" : ""}${pathEditId && pathEdit.hoverSegment ? " segment-hover" : ""}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : pathEditId ? pathEdit.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } handleCanvasDoubleClick(event); }}>
-                <CanvasSurface repository={repository} projectId={document.id} document={themedDocument ?? document} pageId={page.id} boxes={canvasLayout.boxes} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+                <CanvasSurface repository={repository} projectId={document.id} document={themedDocument ?? document} pageId={page.id} boxes={canvasLayout.boxes} width={activePageSize.width} height={activePageSize.height} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
               {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
                 <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>
@@ -2903,7 +2961,7 @@ function App() {
             <section className="inspector-section">
               <h2>恢复报告</h2>
               <div className="recovery-report">{recoveryReportRows({ ...recovery, missingAssets }).map(row => <div className="recovery-row" key={row.label}><span className="recovery-label">{row.label}</span><span className={row.tone === "warning" ? "recovery-value recovery-warning" : "recovery-value"}>{row.value}</span></div>)}</div>
-              <button disabled={busy} onClick={() => { downloadFile(recoveryReportFileName(recovery.projectName), JSON.stringify({ ...recovery, missingAssets }, null, 2), "application/json"); setMessage("恢复报告已导出"); }}><Icon name="exportJson" />导出报告</button>
+              <button disabled={busy} onClick={() => void run(async () => { const saved = await downloadFile(recoveryReportFileName(recovery.projectName), JSON.stringify({ ...recovery, missingAssets }, null, 2), "application/json"); setMessage(saveMessage(saved, "恢复报告已导出")); })}><Icon name="exportJson" />导出报告</button>
             </section>
           )}
         </Tabs.Content>
@@ -3258,14 +3316,14 @@ function makePenNode(parentId: string, box: { x: number; y: number; width: numbe
  * 端点先钳制到画板内再建几何：如果先建后裁，路径坐标是相对旧盒子的，
  * 裁完就会和盒子错位。单击（没有拖拽）时按默认长度补一个终点。
  */
-function vectorShapeFromDrag(tool: VectorToolId, info: { dragged: boolean; start: HitPoint; end: HitPoint }): VectorShape {
-  const start = clampToCanvas(info.start);
-  const end = info.dragged ? clampToCanvas(info.end) : { x: Math.min(start.x + DEFAULT_VECTOR_LENGTH, CANVAS_WIDTH), y: tool === "line" ? start.y : Math.min(start.y + DEFAULT_VECTOR_LENGTH, CANVAS_HEIGHT) };
+function vectorShapeFromDrag(tool: VectorToolId, info: { dragged: boolean; start: HitPoint; end: HitPoint }, bounds: { width: number; height: number }): VectorShape {
+  const start = clampToCanvas(info.start, bounds);
+  const end = info.dragged ? clampToCanvas(info.end, bounds) : { x: Math.min(start.x + DEFAULT_VECTOR_LENGTH, bounds.width), y: tool === "line" ? start.y : Math.min(start.y + DEFAULT_VECTOR_LENGTH, bounds.height) };
   return buildVectorShape(tool, start, end);
 }
 
-function clampToCanvas(point: HitPoint): HitPoint {
-  return { x: Math.min(Math.max(point.x, 0), CANVAS_WIDTH), y: Math.min(Math.max(point.y, 0), CANVAS_HEIGHT) };
+function clampToCanvas(point: HitPoint, bounds: { width: number; height: number }): HitPoint {
+  return { x: Math.min(Math.max(point.x, 0), bounds.width), y: Math.min(Math.max(point.y, 0), bounds.height) };
 }
 
 /** 单击创建矢量形状时的默认边长。 */
@@ -3411,9 +3469,15 @@ function buildExposedProperty(propertyId: string, name: string, field: Component
       return { id: propertyId, name, type: "instance-swap", defaultValue: node.type === "instance" ? node.componentId : "" };
   }
 }
-function downloadFile(name: string, content: string, type: string): void { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
+/**
+ * 导出文本产物。
+ *
+ * 桌面端是原生「另存为」，浏览器里是下载——差异在 `file-sink` 里收口，这里只负责
+ * 把「存没存成、存在哪」回报给界面。
+ */
+async function downloadFile(name: string, content: string, type: string): Promise<SaveResult> { return saveText(name, content, type); }
 /** 下载二进制产物（ZIP 等）。 */
-function downloadBytes(name: string, bytes: Uint8Array, type: string): void { const url = URL.createObjectURL(new Blob([bytes.slice().buffer], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
+async function downloadBytes(name: string, bytes: Uint8Array, type: string): Promise<SaveResult> { return saveBytes(name, bytes, type); }
 
 const container = document.getElementById("root")! as HTMLElement & { __studioRoot?: ReturnType<typeof createRoot> };
 const root = container.__studioRoot ?? createRoot(container);

@@ -29,3 +29,6 @@ packages/studio-web/visual/canvas.diff.png
 .devserver.log
 # TypeScript incremental build cache（不应进仓库）
 *.tsbuildinfo
+# Rust / Tauri 构建产物
+target/
+packages/studio-desktop/src-tauri/gen/
