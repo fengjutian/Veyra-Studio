@@ -135,6 +135,11 @@ function App() {
   // 截图范围：整页 / 只截选中的节点 / 把所有页拼成一张长图。
   const [aiVisionScope, setAiVisionScope] = useState<"page" | "selection" | "pages">("page");
   const [preview, setPreview] = useState<AiPlanPreview>();
+  // 同一份文档快照可以产生多份候选计划。候选只存在内存里，用户明确选中并确认前
+  // 不写文档；提交其中一份后，其余候选因为 baseRevision 过期而统一丢弃。
+  const [aiVariants, setAiVariants] = useState<AiPlanPreview[]>([]);
+  const [aiVariantCount, setAiVariantCount] = useState<1 | 4 | 6 | 10>(1);
+  const [aiVariantProgress, setAiVariantProgress] = useState(0);
   // AI 生成过程中的取消信号；点「取消生成」只中断请求，不动项目。
   const planAbort = useRef<AbortController | undefined>(undefined);
   const [planning, setPlanning] = useState(false);
@@ -276,7 +281,7 @@ function App() {
     if (!project) return;
     const committed = await project[direction]();
     const snapshot = project.snapshot();
-    setDocument(snapshot); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setMessage(`已${direction === "undo" ? "撤销" : "重做"} · r${committed.result.revision}`);
+    setDocument(snapshot); setSelectedIds(current => current.filter(id => Boolean(snapshot.nodes[id]))); setPreview(undefined); setAiVariants([]); setMessage(`已${direction === "undo" ? "撤销" : "重做"} · r${committed.result.revision}`);
   };
 
   /**
@@ -642,7 +647,7 @@ function App() {
     const current = project.snapshot();
     const envelope: CommandEnvelope = { commandId: crypto.randomUUID(), documentId: current.id, baseRevision: current.revision, actor: { type: "human", id: "local-user" }, commands };
     const committed = await project.execute(envelope);
-    setDocument(project.snapshot()); setMessage(`已提交 · r${committed.result.revision}`); setPreview(undefined);
+    setDocument(project.snapshot()); setMessage(`已提交 · r${committed.result.revision}`); setPreview(undefined); setAiVariants([]);
   };
   /** 重新核对仓库里读不到的图片资源，返回最新清单。 */
   const refreshMissingAssets = async (snapshot: DesignDocument) => {
@@ -653,7 +658,7 @@ function App() {
   const openProject = async (id: string) => {
     const opened = await StudioProject.open(repository, id);
     const snapshot = opened.project.snapshot();
-    setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined);
+    setProject(opened.project); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined); setAiVariants([]);
     await refreshHistory(id);
     setBackups(await backupStore.list(id));
     // 存储占用按项目统计：切项目就得跟着换，否则面板上还挂着上一个项目的数字。
@@ -678,7 +683,7 @@ function App() {
   const createProject = () => void run(async () => {
     const name = (await askText({ title: "新项目名称", defaultValue: "未命名设计" }))?.trim(); if (!name) return;
     const created = await StudioProject.create(repository, `project:${crypto.randomUUID()}`, name, `page:${crypto.randomUUID()}`);
-    const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSelectedIds([]); setPreview(undefined); setRecovery(undefined); await refreshHistory(snapshot.id); setMessage("项目已创建");
+    const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setProjects(await repository.listProjects()); setSelectedIds([]); setPreview(undefined); setAiVariants([]); setRecovery(undefined); await refreshHistory(snapshot.id); setMessage("项目已创建");
   });
   const renameProject = () => void run(async () => {
     const name = (await askText({ title: "项目名称", defaultValue: document.meta.name }))?.trim(); if (!name || name === document.meta.name) return;
@@ -834,7 +839,7 @@ function App() {
     if (remaining[0]) await openProject(remaining[0].id);
     else {
       const created = await StudioProject.create(repository, `project:${crypto.randomUUID()}`, "未命名设计", `page:${crypto.randomUUID()}`);
-      const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined);
+      const snapshot = created.snapshot(); setProject(created); setDocument(snapshot); setCurrentPageId(snapshot.pageOrder[0]); setSelectedIds([]); setPreview(undefined); setAiVariants([]);
     }
     setProjects(await repository.listProjects()); setMessage("项目已删除");
   });
@@ -1213,7 +1218,7 @@ function App() {
       ? `已插入「${resolution.asset.name ?? externalId}」· ${resolution.note ?? "用的是本地缓存"}`
       : `已插入「${resolution.asset.name ?? externalId}」· 刚从「${provider.label}」取回`);
   });
-  const switchPage = (id: string) => { setCurrentPageId(id); setSelectedIds([]); setPreview(undefined); };
+  const switchPage = (id: string) => { setCurrentPageId(id); setSelectedIds([]); setPreview(undefined); setAiVariants([]); };
   const createPage = () => void run(async () => {
     const name = (await askText({ title: "页面名称", defaultValue: `页面 ${document.pageOrder.length + 1}` }))?.trim(); if (!name) return;
     const id = `page:${crypto.randomUUID()}`;
@@ -1745,6 +1750,9 @@ function App() {
     if (!editor) return;
     setMessage("正在生成 AI 安全变更预览…");
     setAiFailure(undefined);
+    setAiVariants([]);
+    setPreview(undefined);
+    setAiVariantProgress(0);
     const controller = new AbortController();
     planAbort.current = controller;
     operationInFlight.current = true;
@@ -1752,24 +1760,35 @@ function App() {
     try {
       const image = await captureVisionIfEnabled();
       const scopedPrompt = buildAiDesignPrompt(prompt, aiPageScope, aiStyle, page.id, page.name);
-      const create = (requestPrompt: string) => editor.createPlan(requestPrompt, selectedIds, {
+      const create = (requestPrompt: string, showStream = true) => editor.createPlan(requestPrompt, selectedIds, {
           signal: controller.signal,
           // 只覆盖显示累计文本；权威内容由 Planner 的 fullText 给出。
-          onDelta: (_delta, fullText) => setStreamText(fullText),
+          ...(showStream ? { onDelta: (_delta: string, fullText: string) => setStreamText(fullText) } : {}),
           ...(image ? { image } : {}),
           ...(aiPageScope === "current" ? { pageId: page.id } : {}),
         });
-      let next: AiPlanPreview;
-      try {
-        next = await create(scopedPrompt);
-      } catch (error) {
-        if (!(error instanceof PlanParseError) || controller.signal.aborted) throw error;
-        setMessage("模型返回不完整，正在自动修复重试…");
+      const variants: AiPlanPreview[] = [];
+      for (let index = 0; index < aiVariantCount; index += 1) {
+        if (controller.signal.aborted) throw new AiCancelledError();
+        const variantPrompt = aiVariantCount === 1
+          ? scopedPrompt
+          : `${scopedPrompt}\n\n候选方案 ${index + 1}/${aiVariantCount}：请给出一个可以独立采用的完整设计方向。与常见的第一选择拉开版式、层级或视觉节奏差异，但仍遵守上述范围和风格。`;
+        setMessage(`正在生成候选方案 ${index + 1}/${aiVariantCount}…`);
         setStreamText("");
-        next = await create(`${scopedPrompt}\n\n上一次回复不是完整合法的 JSON。请缩短说明，只输出一个完整 JSON 对象，commands 不要省略。`);
+        let next: AiPlanPreview;
+        try {
+          next = await create(variantPrompt, aiVariantCount === 1);
+        } catch (error) {
+          if (!(error instanceof PlanParseError) || controller.signal.aborted) throw error;
+          setMessage(`候选 ${index + 1} 返回不完整，正在自动修复重试…`);
+          next = await create(`${variantPrompt}\n\n上一次回复不是完整合法的 JSON。请缩短说明，只输出一个完整 JSON 对象，commands 不要省略。`, false);
+        }
+        variants.push(next);
+        setAiVariants([...variants]);
+        setPreview(current => current ?? next);
+        setAiVariantProgress(index + 1);
       }
-      setPreview(next);
-      setMessage("AI 计划已完成 dry-run，等待确认");
+      setMessage(`${variants.length} 个候选方案已完成 dry-run，选择一个确认提交`);
     } catch (error) {
       const failure = error instanceof AiCancelledError ? "已取消 AI 生成" : errorMessage(error);
       setAiFailure(failure);
@@ -3133,11 +3152,14 @@ function App() {
           </section>
         </Tabs.Content>
         <Tabs.Content value="ai" className="inspector-body">
-          <section className="inspector-section">
-            <AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
+          <section className="inspector-section ai-workspace-head">
+            <div>
+              <h2>AI 设计工作区</h2>
+              <p className="empty-hint">先生成隔离候选，再挑一个提交。未选中的方案不会改动文档。</p>
+            </div>
+            <span className={`ai-workspace-status${aiReady ? " is-ready" : ""}`}>{aiReady ? aiSettings.model : "待配置"}</span>
           </section>
-          <section className="inspector-section">
-            <h2>AI 安全编辑</h2>
+          <section className="inspector-section ai-compose-section">
             <div className="ai-design-options">
               <label className="field">
                 <span className="field-label">页面范围</span>
@@ -3157,6 +3179,15 @@ function App() {
                 </select>
               </label>
             </div>
+            <label className="field ai-variant-count">
+              <span className="field-label">候选方案</span>
+              <select aria-label="候选方案数量" value={aiVariantCount} disabled={planning} onChange={event => setAiVariantCount(Number(event.target.value) as typeof aiVariantCount)}>
+                <option value={1}>1 个 · 快速修改</option>
+                <option value={4}>4 个 · 方向探索</option>
+                <option value={6}>6 个 · 扩展探索</option>
+                <option value={10}>10 个 · 完整发散</option>
+              </select>
+            </label>
             <textarea aria-label="AI 指令" placeholder="描述你想让 AI 做的修改…" value={prompt} onChange={event => setPrompt(event.target.value)} />
             <label className="field field-inline">
               <span className="field-label">带截图问 AI</span>
@@ -3179,11 +3210,28 @@ function App() {
                 </select>
               </label>
             )}
-            <button disabled={busy || !prompt.trim() || !aiReady} title={!aiReady ? "先在上方配置并启用 MiniMax 或 DeepSeek，并填写 API Key" : undefined} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
+            <button className="ai-generate-button" disabled={busy || !prompt.trim() || !aiReady} title={!aiReady ? "先配置并启用模型，再填写 API Key" : undefined} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成 {aiVariantCount} 个候选</button>
             {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
-            {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
+            {planning && <div className="ai-batch-progress" aria-live="polite"><span style={{ width: `${Math.max(8, aiVariantProgress / aiVariantCount * 100)}%` }} /><strong>{aiVariantProgress}/{aiVariantCount}</strong><small>{aiVariantCount === 1 ? (streamText || "正在等待模型响应…") : `正在生成第 ${Math.min(aiVariantProgress + 1, aiVariantCount)} 个候选`}</small></div>}
             {aiFailure && !planning && <div className="ai-failure" role="alert"><strong>本次生成没有改动文档</strong><span>{aiFailure}</span><button disabled={busy || !aiReady} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />重试</button></div>}
-            {preview && aiReady && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
+          </section>
+          {aiVariants.length > 0 && <section className="inspector-section ai-results-section">
+            <div className="section-heading"><h2>候选方案</h2><span className="ai-result-count">{aiVariants.length}/{aiVariantCount}</span></div>
+            <div className="ai-variant-grid" role="listbox" aria-label="AI 候选方案">
+              {aiVariants.map((variant, index) => <button key={variant.planId} role="option" aria-selected={preview?.planId === variant.planId} className={`ai-variant-card${preview?.planId === variant.planId ? " is-selected" : ""}`} onClick={() => setPreview(variant)}>
+                <span className="ai-variant-index">{String(index + 1).padStart(2, "0")}</span>
+                <strong>{variant.summary}</strong>
+                <span>{variant.affectedNodeIds.length || "文档级"} 处影响 · {variant.warnings.length} 警告</span>
+                {variant.review.blocking ? <em>审查阻断</em> : <em className="is-safe">可提交</em>}
+              </button>)}
+            </div>
+            {preview && aiReady && <div className={previewStale ? "preview ai-selected-preview stale" : "preview ai-selected-preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length} · 审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={`${finding.code}:${finding.message}`}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，这批候选已过期，请重新生成。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); for (const variant of aiVariants) { if (variant.planId !== preview.planId) editor.cancel(variant.planId); } setDocument(project.snapshot()); setPreview(undefined); setAiVariants([]); setMessage("已采用所选 AI 方案"); })}><Icon name="aiConfirm" />采用此方案</button><button disabled={busy} onClick={() => { for (const variant of aiVariants) editor?.cancel(variant.planId); setPreview(undefined); setAiVariants([]); }}><Icon name="aiCancel" />放弃全部</button></div></div>}
+          </section>}
+          <section className="inspector-section ai-settings-section">
+            <details>
+              <summary>模型与密钥设置 <span>{aiReady ? "已连接" : "需要配置"}</span></summary>
+              <AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
+            </details>
           </section>
           <section className="inspector-section">
             <h2>自主运行</h2>
