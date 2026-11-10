@@ -79,6 +79,9 @@ jobs:
       # 端到端：PDF 导出。真实应用里点「导出 PDF」→ 等下载完成 → 把 PDF 里的图像
       # 流解出来，确认里面装的是设计稿而不是空白页。
       - run: npm run visual:pdf:probe -- --require-browser
+      # 端到端：密钥落盘。真实应用里配密钥 → 口令加密 → 刷新页面（模拟换标签页）
+      # → 口令错了要明说、口令对了密钥回到会话。磁盘上只能有密文。
+      - run: npm run visual:vault:probe -- --require-browser
 
   budgets:
     name: 性能预算（layout / export / paint）

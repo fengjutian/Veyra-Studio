@@ -103,8 +103,19 @@ async function seedDocument(page: CdpPage): Promise<void> {
   await sleep(1200);
 }
 
-/** 用真实鼠标点一个元素（按选择器）。 */
+/**
+ * 用真实鼠标点一个元素（按选择器）。
+ *
+ * 先滚进视口再量坐标：检查器面板比视口高，「和当前版本并排对比」这类按钮可能
+ * 落在视口下面，直接按 getBoundingClientRect 的坐标派发鼠标事件会**点空**
+ * （导出分段多几个按钮就足以把它挤下去，探针会报「实际 0 栏」）。
+ * 滚完要等一拍——布局还在滚的时候量到的是中间位置。
+ */
 async function clickSelector(page: CdpPage, selector: string): Promise<boolean> {
+  await page.evaluate(
+    `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (el) el.scrollIntoView({ block: "center", inline: "nearest" }); return true; })()`,
+  );
+  await sleep(350);
   const point = await page.evaluate<{ x: number; y: number } | null>(
     `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const r = el.getBoundingClientRect(); if (!r.width || !r.height) return null; return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`,
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { PROVIDER_PRESETS, capabilityLabels, capabilitySourceLabel, describeProvider } from "@ufira/ai-orchestrator";
 import { maskApiKey, type AiSettings } from "./ai-settings";
+import { clearStoredVault, hasStoredVault, openKeyRing, readStoredVault, sealKeyRing } from "./ai-key-vault";
 
 export interface AiSettingsPanelProps {
   settings: AiSettings;
@@ -24,6 +25,11 @@ export interface AiSettingsPanelProps {
 export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }: AiSettingsPanelProps) {
   const [draft, setDraft] = useState(settings);
   const [newKey, setNewKey] = useState("");
+  // 落盘（加密）的口令与状态。
+  const [passphrase, setPassphrase] = useState("");
+  const [vaultStored, setVaultStored] = useState(() => hasStoredVault());
+  const [vaultNote, setVaultNote] = useState("");
+  const [vaultBusy, setVaultBusy] = useState(false);
   useEffect(() => setDraft(settings), [settings]);
   const update = (patch: Partial<AiSettings>) => setDraft(current => ({ ...current, ...patch }));
   // 只在这个会话里配过密钥才提示会失效；本地免鉴权网关不需要吓用户。
@@ -46,6 +52,58 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
   const rotateKey = () => {
     if (draft.apiKeys.length < 2) return;
     update({ activeKeyIndex: (draft.activeKeyIndex + 1) % draft.apiKeys.length });
+  };
+
+  /**
+   * 把当前密钥环加密后落盘。
+   *
+   * 磁盘上只留密文；口令不落盘，也不进任何文档——关掉标签页后要重新输口令才能用。
+   *
+   * 顺带把这把密钥环应用到当前会话：用户加完密钥点「加密保存」，期待的是
+   * 「这会儿就能用了」，而不是还要再点一次「保存设置」。
+   */
+  const sealToDisk = async () => {
+    setVaultBusy(true);
+    try {
+      await sealKeyRing({ keys: draft.apiKeys, activeIndex: draft.activeKeyIndex }, passphrase);
+      onSave(draft);
+      setVaultStored(true);
+      setVaultNote("已加密保存到本机磁盘。下次开标签页时用同一个口令解锁。");
+      setPassphrase("");
+    } catch (error) {
+      setVaultNote(`保存失败：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setVaultBusy(false);
+    }
+  };
+
+  /** 用口令解开磁盘上的密文，把密钥并入会话。 */
+  const unlockFromDisk = async () => {
+    setVaultBusy(true);
+    try {
+      const vault = readStoredVault();
+      if (!vault) {
+        setVaultNote("磁盘上没有保存过密钥。");
+        return;
+      }
+      const ring = await openKeyRing(vault, passphrase);
+      if (!ring) {
+        setVaultNote("口令不对（或密文已损坏）。");
+        return;
+      }
+      onSave({ ...draft, apiKeys: ring.keys, activeKeyIndex: ring.activeIndex });
+      setVaultNote(`已解锁，载入 ${ring.keys.length} 把密钥。`);
+      setPassphrase("");
+    } finally {
+      setVaultBusy(false);
+    }
+  };
+
+  /** 删掉磁盘上的密文。 */
+  const removeFromDisk = () => {
+    clearStoredVault();
+    setVaultStored(false);
+    setVaultNote("磁盘上的密文已删除。");
   };
 
   return (
@@ -112,7 +170,28 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
         <button disabled={disabled} onClick={() => onSave(draft)}>保存设置</button>
         <button disabled={disabled} onClick={onClear}>清除</button>
       </div>
-      <p className="ai-settings-hint">API Key 只保存在当前标签页的会话存储里，关闭标签页即失效；不会写入 localStorage、设计文档、事务日志或导出文件。地址和模型名会记住，下次只需重新填密钥。</p>
+      <div className="field">
+        <span className="field-label">密钥落盘（口令加密）</span>
+        <p className="ai-settings-hint">
+          默认只存在当前标签页的会话存储里，关掉即失效。落盘后磁盘上只有 AES-GCM 密文，
+          口令不保存——换设备时用同一个口令解锁即可。
+        </p>
+        <div className="ai-key-add">
+          <input
+            type="password"
+            aria-label="落盘口令"
+            value={passphrase}
+            placeholder="设置一个落盘口令"
+            autoComplete="off"
+            onChange={event => setPassphrase(event.target.value)}
+          />
+          <button type="button" disabled={disabled || vaultBusy || !passphrase.trim() || draft.apiKeys.length === 0} onClick={() => void sealToDisk()}>加密保存</button>
+          <button type="button" disabled={disabled || vaultBusy || !passphrase.trim() || !vaultStored} onClick={() => void unlockFromDisk()}>解锁载入</button>
+          {vaultStored && <button type="button" disabled={disabled || vaultBusy} onClick={removeFromDisk}>删除密文</button>}
+        </div>
+        {vaultNote && <p className="ai-settings-hint" aria-live="polite">{vaultNote}</p>}
+      </div>
+      <p className="ai-settings-hint">API Key 默认只保存在当前标签页的会话存储里，关闭标签页即失效；不会写入设计文档、事务日志或导出文件。地址和模型名会记住，下次只需重新填密钥。</p>
       <p className="ai-settings-hint">密钥可以放多把：鉴权失败（401/403）时会自动换下一把重试；「轮换」按钮是手动切到下一把。</p>
       {keyInSession && <p className="ai-settings-hint">本次会话已配置 {settings.apiKeys.length} 把密钥，关闭标签页后需要重新输入。</p>}
     </div>
