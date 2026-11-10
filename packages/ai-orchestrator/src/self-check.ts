@@ -1,6 +1,6 @@
 import { exportPageToHtml, type ExportDiagnostic } from "@ufira/design-export";
 import { collectContrastIssues } from "@ufira/studio-application";
-import { lintDocument, type AssetMetadata, type DesignDocument, type LintCode, type NodeId } from "@ufira/design-schema";
+import { lintDocument, lintIssueActionable, type AssetMetadata, type DesignDocument, type LintCode, type NodeId } from "@ufira/design-schema";
 
 /**
  * 自查（体检）层：把几个已经各自成型的检查器聚成**一份**可执行、可回喂给模型的报告。
@@ -110,9 +110,11 @@ export function collectSelfCheck(document: DesignDocument, options: SelfCheckOpt
       message: issue.message,
       ...(issue.nodeId ? { nodeId: issue.nodeId } : {}),
       ...(issue.detail ? { detail: issue.detail } : {}),
-      // lint 的结论全是"能修的"：硬编码颜色没绑 token、间距没绑 token、
-      // 不在栅格上、同级重名——每一条都有明确的修法。
-      actionable: true,
+      // 只有「有明确修法」的 lint 结论才进待修清单：硬编码颜色没绑 token、间距
+      // 没绑 token、不在栅格上、同级重名、空文本、字号过小、交互节点没名字——
+      // 每一条都有唯一的修法。跨页面尺寸不一致、属性没接线这类**需要人决策**
+      // 的结论不进清单，否则模型会反复瞎猜（那正是「震荡」的来源）。
+      actionable: lintIssueActionable(issue.code),
     });
   }
 

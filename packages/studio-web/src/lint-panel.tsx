@@ -16,7 +16,7 @@ export interface LintPanelProps {
 export function LintPanel({ issues, disabled, onSelect }: LintPanelProps) {
   const summary = lintSummary(issues);
   if (!issues.length) {
-    return <p className="empty-hint">没有发现问题。栅格、token 绑定与命名都符合当前规则。</p>;
+    return <p className="empty-hint">没有发现问题。栅格、token 绑定、跨页面一致性、组件语义与可访问性都符合当前规则。</p>;
   }
   return (
     <div className="lint-panel">
