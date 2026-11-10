@@ -52,6 +52,11 @@ export function validateDocument(input: unknown): DesignDocument {
       if (!themeIds.includes(theme.extends)) issues.push(`theme ${theme.id} extends missing theme ${theme.extends}`);
       else if (themeHasCyclicExtends(document, theme.id)) issues.push(`theme ${theme.id} has a cyclic extends chain`);
     }
+    // 属性覆盖：键是节点名，空名字匹配不到任何东西，属于无效数据。
+    // 但**不**要求这个节点存在：节点可能被改名或删掉，为此让整个文档失效更糟。
+    for (const name of Object.keys(theme.properties ?? {})) {
+      if (!name.trim()) issues.push(`theme ${theme.id} has a property override with an empty node name`);
+    }
     // 合并视图要过别名检查——继承链上的覆盖合起来同样可能造出环。
     checkTokenGraph(themeTokenMap(document, theme.id), `theme ${theme.id} `, issues);
   }

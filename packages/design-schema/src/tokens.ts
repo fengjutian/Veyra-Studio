@@ -1,4 +1,4 @@
-import type { CornerRadii, DesignDocument, DesignNode, Paint, Theme, TokenValue, TypographyValue } from "./types";
+import type { CornerRadii, DesignDocument, DesignNode, Paint, PropertyOverride, Theme, TokenValue, TypographyValue } from "./types";
 
 /**
  * Token 解析。
@@ -117,13 +117,100 @@ export function applyThemeTokens(document: DesignDocument, themeId: string | und
  *
  * 页面主题的优先级：显式指定 > 页面自带 > 基础值。所有渲染与导出入口都走这里，
  * 免得每个入口各写一套「到底用哪个主题」的判断——那正是画布和导出物对不上的来源。
+ *
+ * 主题有两条覆盖通道，都要在这里合掉：token 覆盖合并进 token 表，属性覆盖直接
+ * 改节点自身的字段。合并之后所有下游（布局、画布、导出）只认普通节点，
+ * 不用知道主题的存在。
  */
 export function applyThemeForPage(
   document: DesignDocument,
   pageId: string | undefined,
   themeId?: string,
 ): DesignDocument {
-  return applyThemeTokens(document, effectivePageThemeId(document, pageId, themeId));
+  const effective = effectivePageThemeId(document, pageId, themeId);
+  return applyThemeProperties(applyThemeTokens(document, effective), effective);
+}
+
+/**
+ * 合并后的属性覆盖表：节点名 → 覆盖。
+ *
+ * 继承链上按「祖先先、后代后」**逐字段**叠加：祖先设了圆角、后代设了间距，
+ * 两条都生效（后代只覆盖自己写了的字段）。token 覆盖是整条替换，两者规则不同。
+ */
+export function themePropertyMap(document: DesignDocument, themeId: string | undefined): Record<string, PropertyOverride> {
+  const chain = themeChain(document, themeId);
+  if (!chain?.length) return {};
+  const merged: Record<string, PropertyOverride> = {};
+  for (const theme of chain) {
+    for (const [name, override] of Object.entries(theme.properties ?? {})) {
+      merged[name] = { ...merged[name], ...override };
+    }
+  }
+  return merged;
+}
+
+/** 这条覆盖是否命中这个节点（类型不符就不命中）。 */
+function overrideMatches(node: DesignNode, override: PropertyOverride): boolean {
+  return !override.type || override.type === node.type;
+}
+
+/**
+ * 把一条覆盖应用到节点上，返回新节点；没有任何字段生效时返回**同一个**对象，
+ * 调用方据此跳过无谓的拷贝。
+ *
+ * **绑定了对应 token 的节点不参与属性覆盖**：节点自己绑了 `radius` token，
+ * 它的圆角来自 token——这时该改的是那个 token（主题的 token 覆盖会跟着生效），
+ * 而不是绕过绑定改节点字段。两处都写会让人说不清「到底谁说了算」。
+ */
+function applyPropertyOverride(node: DesignNode, override: PropertyOverride): DesignNode {
+  let appearance = node.appearance;
+  let layout = node.layout;
+  let changed = false;
+
+  if (override.cornerRadius !== undefined && !node.bindings?.radius) {
+    // 四角独立圆角比单值更具体；主题要改圆角就是整体改，所以把它清掉。
+    appearance = { ...appearance, cornerRadius: override.cornerRadius };
+    delete appearance.cornerRadii;
+    changed = true;
+  }
+  if (override.gap !== undefined && !node.bindings?.spacing) {
+    layout = { ...layout, gap: override.gap };
+    changed = true;
+  }
+  if (override.padding !== undefined) {
+    layout = { ...layout, padding: { top: override.padding, right: override.padding, bottom: override.padding, left: override.padding } };
+    changed = true;
+  }
+  if (override.opacity !== undefined) {
+    appearance = { ...appearance, opacity: override.opacity };
+    changed = true;
+  }
+  // 字号只对文本节点有意义；绑了字体 token 的节点该去改 token。
+  if (override.fontSize !== undefined && node.type === "text" && !node.bindings?.typography) {
+    return { ...node, appearance, layout, fontSize: override.fontSize };
+  }
+  if (!changed) return node;
+  return { ...node, appearance, layout };
+}
+
+/**
+ * 把主题的属性覆盖应用到文档上，返回一份**浅拷贝**。
+ *
+ * 没有属性覆盖、或覆盖没命中任何节点时原样返回同一个对象，调用方可以据此跳过重算。
+ */
+export function applyThemeProperties(document: DesignDocument, themeId: string | undefined): DesignDocument {
+  const overrides = themePropertyMap(document, themeId);
+  if (!Object.keys(overrides).length) return document;
+  let changed = false;
+  const nodes: Record<string, DesignNode> = {};
+  for (const [id, node] of Object.entries(document.nodes)) {
+    const override = overrides[node.name];
+    const next = override && overrideMatches(node, override) ? applyPropertyOverride(node, override) : node;
+    if (next !== node) changed = true;
+    nodes[id] = next;
+  }
+  if (!changed) return document;
+  return { ...document, nodes };
 }
 
 /**

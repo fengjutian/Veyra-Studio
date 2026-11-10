@@ -94,3 +94,34 @@ test("page.setTheme: 页面不存在时报错", () => {
   const runtime = runtimeWithToken();
   assert.throws(() => runtime.execute(envelope(1, [{ type: "page.setTheme", payload: { id: "page:missing", themeId: "theme:dark" } }])), CommandError);
 });
+
+test("theme.upsert: 主题可以带属性覆盖（改节点自己写死的字段）", () => {
+  const runtime = runtimeWithToken();
+  runtime.execute(envelope(1, [{ type: "theme.upsert", payload: { theme: { id: "theme:dark", name: "深色", tokens: {}, properties: { Card: { cornerRadius: 16, gap: 12 } } } } }]));
+  assert.deepEqual(runtime.snapshot().themes?.[0]?.properties, { Card: { cornerRadius: 16, gap: 12 } });
+});
+
+test("theme.upsert: 属性覆盖的值不合法时被拒绝", () => {
+  const runtime = runtimeWithToken();
+  const bad = [
+    { cornerRadius: -1 },
+    { gap: Number.NaN },
+    { fontSize: 0 },
+    { opacity: 1.5 },
+  ];
+  for (const properties of bad) {
+    assert.throws(
+      () => runtime.execute(envelope(1, [{ type: "theme.upsert", payload: { theme: { id: "theme:x", name: "X", tokens: {}, properties: { Card: properties } } } }])),
+      CommandError,
+    );
+  }
+  assert.equal(runtime.snapshot().themes, undefined);
+});
+
+test("theme.upsert: 属性覆盖的节点名不能为空串", () => {
+  const runtime = runtimeWithToken();
+  assert.throws(
+    () => runtime.execute(envelope(1, [{ type: "theme.upsert", payload: { theme: { id: "theme:x", name: "X", tokens: {}, properties: { "": { cornerRadius: 4 } } } } }])),
+    CommandError,
+  );
+});

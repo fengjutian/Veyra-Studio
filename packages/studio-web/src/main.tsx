@@ -100,6 +100,7 @@ import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
+import { describePropertyOverride, parsePropertyOverride } from "./theme-properties";
 import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "./ai-vision";
 import { AiSettingsPanel } from "./ai-settings-panel";
 import "./styles.css";
@@ -1675,6 +1676,62 @@ function App() {
     setActiveThemeId(undefined);
     setMessage("主题已删除");
   });
+  /**
+   * 编辑主题的**属性覆盖**：按节点名匹配，改节点自己写死的字段（圆角、间距……）。
+   *
+   * token 覆盖改的是「值从哪来」，属性覆盖改的是「节点自己的字段」——两条路径不同，
+   * 所以分开编辑。已经绑了对应 token 的节点不参与属性覆盖：那种情况该去改 token。
+   */
+  const editThemeProperty = (name?: string) => void run(async () => {
+    const existing = name ? activeTheme?.properties?.[name] : undefined;
+    const values = await askForm({
+      title: existing ? `编辑属性覆盖「${name}」` : "添加属性覆盖",
+      description: "按节点名匹配：同名的节点会一起被覆盖。留空的字段表示不覆盖。",
+      fields: [
+        { key: "name", label: "节点名", defaultValue: name ?? "" },
+        { key: "type", label: "节点类型（留空表示不限）", defaultValue: existing?.type ?? "" },
+        { key: "cornerRadius", label: "圆角 px（留空不覆盖）", defaultValue: existing?.cornerRadius === undefined ? "" : String(existing.cornerRadius) },
+        { key: "gap", label: "间距 px（留空不覆盖）", defaultValue: existing?.gap === undefined ? "" : String(existing.gap) },
+        { key: "padding", label: "内边距 px（留空不覆盖）", defaultValue: existing?.padding === undefined ? "" : String(existing.padding) },
+        { key: "fontSize", label: "字号 px（留空不覆盖）", defaultValue: existing?.fontSize === undefined ? "" : String(existing.fontSize) },
+        { key: "opacity", label: "不透明度 0–1（留空不覆盖）", defaultValue: existing?.opacity === undefined ? "" : String(existing.opacity) },
+      ],
+      confirmLabel: "保存",
+      validate: input => {
+        if (!input.name?.trim()) return "节点名不能为空";
+        // 解析规则只有一份：表单里先验一遍，提交时再解析一次。
+        return parsePropertyOverride(input).error;
+      },
+    });
+    if (!values || !activeTheme) return;
+    const target = values.name?.trim();
+    if (!target) return;
+    const parsed = parsePropertyOverride(values);
+    if (parsed.error) {
+      setMessage(parsed.error);
+      return;
+    }
+    const override = parsed.override;
+    if (!override || !Object.keys(override).length) {
+      setMessage("至少要覆盖一个属性");
+      return;
+    }
+    const properties = { ...(activeTheme.properties ?? {}) };
+    // 改了名字就是换了一条：旧的删掉，别留下指向旧名字的孤儿。
+    if (name && name !== target) delete properties[name];
+    properties[target] = override;
+    await execute([{ type: "theme.upsert", payload: { theme: { ...activeTheme, properties } } }]);
+    setMessage(`已保存节点「${target}」的属性覆盖`);
+  });
+  /** 删掉一条属性覆盖；token 覆盖不受影响。 */
+  const deleteThemeProperty = (name: string) => void run(async () => {
+    if (!activeTheme) return;
+    const properties = { ...(activeTheme.properties ?? {}) };
+    if (!(name in properties)) return;
+    delete properties[name];
+    await execute([{ type: "theme.upsert", payload: { theme: { ...activeTheme, properties } } }]);
+    setMessage(`已删除节点「${name}」的属性覆盖`);
+  });
   /** 去掉某个 token 在当前主题下的覆盖，回到基础值。 */
   const resetThemeOverride = (name: string) => void run(async () => {
     if (!activeTheme) return;
@@ -2610,6 +2667,30 @@ function App() {
                 <button disabled={busy} onClick={createTheme}>新增主题</button>
                 <button disabled={busy || !effectiveThemeId} onClick={deleteActiveTheme}>删除当前主题</button>
                 <button disabled={busy || !effectiveThemeId || !Object.keys(activeTheme?.tokens ?? {}).length} onClick={resetWholeTheme}>清空该主题的覆盖</button>
+              </div>
+              <div className="theme-properties">
+                <span className="field-label">属性覆盖</span>
+                <p className="empty-hint">
+                  按**节点名**匹配，改节点自己写死的字段（圆角、间距、字号……）。
+                  已绑定对应 token 的节点不参与属性覆盖——那种情况改 token 更准。
+                </p>
+                {Object.keys(activeTheme?.properties ?? {}).length === 0 ? (
+                  <p className="empty-hint">当前主题没有属性覆盖。</p>
+                ) : (
+                  Object.entries(activeTheme?.properties ?? {}).map(([name, override]) => (
+                    <div className="theme-property-row" key={name}>
+                      <span className="theme-property-name" title={name}>{name}</span>
+                      <span className="theme-property-values">{describePropertyOverride(override)}</span>
+                      <Tooltip label="编辑属性覆盖">
+                        <button className="icon-only" aria-label={`编辑属性覆盖 ${name}`} disabled={busy} onClick={() => editThemeProperty(name)}><Icon name="tokenEdit" /></button>
+                      </Tooltip>
+                      <Tooltip label="删除属性覆盖">
+                        <button className="icon-only" aria-label={`删除属性覆盖 ${name}`} disabled={busy} onClick={() => deleteThemeProperty(name)}><Icon name="trash" /></button>
+                      </Tooltip>
+                    </div>
+                  ))
+                )}
+                <button disabled={busy || !effectiveThemeId} onClick={() => editThemeProperty()} title={effectiveThemeId ? undefined : "先选中一个主题"}>添加属性覆盖</button>
               </div>
               <p className="empty-hint">
                 切换主题只影响预览与导出，不改基础 token。选中主题后，

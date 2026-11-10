@@ -448,6 +448,15 @@ export const designDocumentSchema = z.object({
     // 继承自另一个主题；父主题存在性与成环由 `validateDocument()` 检查。
     extends: z.string().min(1).optional(),
     tokens: z.record(z.string(), tokenValueSchema),
+    // 节点名 → 属性覆盖；只影响节点自身字段（圆角、间距等），不影响 token 解析。
+    properties: z.record(z.string(), z.object({
+      type: z.enum(["frame", "text", "image", "rectangle", "ellipse", "vector", "component", "instance", "boolean"]).optional(),
+      cornerRadius: nonNegative.optional(),
+      gap: nonNegative.optional(),
+      padding: nonNegative.optional(),
+      fontSize: z.number().finite().positive().optional(),
+      opacity: z.number().finite().min(0).max(1).optional(),
+    })).optional(),
   })).optional(),
   // 分组元数据：只影响面板显示，不影响解析与导出。
   tokenGroups: z.array(z.object({

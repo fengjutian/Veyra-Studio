@@ -612,6 +612,31 @@ export interface MigrationRecord {
 }
 
 /**
+ * 主题对**节点自身属性**的覆盖。
+ *
+ * token 绑定管的是「这个值来自哪个 token」；这里管的是「写死在节点上的值」——
+ * 圆角、间距、内边距、字号、透明度。主题切到暗色时，这些也要跟着变，
+ * 否则「暗色下所有卡片圆角更大」这类需求做不到。
+ *
+ * 匹配键是**节点名**（`Theme.properties` 的键）：同名的节点会一起被覆盖，
+ * 所以名字起得越具体越安全。`type` 可以再把范围收窄到某一种节点类型。
+ */
+export interface PropertyOverride {
+  /** 只作用于这一种节点类型；缺省表示不限类型。 */
+  type?: NodeType;
+  /** 圆角（px）。 */
+  cornerRadius?: number;
+  /** 自动布局的子节点间距（px）。 */
+  gap?: number;
+  /** 内边距（px，四边相同）。 */
+  padding?: number;
+  /** 字号（px）；只对文本节点有意义。 */
+  fontSize?: number;
+  /** 不透明度（0–1）。 */
+  opacity?: number;
+}
+
+/**
  * 一组主题覆盖。
  *
  * 主题**不改解析规则**：它只是在进入布局/渲染/导出前把覆盖合并进 token 表
@@ -636,6 +661,13 @@ export interface Theme {
   extends?: string;
   /** token 名 → 覆盖值。未覆盖的 token 沿用 `document.tokens`。 */
   tokens: Record<string, TokenValue>;
+  /**
+   * 节点名 → 属性覆盖（圆角、间距等写死在节点上的值）。
+   *
+   * 与 `tokens` 分开：token 覆盖改的是「值」，属性覆盖改的是「节点自己的字段」，
+   * 两者生效路径不同（后者直接改节点），混在一起会让「谁覆盖了谁」说不清。
+   */
+  properties?: Record<string, PropertyOverride>;
 }
 
 /**

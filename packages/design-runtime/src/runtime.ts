@@ -291,6 +291,24 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       for (const name of Object.keys(theme.tokens)) {
         if (!document.tokens[name]) throw new CommandError(`Theme ${theme.id} overrides missing token ${name}`);
       }
+      // 属性覆盖的值也要站得住：负圆角、透明度越界会让渲染出怪东西。
+      for (const [name, override] of Object.entries(theme.properties ?? {})) {
+        if (!name.trim()) throw new CommandError(`Theme ${theme.id} has a property override with an empty node name`);
+        const nonNegative: Array<keyof typeof override> = ["cornerRadius", "gap", "padding"];
+        for (const field of nonNegative) {
+          const value = override[field];
+          if (value === undefined) continue;
+          if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+            throw new CommandError(`Theme ${theme.id} property override ${name}.${field} must be a non-negative number`);
+          }
+        }
+        if (override.fontSize !== undefined && (!Number.isFinite(override.fontSize) || override.fontSize <= 0)) {
+          throw new CommandError(`Theme ${theme.id} property override ${name}.fontSize must be a positive number`);
+        }
+        if (override.opacity !== undefined && (!Number.isFinite(override.opacity) || override.opacity < 0 || override.opacity > 1)) {
+          throw new CommandError(`Theme ${theme.id} property override ${name}.opacity must be between 0 and 1`);
+        }
+      }
       const themes = document.themes ?? [];
       const next = structuredClone(theme);
       const index = themes.findIndex(item => item.id === theme.id);
