@@ -5,6 +5,7 @@ import { createCanvas2DRenderer } from "../src/renderer/canvas-renderer";
 import { cullScene } from "../src/renderer/culling";
 import { paintSelectionOverlay, paintSnapGuides } from "../src/renderer/selection-overlay";
 import { selectedBoxes, selectionBounds } from "../src/renderer/selection";
+import { measureFontFingerprint } from "../src/font-baseline-probe";
 import { fixtureDocument } from "./fixture";
 
 /**
@@ -25,6 +26,15 @@ interface PaintMetrics {
   dpr: number;
   fixtureMs: number;
   sizes: Array<{ nodes: number; fullMs: number; culledMs: number; culledNodes: number }>;
+  /** 页面里的 user agent：跨浏览器基线靠它认出「这是哪个引擎」。 */
+  userAgent?: string;
+  /**
+   * 字体集指纹。
+   *
+   * 像素基线比的是「这台机器上这个浏览器渲染出来的画面」：字体一换画面就变，
+   * 此时的像素差异不是渲染回归。指纹让这件事能被明确说出来。
+   */
+  fonts?: { digest: string; samples: Array<{ id: string; width: number; height: number; lines: number }> };
 }
 
 async function main(): Promise<void> {
@@ -57,7 +67,13 @@ async function main(): Promise<void> {
     },
   });
 
-  const metrics: PaintMetrics = { dpr: window.devicePixelRatio, fixtureMs, sizes };
+  const metrics: PaintMetrics = {
+    dpr: window.devicePixelRatio,
+    fixtureMs,
+    sizes,
+    userAgent: typeof navigator === "undefined" ? undefined : navigator.userAgent,
+    fonts: measureFontFingerprint(),
+  };
   const pre = document.createElement("pre");
   pre.id = "harness-metrics";
   pre.textContent = JSON.stringify(metrics);

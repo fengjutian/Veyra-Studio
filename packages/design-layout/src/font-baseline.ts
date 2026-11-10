@@ -193,3 +193,32 @@ export function describeEnvironmentDifference(expected: FontBaseline, actual: Fo
  * 统一的缺省：行数换算成高度时用它。
  */
 export const DEFAULT_BASELINE_LINE_HEIGHT = 20;
+
+/**
+ * 字体集指纹。
+ *
+ * 像素基线比的是「这台机器上这个浏览器渲染出来的画面」。字体一换（系统升级、
+ * 装了或卸了字体、应用改了字体栈），画面就变了——这时候像素差异**不是**渲染
+ * 回归，而是环境变了。把度量压成一个短摘要写进基线指纹，比较时先对摘要：摘要
+ * 不同就直接说「字体集不同，基线不可比」，而不是甩一堆像素差异让人自己猜。
+ *
+ * 宽度按 0.1px 取整后再进摘要：同一台机器上 canvas 度量有零点几像素的抖动
+ * （不同 GPU / 光栅化后端），那是噪声不是字体变化；真正的字体替换会让宽度差
+ * 好几像素，行数更是直接变。行数与高度按整数进摘要——换行点变了必须被发现。
+ *
+ * 摘要用 FNV-1a 32 位：不是密码学哈希，只要一个稳定且短的指纹。
+ */
+export function fontSetDigest(cases: FontBaselineEntry[]): string {
+  // 按 id 排序：样例顺序变了不该让摘要跟着变。
+  const canonical = [...cases]
+    .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
+    .map(entry => `${entry.id}:${entry.width.toFixed(1)}:${entry.height.toFixed(1)}:${Math.round(entry.lines)}`)
+    .join(";");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    // FNV-1a 质数步进，用乘法代替移位（>>> 0 保持无符号 32 位）。
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${hash.toString(16).padStart(8, "0")}:${cases.length}`;
+}

@@ -5,6 +5,7 @@ import {
   compareFontBaseline,
   describeEnvironmentDifference,
   fontBaselineCases,
+  fontSetDigest,
   type FontBaseline,
   type FontBaselineEntry,
 } from "../src/font-baseline";
@@ -105,4 +106,30 @@ test("系统版本不同也算平台差异", () => {
 
 test("缺省行高有明确取值", () => {
   assert.equal(DEFAULT_BASELINE_LINE_HEIGHT, 20);
+});
+
+test("字体集指纹：同样的度量得到同样的摘要", () => {
+  assert.equal(fontSetDigest([entry("a", 100), entry("b", 50)]), fontSetDigest([entry("a", 100), entry("b", 50)]));
+});
+
+test("字体集指纹：样例顺序不影响摘要", () => {
+  assert.equal(fontSetDigest([entry("a", 100), entry("b", 50)]), fontSetDigest([entry("b", 50), entry("a", 100)]));
+});
+
+test("字体集指纹：零点几像素的抖动不算字体变化", () => {
+  // 同一台机器上 canvas 度量有零点几像素的抖动（GPU / 光栅化后端不同），
+  // 那是噪声。摘要按 0.1px 取整就是为了不把它当成字体换了。
+  assert.equal(fontSetDigest([entry("a", 100)]), fontSetDigest([entry("a", 100.04)]));
+});
+
+test("字体集指纹：宽度真的变了要能看出来", () => {
+  assert.notEqual(fontSetDigest([entry("a", 100)]), fontSetDigest([entry("a", 101)]));
+});
+
+test("字体集指纹：换行点变了要能看出来", () => {
+  assert.notEqual(fontSetDigest([entry("a", 100, 20, 1)]), fontSetDigest([entry("a", 100, 40, 2)]));
+});
+
+test("字体集指纹带着样例数", () => {
+  assert.match(fontSetDigest([entry("a", 100), entry("b", 50)]), /:2$/);
 });

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "baselines": [
+    {
+      "scene": "canvas",
+      "engine": "chromium",
+      "family": "Chrome",
+      "version": "157.0.0.0",
+      "platform": "win32",
+      "image": "chromium/win32/chrome-157.0.0.0/canvas.png",
+      "fingerprint": {
+        "engine": "chromium",
+        "family": "Chrome",
+        "version": "157.0.0.0",
+        "platform": "win32",
+        "osRelease": "win32 10.0.26200",
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+        "fontDigest": "e991a78a:10",
+        "viewport": {
+          "width": 960,
+          "height": 680
+        },
+        "deviceScaleFactor": 1
+      },
+      "collectedAt": "2026-11-10T06:29:16.115Z"
+    }
+  ]
+}

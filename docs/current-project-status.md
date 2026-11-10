@@ -770,6 +770,22 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   判定纪律：宽度容差 0.5px、**换行点零容差**、**非有限值一律算差异**（含 NaN 的
   基线曾被判成"完全一致"，因为 `NaN === NaN`）。仓库里目前只有 Windows + Chrome
   这一份基线，其余平台要各自采集。规格见 `font-baseline.md`；
+- **跨浏览器像素基线的机制已建立**（2026-11-10）：`design-export/src/cross-browser.ts`
+  定义基线的**目录布局**（`<引擎>/<平台>/<家族>-<版本>/<场景>.png`）、**指纹**
+  （引擎 / 家族 / 版本 / 系统 / 字体集摘要 / 视口 / DPR）、选基线规则与清单读写；
+  `design-export/visual/engines.ts` 是三个引擎的采集适配器（chromium 用命令行
+  截图 + `--dump-dom`；firefox 用 Firefox 自带的 Marionette 协议；webkit 用
+  `safaridriver` + WebDriver）；`studio-web/visual/cross-browser.ts` 是采集 / 检查
+  脚本（`visual:cross-browser:baseline` / `:check` / `:list`）。字体集摘要由
+  `design-layout` 的 `fontSetDigest()` 从**编辑器同一条测量路径**的 10 个样例算出，
+  摘要不同即判定「基线不可比」。判定纪律：目标引擎没有基线时**明确报「未采集」**
+  并列出已有基线覆盖的引擎与平台（不静默通过、不静默失败）；显式点名的引擎不可用
+  视为配置错误而失败；默认模式下不可用的引擎必须打印原因。**已实测**：Windows +
+  Chrome 157 采集的基线再比对为 **0 像素差异**；**Firefox 与 Safari 的适配器按协议
+  实现但本机未实测**（开发机只有 Chromium，且不是 macOS），仓库里目前也只有
+  Windows + Chromium 这一份基线。该检查**不进 `check:visual`**（CI 的视觉 job 跑在
+  Linux runner 上，没有对应平台的基线），它是按平台显式执行的检查。规格见
+  `cross-browser-baseline.md`；
 - **导出物内联字体**：HTML 交付物会把**文档声明过**的字体文件内联成
   `@font-face`（data URI），因此对方机器上没装这个字体也不会走回退字形——
   「画完了、交出去、字变了」这个断链被接上了。规则：只有 `document.fonts` 里

@@ -10,3 +10,4 @@ export * from "./font-inline";
 export * from "./font-subset";
 export * from "./truetype";
 export * from "./base64";
+export * from "./cross-browser";
