@@ -34,6 +34,7 @@
     "visual:mcp:probe": "tsx packages/studio-application/visual/mcp-http-probe.ts",
     "visual:vision:probe": "tsx packages/studio-web/visual/vision-probe.ts",
     "visual:react:probe": "tsx packages/studio-web/visual/react-export-probe.ts",
+    "visual:pdf:probe": "tsx packages/studio-web/visual/pdf-export-probe.ts",
     "ai:provider:acceptance": "tsx packages/ai-orchestrator/visual/provider-acceptance.ts",
     "visual:canvas:paint": "tsx packages/studio-web/visual/canvas-paint.ts",
     "visual:blend-probe": "tsx packages/studio-web/visual/blend-probe.ts",

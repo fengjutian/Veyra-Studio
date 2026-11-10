@@ -76,6 +76,9 @@ jobs:
       # 端到端：设计 → 代码。导出的 React 组件现场编译渲染，与 HTML 导出逐像素比对。
       # 单元测试只能断言代码里有几条声明，「长得一样」得靠像素说话。
       - run: npm run visual:react:probe -- --require-browser
+      # 端到端：PDF 导出。真实应用里点「导出 PDF」→ 等下载完成 → 把 PDF 里的图像
+      # 流解出来，确认里面装的是设计稿而不是空白页。
+      - run: npm run visual:pdf:probe -- --require-browser
 
   budgets:
     name: 性能预算（layout / export / paint）

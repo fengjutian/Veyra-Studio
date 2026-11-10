@@ -106,6 +106,14 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
   Token 绑定仍导出成 CSS 变量，变量定义在根元素的 style 上（自定义属性会继承）。
   端到端探针 `npm run visual:react:probe` 在真实浏览器里把导出的组件与 HTML 导出
   各渲染一遍，**逐像素比对，实测 0 像素差异**。规格见 `design-to-code.md`；
+  **PDF 导出**（2026-11-10）：`design-export/src/pdf.ts` 是零依赖的 PDF 写入器
+  （PDF 本身是文本格式的对象表，不需要库），**每页一张位图**——页面尺寸按 96dpi→72dpi
+  换算，位图按 2× 渲染（打印更清楚、尺寸不变），图像数据用原生
+  `CompressionStream("deflate")` 压缩（正好是 PDF 的 `/FlateDecode` 要的 zlib 流），
+  同样输入产出同样字节。工作台「导出 PDF」导整份文档的所有页面，渲染路径与 PNG
+  导出同源（SVG → canvas）。端到端探针 `npm run visual:pdf:probe` 真实下载一份 PDF
+  并把图像流解出来，确认里面是设计稿而不是白页。**限制**：图片型 PDF，文字不可选、
+  不可搜索；矢量 PDF（内嵌 TrueType、文字可选）未做；
 - `packages/studio-application`：串联项目创建、命令事务、日志与快照、恢复、布局和
   HTML/SVG 导出的应用服务原型，并提供不修改真实项目的命令预演入口，作为未来工作台与
   AI Orchestrator 的共同入口；

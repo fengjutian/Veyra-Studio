@@ -60,6 +60,7 @@ import { exportPageToPng, downloadDataUrl } from "./png-export";
 import { createZip } from "./zip";
 import type { ExportDiagnostic } from "@ufira/design-export";
 import { exportPageToHtml, exportPageToReact } from "@ufira/design-export";
+import { exportDocumentToPdf } from "./pdf-export";
 import { ExportDiagnosticsPanel } from "./export-panel";
 import type { ExportFormat } from "./export-report";
 import { ExportPreviewDialog } from "./export-preview-dialog";
@@ -1188,6 +1189,28 @@ function App() {
     downloadDataUrl(`${exportFilename}.png`, result.dataUrl);
     setExportReport({ format: "png", diagnostics: result.diagnostics });
     setMessage(`PNG 已导出${exportScopeLabel} · ${result.width}×${result.height}`);
+  });
+  /**
+   * 导出 PDF：整份文档，每页一页。
+   *
+   * 与其它导出入口不同：PDF 天然是多页的，所以这里导**所有页面**，不受顶栏的
+   * 「整页 / 选区」范围影响。页面尺寸按设计尺寸算（96dpi → 72dpi），位图按 2×
+   * 渲染——打印更清楚，尺寸没变。
+   *
+   * 这是图片型 PDF：文字不可选、不可搜索。
+   */
+  const exportPdf = () => void run(async () => {
+    const snapshot = project.snapshot();
+    const resolveAsset = await createAssetResolver(repository, snapshot, page.id, undefined);
+    const result = await exportDocumentToPdf(snapshot, {
+      viewport: { width: CANVAS_WIDTH, height: CANVAS_HEIGHT },
+      title: document.meta.name,
+      themeId: activeThemeId,
+      resolveAsset,
+    });
+    downloadBytes(`${safeFilename(document.meta.name)}.pdf`, result.bytes, "application/pdf");
+    setExportReport({ format: "pdf", diagnostics: result.diagnostics });
+    setMessage(`PDF 已导出 · ${result.pageCount} 页 · ${result.diagnostics.length} 条诊断`);
   });
   // 预览和下载走同一个导出入口，看到的就是交付物本身。
   const exportOptions = () => ({ pageId: page.id, viewport: exportTarget.viewport, title: document.meta.name, origin: exportTarget.origin, nodeIds: exportTarget.nodeIds, themeId: activeThemeId });
@@ -2352,6 +2375,7 @@ function App() {
               <Tooltip label="导出单个自包含的 HTML 文件"><button disabled={busy} onClick={exportHtml}><Icon name="exportHtml" />导出 HTML</button></Tooltip>
               <Tooltip label="导出资源包（HTML + 图片/字体文件，打成 ZIP）"><button disabled={busy} onClick={exportPackage}><Icon name="exportPackage" />导出资源包</button></Tooltip>
               <Tooltip label="导出 React 组件（文字与图片地址提成 props）"><button disabled={busy} onClick={exportReact}><Icon name="exportHtml" />导出 React</button></Tooltip>
+              <Tooltip label="导出 PDF（整份文档，每页一页；图片型，文字不可选）"><button disabled={busy} onClick={exportPdf}><Icon name="exportPng" />导出 PDF</button></Tooltip>
             </div>
           </section>
           <section className="inspector-section">

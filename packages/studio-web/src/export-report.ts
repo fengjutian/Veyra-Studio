@@ -32,7 +32,7 @@ const SUPPORT_LABELS: Record<ExportSupport | "n/a", string> = {
   "n/a": "—",
 };
 
-export type ExportFormat = "html" | "svg" | "png" | "react";
+export type ExportFormat = "html" | "svg" | "png" | "react" | "pdf";
 
 export function featureLabel(feature: string): string {
   return FEATURE_LABELS[feature] ?? feature;

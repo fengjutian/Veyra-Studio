@@ -2,6 +2,7 @@ export * from "./types";
 export * from "./selection";
 export * from "./html";
 export * from "./react";
+export * from "./pdf";
 export * from "./svg";
 export * from "./support";
 export * from "./font-inline";
