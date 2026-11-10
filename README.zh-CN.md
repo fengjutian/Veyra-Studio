@@ -29,6 +29,18 @@ npm run dev:studio-web
 
 这些命令只验证 Phase 0 底层包。
 
+## 桌面端
+
+`packages/studio-desktop` 是 Tauri v2 桌面端外壳：跑的是同一份 studio-web 前端，
+额外提供原生窗口与原生「另存为」（导出不再落到浏览器下载目录）。
+
+```bash
+npm run dev:desktop     # 开发模式
+npm run build:desktop   # 产出 exe 与 NSIS 安装包
+```
+
+设计与取舍见 [桌面端文档](./docs/desktop-app.md)。
+
 ## 遗留 Vibma 代码
 
 Vibma/Figma 相关包、relay、插件、Schema 和安装指南只保留用于受控迁移与行为参考。

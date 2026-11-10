@@ -34,6 +34,19 @@ npm run test:studio-core
 
 These commands verify only the Phase 0 foundation packages.
 
+## Desktop app
+
+`packages/studio-desktop` is a Tauri v2 shell around the same studio-web frontend:
+same editor, plus a native window and a native "Save As" dialog (exports no longer
+land in the browser's download directory).
+
+```bash
+npm run dev:desktop     # dev mode
+npm run build:desktop   # produce the executable and the NSIS installer
+```
+
+See the [desktop app doc](./docs/desktop-app.md) for the design and the trade-offs.
+
 ## Legacy Vibma code
 
 The Vibma/Figma packages, relay, plugin, schemas, and setup guides are retained only
