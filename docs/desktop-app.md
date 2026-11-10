@@ -78,7 +78,7 @@ npm run build:desktop       # 打包：产出 exe 与 NSIS 安装包
 
 产物位置：
 
-- 可执行文件：`packages/studio-desktop/src-tauri/target/release/ufira-studio-desktop.exe`
+- 可执行文件：`packages/studio-desktop/src-tauri/target/release/veyra-desktop.exe`
 - 安装包：`packages/studio-desktop/src-tauri/target/release/bundle/nsis/`
 
 单独跑 Rust 侧（需要 `packages/studio-web/dist` 已存在，`generate_context!` 会把它
@@ -93,6 +93,8 @@ cargo check
 
 - **WebView2 运行时**：Windows 上必须装 Microsoft Edge WebView2 Runtime。缺运行时时
   窗口创建会失败（`拒绝访问。 (os error 5)`）。
+  注意：`msedgewebview2.exe --version` 退出码 13 **不能**用来判断运行时是否可用——
+  那个二进制不认这个开关，退出码 13 只说明"参数不认"。判据是**把应用跑起来看有没有窗口句柄**。
 - **数据仍在 WebView2 里**：项目继续存在 IndexedDB，落在 WebView2 的用户数据目录，
   不是 Tauri 的 app data 目录。换成本地文件存储（`app_data_dir` + 原生仓储）是下一步，
   当前版本没有做。
