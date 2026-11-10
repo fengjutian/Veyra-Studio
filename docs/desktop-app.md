@@ -99,3 +99,5 @@ cargo check
 - **导入仍用 `<input type="file">`**：WebView2 里它弹的就是 Windows 原生文件选择器，
   体验上已经是原生的，因此没有另写一套。
 - **只出 Windows 包**：`targets` 配的是 `nsis`。macOS / Linux 的打包没有配置。
+- **CI 没覆盖桌面端**：Studio CI 跑在 ubuntu-latest 上，桌面端的编译与打包目前只在本地验证过。
+  要进 CI 需要单独的 Windows runner（Rust 工具链 + NSIS 下载）。
