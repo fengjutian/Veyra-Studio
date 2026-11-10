@@ -51,6 +51,8 @@ function buildSystemPrompt(): string {
     "6. 只做用户要求的改动，不要顺手重构或改无关节点；commands 保持最少。",
     "7. assumptions 用来写你替用户做的假设（例如\"沿用当前页面的边距\"），没有假设就给空数组。",
     "8. 如果提示里给出了「体检结论」的待修清单，就只针对清单里的问题做改动，清单之外的问题不要顺手改。",
+    "9. 多页面任务先用 page.create 创建页面（新页面 id 必须唯一），再用 node.create 把节点放入对应页面；不要把不同页面的节点混到同一个 parentId。",
+    "10. 跨页面设计优先复用现有 token、组件与主题；除非用户明确要求，每一页都要保持相同的颜色、字体、圆角和间距体系。",
   ].join("\n");
 }
 
@@ -98,7 +100,7 @@ export function summarizeDocument(document: DesignDocument, selectedNodeIds: str
   for (const pageId of document.pageOrder) {
     const page = document.pages[pageId];
     if (!page) continue;
-    lines.push(`- ${page.id} 名称="${page.name}" 顶层对象 ${page.childIds.length} 个`);
+    lines.push(`- ${page.id} 名称="${page.name}" 顶层对象 ${page.childIds.length} 个 主题=${page.themeId ?? "（跟随基础主题）"}`);
   }
 
   lines.push("节点树：");
@@ -113,6 +115,14 @@ export function summarizeDocument(document: DesignDocument, selectedNodeIds: str
   const tokenEntries = Object.entries(document.tokens);
   if (!tokenEntries.length) lines.push("- （无）");
   else for (const [name, token] of tokenEntries) lines.push(`- ${name} = ${String(token.value)}（${token.type}）`);
+
+  lines.push("主题：");
+  const themes = document.themes ?? [];
+  if (!themes.length) lines.push("- （无）");
+  else for (const theme of themes) {
+    const overrides = Object.keys(theme.tokens).join(", ") || "无 token 覆盖";
+    lines.push(`- ${theme.id} 名称="${theme.name}"${theme.extends ? ` 继承=${theme.extends}` : ""} 覆盖=${overrides}`);
+  }
 
   lines.push("组件：");
   const componentEntries = Object.entries(document.components);

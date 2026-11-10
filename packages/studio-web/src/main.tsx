@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
-import { AiCancelledError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
+import { AiCancelledError, PlanParseError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
 import { absolutePath, applyThemeForPage, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, collectExternalAssetDiagnostics, collectExternalAttributions, createAssetResolver, createHttpExternalAssetProvider, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, planExternalProviderPurge, prepareFontFaces, prepareVectorPdfFonts, reconstructDocumentAt, renderAttributionMarkdown, resolveExternalAsset, PACKAGE_DOCUMENT_NAME, type ExternalAssetProvider } from "@ufira/studio-application";
@@ -125,6 +125,9 @@ function App() {
   const [currentPageId, setCurrentPageId] = useState<string>();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("添加一个蓝色卡片");
+  const [aiPageScope, setAiPageScope] = useState<"current" | "all" | "new">("current");
+  const [aiStyle, setAiStyle] = useState<"inherit" | "product" | "brand" | "minimal">("inherit");
+  const [aiFailure, setAiFailure] = useState<string>();
   // 「带截图问 AI」：把当前页面渲染成 PNG 一起发给模型。端点不支持看图时自动失效。
   const [aiVision, setAiVision] = useState(false);
   // 截图范围：整页 / 只截选中的节点 / 把所有页拼成一张长图。
@@ -1718,22 +1721,35 @@ function App() {
     }
     if (!editor) return;
     setMessage("正在生成 AI 安全变更预览…");
+    setAiFailure(undefined);
     const controller = new AbortController();
     planAbort.current = controller;
     operationInFlight.current = true;
     setPlanning(true); setBusy(true); setStreamText("");
     try {
       const image = await captureVisionIfEnabled();
-      const next = await editor.createPlan(prompt, selectedIds, {
-        signal: controller.signal,
-        // 只覆盖显示累计文本；权威内容由 Planner 的 fullText 给出。
-        onDelta: (_delta, fullText) => setStreamText(fullText),
-        ...(image ? { image } : {}),
-      });
+      const scopedPrompt = buildAiDesignPrompt(prompt, aiPageScope, aiStyle, page.id, page.name);
+      const create = (requestPrompt: string) => editor.createPlan(requestPrompt, selectedIds, {
+          signal: controller.signal,
+          // 只覆盖显示累计文本；权威内容由 Planner 的 fullText 给出。
+          onDelta: (_delta, fullText) => setStreamText(fullText),
+          ...(image ? { image } : {}),
+        });
+      let next: AiPlanPreview;
+      try {
+        next = await create(scopedPrompt);
+      } catch (error) {
+        if (!(error instanceof PlanParseError) || controller.signal.aborted) throw error;
+        setMessage("模型返回不完整，正在自动修复重试…");
+        setStreamText("");
+        next = await create(`${scopedPrompt}\n\n上一次回复不是完整合法的 JSON。请缩短说明，只输出一个完整 JSON 对象，commands 不要省略。`);
+      }
       setPreview(next);
       setMessage("AI 计划已完成 dry-run，等待确认");
     } catch (error) {
-      setMessage(error instanceof AiCancelledError ? "已取消 AI 生成" : errorMessage(error));
+      const failure = error instanceof AiCancelledError ? "已取消 AI 生成" : errorMessage(error);
+      setAiFailure(failure);
+      setMessage(failure);
     } finally {
       planAbort.current = undefined;
       operationInFlight.current = false;
@@ -1797,7 +1813,7 @@ function App() {
       const resolveAsset = await createSelfCheckResolver(project.snapshot());
       const image = await captureVisionIfEnabled();
       const result = await runAutonomousLoop(editor, {
-        goal: prompt.trim(),
+        goal: buildAiDesignPrompt(prompt, aiPageScope, aiStyle, page.id, page.name),
         selectedNodeIds: selectedIds,
         maxRounds: 6,
         selfCheck: { resolveAsset },
@@ -3055,6 +3071,25 @@ function App() {
           </section>
           <section className="inspector-section">
             <h2>AI 安全编辑</h2>
+            <div className="ai-design-options">
+              <label className="field">
+                <span className="field-label">页面范围</span>
+                <select value={aiPageScope} onChange={event => setAiPageScope(event.target.value as typeof aiPageScope)}>
+                  <option value="current">仅当前页 · {page.name}</option>
+                  <option value="all">全部现有页面 · 保持一致</option>
+                  <option value="new">创建新的多页面流程</option>
+                </select>
+              </label>
+              <label className="field">
+                <span className="field-label">视觉风格</span>
+                <select value={aiStyle} onChange={event => setAiStyle(event.target.value as typeof aiStyle)}>
+                  <option value="inherit">延续当前设计 / Token</option>
+                  <option value="product">现代产品界面</option>
+                  <option value="brand">强品牌视觉</option>
+                  <option value="minimal">极简留白</option>
+                </select>
+              </label>
+            </div>
             <textarea aria-label="AI 指令" placeholder="描述你想让 AI 做的修改…" value={prompt} onChange={event => setPrompt(event.target.value)} />
             <label className="field field-inline">
               <span className="field-label">带截图问 AI</span>
@@ -3080,6 +3115,7 @@ function App() {
             <button disabled={busy || !prompt.trim() || !aiReady} title={!aiReady ? "先在上方配置并启用 MiniMax 或 DeepSeek，并填写 API Key" : undefined} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />生成变更预览</button>
             {planning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消生成</button>}
             {planning && <pre className="ai-stream" style={{ margin: "8px 0 0", padding: 8, maxHeight: 180, overflow: "auto", background: "#0b0d12", border: "1px solid #2b303b", borderRadius: 8, fontSize: 11, lineHeight: 1.5, color: "#c8ccd6", whiteSpace: "pre-wrap", wordBreak: "break-word" }} aria-live="polite">{streamText || "正在等待模型响应…"}</pre>}
+            {aiFailure && !planning && <div className="ai-failure" role="alert"><strong>本次生成没有改动文档</strong><span>{aiFailure}</span><button disabled={busy || !aiReady} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />重试</button></div>}
             {preview && aiReady && <div className={previewStale ? "preview stale" : "preview"}><strong>{preview.summary}</strong><p>影响：{preview.affectedNodeIds.join(", ") || "文档级"}</p><p>警告：{preview.warnings.length}</p><p>审查：{preview.review.findings.length ? `${preview.review.findings.length} 条${preview.review.blocking ? "（含阻断项）" : "（仅提示）"}` : "通过"}</p>{preview.review.findings.length > 0 && <div className="review-list">{preview.review.findings.map(finding => <div className={`review-row review-${finding.severity}`} key={finding.code}><span className="review-badge">{finding.severity === "blocking" ? "阻断" : "提示"}</span><span className="review-message">{finding.message}</span></div>)}</div>}{previewStale && <p>文档已变化，请取消并重新生成计划。</p>}<div className="preview-actions"><button disabled={busy || previewStale || preview.review.blocking} title={preview.review.blocking ? "存在阻断项，计划不能提交" : undefined} onClick={() => editor && void run(async () => { await editor.confirm(preview.planId); setDocument(project.snapshot()); setPreview(undefined); setMessage("AI 变更已确认"); })}><Icon name="aiConfirm" />确认提交</button><button disabled={busy} onClick={() => { editor?.cancel(preview.planId); setPreview(undefined); }}><Icon name="aiCancel" />取消</button></div></div>}
           </section>
           <section className="inspector-section">
@@ -3267,6 +3303,27 @@ function makeImageNode(parentId: string, assetId: string, box: { width: number; 
 }
 
 const demoPlanner: AiPlanner = { async plan({ document }) { return { summary: "演示规划器：创建一个蓝色卡片（未启用真实模型，需求未被理解）", assumptions: ["使用当前页面"], commands: [{ type: "node.create", payload: { node: { ...makeNode("frame", document.pageOrder[0]!), name: "AI 卡片", layout: { ...defaultLayout(), x: 340, y: 120, width: 280, height: 180 }, appearance: { ...defaultAppearance(), fills: [{ type: "solid" as const, color: "#2563eb" }], cornerRadius: 20 } } } }] }; } };
+
+function buildAiDesignPrompt(
+  request: string,
+  scope: "current" | "all" | "new",
+  style: "inherit" | "product" | "brand" | "minimal",
+  pageId: string,
+  pageName: string,
+): string {
+  const scopes = {
+    current: `页面范围：只修改当前页 ${pageId}（${pageName}）；不要创建或改动其他页面。`,
+    all: "页面范围：检查并修改全部现有页面；保持导航、组件、颜色、字体、圆角和间距一致。",
+    new: "页面范围：创建完整的多页面流程。先用 page.create 建页面，再为每页创建节点；页面之间共享 token 与组件。",
+  } as const;
+  const styles = {
+    inherit: "视觉风格：延续文档现有 Token、主题和组件；不要另造一套颜色或字体。",
+    product: "视觉风格：现代产品界面，清晰层级、紧凑栅格、中性底色与明确主操作。优先沉淀为 Token。",
+    brand: "视觉风格：强品牌识别，保留一致的品牌色、标题比例和图形语言，同时保证可访问对比度。优先沉淀为 Token。",
+    minimal: "视觉风格：极简留白，减少装饰，使用克制色彩、清楚排版和稳定间距。优先沉淀为 Token。",
+  } as const;
+  return `${scopes[scope]}\n${styles[style]}\n用户任务：${request.trim()}`;
+}
 
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 
