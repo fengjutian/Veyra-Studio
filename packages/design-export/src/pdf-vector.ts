@@ -263,7 +263,7 @@ export async function exportDocumentToVectorPdf(
   objects.replace(pagesObject, ascii(`<< /Type /Pages /Kids [${kids.map(kid => `${kid} 0 R`).join(" ")}] /Count ${kids.length} >>`));
 
   const catalog = objects.add(ascii(`<< /Type /Catalog /Pages ${pagesObject} 0 R >>`));
-  const info = objects.add(ascii(`<< /Title ${pdfTextString(options.title ?? "AI Design Studio")} /Producer ${pdfTextString("AI Design Studio")} >>`));
+  const info = objects.add(ascii(`<< /Title ${pdfTextString(options.title ?? "Veyra")} /Producer ${pdfTextString("Veyra")} >>`));
 
   return { bytes: objects.build(catalog, info), pageCount: pageIds.length, diagnostics };
 }

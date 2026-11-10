@@ -2538,7 +2538,7 @@ function App() {
       <div className="topbar-left">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">A</span>
-          <strong className="brand-name">AI Design Studio</strong>
+          <strong className="brand-name">Veyra</strong>
         </div>
         <Tooltip label="切换项目">
           <select className="project-select" aria-label="切换项目" disabled={busy} value={document.id} onChange={event => void run(() => openProject(event.target.value))}>{projects.map(item => <option key={item.id} value={item.id}>{item.name} · r{item.revision}</option>)}</select>

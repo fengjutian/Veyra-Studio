@@ -1,4 +1,4 @@
-# AI Design Studio
+# Veyra
 
 本地优先、宿主无关的 AI 界面设计环境。
 
@@ -16,7 +16,7 @@
 独立 UI、交互画布、生产渲染器、导出链路和完整 AI 编辑闭环尚未实现。
 
 实际实现状态以 [当前项目状态](./docs/current-project-status.md) 为准；目标设计参见
-[AI Design Studio 架构方案](./docs/ai-design-studio-architecture-analysis.md)。
+[Veyra 架构方案](./docs/ai-design-studio-architecture-analysis.md)。
 
 ## 开发
 
@@ -41,11 +41,11 @@ npm run build:desktop   # 产出 exe 与 NSIS 安装包
 
 设计与取舍见 [桌面端文档](./docs/desktop-app.md)。
 
-## 遗留 Vibma 代码
+## 遗留 bridge 代码
 
-Vibma/Figma 相关包、relay、插件、Schema 和安装指南只保留用于受控迁移与行为参考。
+旧 Figma 相关包、relay、插件、Schema 和安装指南只保留用于受控迁移与行为参考。
 新开发不要启动 relay、连接 Figma 插件、配置旧 MCP Server，也不要让 Studio 包依赖
-Vibma/Figma 运行时代码。
+旧 Figma 运行时代码。
 
 ## 许可证
 

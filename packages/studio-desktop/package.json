@@ -2,7 +2,7 @@
   "name": "@ufira/studio-desktop",
   "version": "0.2.0",
   "private": true,
-  "description": "AI Design Studio 的 Tauri 桌面端外壳",
+  "description": "Veyra 的 Tauri 桌面端外壳",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",

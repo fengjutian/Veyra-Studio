@@ -111,7 +111,7 @@ export async function exportRastersToPdf(pages: PdfRasterPage[], options: PdfExp
 
   bodies[0] = ascii("<< /Type /Catalog /Pages 2 0 R >>");
   bodies[1] = ascii(`<< /Type /Pages /Kids [${kids.join(" ")}] /Count ${pageCount} >>`);
-  bodies[2] = ascii(`<< /Title ${pdfTextString(options.title ?? "AI Design Studio")} /Producer ${pdfTextString("AI Design Studio")} >>`);
+  bodies[2] = ascii(`<< /Title ${pdfTextString(options.title ?? "Veyra")} /Producer ${pdfTextString("Veyra")} >>`);
 
   return { bytes: buildPdf(bodies), pageCount, diagnostics };
 }

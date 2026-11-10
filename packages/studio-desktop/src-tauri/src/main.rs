@@ -1,4 +1,4 @@
-// AI Design Studio 桌面端。
+// Veyra 桌面端。
 //
 // 这一层只做两件事：
 //
@@ -78,7 +78,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![save_file])
         .run(tauri::generate_context!())
-        .expect("AI Design Studio 桌面端启动失败");
+        .expect("Veyra 桌面端启动失败");
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
-# AI Design Studio
+# Veyra
 
 A local-first, host-independent AI interface design environment.
 
 > **Phase 0:** The standalone Studio is under active development but is not yet a
-> usable editor. The former Vibma MCP-to-Figma bridge is legacy reference code and
+> usable editor. The former MCP-to-Figma bridge is legacy reference code and
 > must not be used as the product runtime or the default development path.
 
 ## Current scope
@@ -18,7 +18,7 @@ The standalone UI, interactive canvas, production renderer, export pipeline, and
 complete AI editing loop are not yet implemented.
 
 See [Current Project Status](./docs/current-project-status.md) for authoritative status
-and [AI Design Studio Architecture](./docs/ai-design-studio-architecture-analysis.md)
+and [Veyra Architecture](./docs/ai-design-studio-architecture-analysis.md)
 for the draft target architecture.
 
 See [Project Progress and Version Roadmap](./docs/project-progress-and-version-roadmap.md)
@@ -47,12 +47,12 @@ npm run build:desktop   # produce the executable and the NSIS installer
 
 See the [desktop app doc](./docs/desktop-app.md) for the design and the trade-offs.
 
-## Legacy Vibma code
+## Legacy bridge code
 
-The Vibma/Figma packages, relay, plugin, schemas, and setup guides are retained only
+The old Figma packages, relay, plugin, schemas, and setup guides are retained only
 for controlled migration and behavior reference. For new development, do not run the
 relay, connect the Figma plugin, configure the old MCP server, or make Studio packages
-depend on Vibma/Figma runtime code.
+depend on the legacy Figma runtime code.
 
 ## License
 

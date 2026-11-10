@@ -1,6 +1,6 @@
-# @ufira/studio-desktop
+# Veyra Desktop
 
-AI Design Studio 的 Tauri 桌面端外壳。
+Veyra 的 Tauri 桌面端外壳。
 
 前端**不是**这里的一份副本：桌面端直接加载 `packages/studio-web` 的构建产物，
 跑的仍是同一份编辑器代码。桌面端负责三件事：原生窗口、原生「另存为」、以及把

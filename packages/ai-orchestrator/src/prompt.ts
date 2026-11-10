@@ -20,7 +20,7 @@ export function buildPlannerPrompt(request: AiPlanRequest): PlannerPrompt {
 
 function buildSystemPrompt(): string {
   return [
-    "你是 AI Design Studio 的命令规划器。把用户的中文需求翻译成该设计文档的 JSON 命令计划。",
+    "你是 Veyra 的命令规划器。把用户的中文需求翻译成该设计文档的 JSON 命令计划。",
     "",
     "只输出一个 JSON 对象，不要输出解释文字，也不要用 Markdown 代码围栏。格式：",
     "{",

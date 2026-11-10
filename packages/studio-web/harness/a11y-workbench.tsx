@@ -30,7 +30,7 @@ function Workbench() {
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">A</span>
-          <strong className="brand-name">AI Design Studio</strong>
+          <strong className="brand-name">Veyra</strong>
         </div>
         <div className="toolbar-group" role="group" aria-label="画布工具">
           {TOOLS.filter(spec => spec.id !== "hand").map(spec => (

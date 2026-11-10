@@ -213,7 +213,7 @@ export type GridTrack =
 
 前三轮（Grid、组件变体、原型运行时）已经做完，线 A 的缺口收缩到了**表现层**——
 「画出来对不对」这一类能力。这三项在 Figma 里都是日常高频操作，
-而本项目此前完全空缺（只有 legacy Vibma 代码里有 mix-blend-mode 的痕迹，
+而本项目此前完全空缺（只有 legacy bridge 代码里有 mix-blend-mode 的痕迹，
 独立 Studio 的 schema / 渲染 / 导出三层都没有）。
 
 ### 4.1 混合模式

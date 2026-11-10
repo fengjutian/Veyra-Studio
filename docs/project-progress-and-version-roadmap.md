@@ -1,4 +1,4 @@
-# AI Design Studio 项目进度与版本路线图
+# Veyra 项目进度与版本路线图
 
 > 文档状态：生效中的版本与进度基线  
 > 基线日期：2026-11-06  
@@ -9,7 +9,7 @@
 
 本文把项目进度、功能范围和软件版本建立为一一对应关系。今后的功能开发、验收、发布说明和版本号调整均以本文为基线。
 
-本文只描述独立 **AI Design Studio**。仓库中 `packages/core`、`packages/tunnel`、`packages/adapter-figma`、`schema` 和 `plugin` 属于停止发展的 Vibma MCP-to-Figma legacy bridge，其 `1.1.5` 版本不计入 Studio 版本，也不得用来判断 Studio 的完成度。
+本文只描述 **Veyra**。仓库中 `packages/core`、`packages/tunnel`、`packages/adapter-figma`、`schema` 和 `plugin` 属于停止发展的 MCP-to-Figma legacy bridge，其 `1.1.5` 版本不计入 Veyra 版本，也不得用来判断 Veyra 的完成度。
 
 ## 2. 版本口径
 
@@ -20,7 +20,7 @@
 - `0.x.y` 是该里程碑内的缺陷修复或兼容性修订，不新增跨里程碑的大功能。
 - `1.0.0` 表示本文定义的 V1 产品闭环达到稳定发布标准；在此之前均不承诺生产稳定性。
 - 所有 Studio workspace 包原则上使用同一个产品版本。内部包若暂时保持独立版本，发布时仍必须由根级 Studio 版本清单记录它们的精确组合。
-- Git tag 使用 `studio-vX.Y.Z`，避免与 legacy Vibma tag 混淆。
+- Git tag 使用 `veyra-vX.Y.Z`；旧的 `studio-vX.Y.Z` tag 仅作为历史版本保留。
 
 ### 2.2 当前版本事实
 
@@ -56,7 +56,7 @@
 | `0.8.0` | 外部 Agent 与集成 | Phase 4 | 进行中 | 大部分；stdio/HTTP/工具契约、编排循环（AI 自主多轮运行）与 MCP 生产化（OAuth 2.1 / 多租户 / SSE / 多实例共享状态）、外部素材服务（缓存 / 归因 / 退出策略）已实现，缺跨主机共享存储 | 独立 Studio MCP adapter 和受控集成可用，不依赖 Figma |
 | `0.9.0` | Beta 稳定化 | Phase 4 | 进行中 | 部分；预算、视觉回归、对比度、键盘/读屏自动化与整应用走查已有，缺跨浏览器矩阵 | 性能、兼容性、可访问性、迁移和端到端测试达到 Beta 门槛 |
 | `0.10.0` | V1 Release Candidate | Phase 4 | 规划 | 未开始 | 功能冻结，阻断级问题清零，安装、升级和发布候选可验证 |
-| `1.0.0` | 独立 AI Design Studio V1 | V1 | 规划 | 未开始 | 达到稳定发布、支持和兼容承诺 |
+| `1.0.0` | Veyra V1 | V1 | 规划 | 未开始 | 达到稳定发布、支持和兼容承诺 |
 
 两张状态列必须分开看：`发布状态` 使用第 6 节的状态词，只有版本说明和
 `studio-vX.Y.Z` tag 齐备才能记为“已完成”；`实现进度` 只描述代码里已经存在多少，
@@ -802,7 +802,7 @@ MCP 生产化已完成（2026-11-09）：外部 Agent 要规模化接进来，�
 - 范围：V1 功能冻结；完成安装、首次启动、示例、升级、备份、恢复和卸载；冻结 Schema、命令、导出和兼容性承诺草案；完成许可、安全、第三方清单和用户文档。
 - 验收：所有 `1.0.0` 必需场景通过；无 P0/P1 缺陷；候选版本经过至少一个完整稳定周期。
 
-### `1.0.0`：独立 AI Design Studio V1
+### `1.0.0`：Veyra V1
 
 V1 必须具备：
 

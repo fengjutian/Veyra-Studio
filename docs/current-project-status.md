@@ -5,11 +5,11 @@
 
 ## 一句话结论
 
-当前项目的唯一开发方向是 **独立 AI Design Studio**。Studio 仍处于 Phase 0，现有代码
+当前项目的唯一名称和开发方向是 **Veyra**。Veyra 仍处于 Phase 0，现有代码
 只是底层原型，还不是可用的独立设计应用。`0.1.0`（tag `studio-v0.1.0`）与 `0.2.0`
 （tag `studio-v0.2.0`）已于 2026-11-09 发布，版本说明与验收清单见
 `releases/studio-v0.1.0.md` 与 `releases/studio-v0.2.0.md`；按版本定义，`0.1.0` 只是
-**垂直原型**、`0.2.0` 收口的是**文档与项目可靠性**，都不代表生产可用。原 Vibma
+**垂直原型**、`0.2.0` 收口的是**文档与项目可靠性**，都不代表生产可用。原 MCP-to-Figma
 MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留代码；不得把它作为
 产品运行时或新功能后端。
 
@@ -919,13 +919,13 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
 
 ## 遗留代码：禁止作为新功能基础
 
-- `packages/core`：原 Vibma MCP Server；
+- `packages/core`：原 MCP Server；
 - `packages/tunnel`：原 WebSocket relay；
 - `packages/adapter-figma`：原 Figma 插件与 handlers；
-- `schema`、`plugin`、`dist` 及 Vibma 安装指南。
+- `schema`、`plugin`、`dist` 及旧安装指南。
 
 除非任务明确要求迁移或维护遗留代码，否则不得启动、配置、测试或扩展这些模块。新代码
-不得依赖 Figma Runtime、Vibma relay 或旧 MCP 工具实现。
+不得依赖 Figma Runtime、旧 relay 或旧 MCP 工具实现。
 
 ## 尚未实现或尚未达到可用状态
 
@@ -1079,7 +1079,7 @@ MCP-to-Figma bridge 已停止使用，只保留为迁移和行为研究的遗留
 - 回答“项目目前是否支持某功能”时，必须先检查源码、测试和构建脚本，不能只引用架构稿；
 - 不得把目标目录树描述成当前目录树；
 - 不得宣称独立 Studio 已经完成；
-- 不得建议用户启动 Vibma relay、导入 Figma 插件或配置旧 MCP Server；
+- 不得建议用户启动旧 relay、导入 Figma 插件或配置旧 MCP Server；
 - 只有明确的遗留迁移任务才允许修改 bridge，并继续遵守其既有边界；
 - 修改独立 Studio 原型时，不得引入 Figma、React、MCP SDK 或具体 renderer 到
   `design-runtime`；
@@ -1117,7 +1117,7 @@ npm run dev:studio-web
 
 上述构建、测试与 `npm run check:budgets` 已由 `.github/workflows/studio-ci.yml` 在
 push / PR 上执行；视觉回归（`npm run check:visual`）单独成 job 且允许失败，因为产物
-基线绑定本机字体，Linux runner 上的像素差异来自字体而不是代码。legacy Vibma 的发布
+基线绑定本机字体，Linux runner 上的像素差异来自字体而不是代码。legacy bridge 的发布
 仍走 `release.yml`，与 Studio 无关。
 
-不要把 `npm run socket`、Figma 插件安装或 Vibma MCP 配置作为本项目的运行步骤。
+不要把 `npm run socket`、Figma 插件安装或旧 MCP 配置作为本项目的运行步骤。

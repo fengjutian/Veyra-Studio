@@ -1,6 +1,6 @@
 # Adapter Glossary
 
-Cross-platform design concept mapping for Vibma adapters.
+Cross-platform design concept mapping retained from the legacy adapters for Veyra migration work.
 Each section defines a concept, then maps it across platforms.
 
 ---

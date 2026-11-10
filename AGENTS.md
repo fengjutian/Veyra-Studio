@@ -1,32 +1,32 @@
-# Vibma Development Workflow
+# Veyra Development Workflow
 
-Development instructions for the independent AI Design Studio. The former Vibma
+Development instructions for Veyra. The former
 MCP-to-Figma bridge remains in the repository as legacy reference code only.
 
 ## Current Project State — Read This First
 
 This repository contains **one active product direction and one legacy codebase**:
 
-1. **AI Design Studio (active development target).** `packages/design-schema`,
+1. **Veyra (active development target).** `packages/design-schema`,
    `packages/design-runtime`, and `packages/design-persistence` are early,
    host-independent foundations. The product is still in Phase 0 and is not yet a
    complete standalone application.
-2. **Vibma MCP-to-Figma bridge (legacy; do not use).** `packages/core`,
+2. **MCP-to-Figma bridge (legacy; do not use).** `packages/core`,
    `packages/tunnel`, `packages/adapter-figma`, `schema`, `plugin`, and the related
    setup guides are retained only for source reference and controlled migration.
 
-### Legacy Vibma Policy
+### Legacy Bridge Policy
 
-- Do not start the relay, import the Figma plugin, configure the Vibma MCP server, or
+- Do not start the relay, import the Figma plugin, configure the legacy MCP server, or
   use Figma as the execution backend for new work.
 - Do not add features to or extend the legacy bridge unless the user explicitly asks
   for legacy maintenance or migration work.
-- Do not make new Studio packages depend on Vibma core, tunnel, Figma adapter, Figma
+- Do not make new Veyra packages depend on legacy core, tunnel, Figma adapter, Figma
   APIs, or generated Figma tool contracts.
-- Existing Vibma behavior may be read as a requirements sample, but its implementation
+- Existing bridge behavior may be read as a requirements sample, but its implementation
   is not the target architecture.
 - Default build, test, and documentation guidance for new work must point to the
-  independent Studio packages, not to Vibma commands.
+  independent Veyra packages, not to legacy commands.
 
 The target architecture in `docs/ai-design-studio-architecture-analysis.md` is a
 **draft roadmap, not a description of implemented functionality**. The Studio already
@@ -66,14 +66,14 @@ document. Verify the filesystem, tests, and exported APIs first.
   tool classifies the page as an authentication takeover and blocks every other tool.
   Browser-based verification of the workbench needs that field changed first.
 
-## Legacy Vibma Reference
+## Legacy Bridge Reference
 
 The remaining sections document the old bridge for migration and historical
 maintenance. They are not the default development workflow.
 
 ## Design Philosophy
 
-**Vibma helps designers focus on taste, not structure.** The MCP guardrails good Figma design structure — proper auto-layout, design tokens, component architecture — so designers don't have to fix structural mistakes left by agents.
+The former bridge helped designers focus on taste, not structure. Its MCP guardrails enforced useful Figma design structure — proper auto-layout, design tokens, and component architecture — so the behavior can still be consulted during controlled migration.
 
 The MCP emits warnings when it spots structural issues (hardcoded colors, missing auto-layout, unbound tokens). Following these warnings reduces noise from the MCP and produces well-structured design systems that designers enjoy working with.
 

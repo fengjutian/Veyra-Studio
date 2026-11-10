@@ -123,7 +123,7 @@ export function exportPageToReact(documentInput: DesignDocument, options: ReactE
   const rootStyle = rootStyleObject(document, options, context.tokenVariables);
 
   const code = [
-    "// 由 AI Design Studio 导出（设计 → 代码）。",
+    "// 由 Veyra 导出（设计 → 代码）。",
     "// 样式来自设计稿的绝对布局；文字内容与图片地址提成了 props，改 prop 就是改内容。",
     "",
     'import type { CSSProperties } from "react";',

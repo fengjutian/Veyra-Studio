@@ -4,10 +4,10 @@ import starlightThemeFlexoki from "starlight-theme-flexoki";
 
 export default defineConfig({
   site: "https://ufira-ai.github.io",
-  base: "/Vibma",
+  base: "/Veyra",
   integrations: [
     starlight({
-      title: "Vibma",
+      title: "Veyra",
       description: "AI-powered MCP bridge for designing in Figma",
       plugins: [starlightThemeFlexoki()],
       locales: {
@@ -16,7 +16,7 @@ export default defineConfig({
       },
       defaultLocale: "root",
       social: [
-        { icon: "github", label: "GitHub", href: "https://github.com/ufira-ai/Vibma" },
+        { icon: "github", label: "GitHub", href: "https://github.com/ufira-ai/Veyra" },
       ],
       sidebar: [
         {

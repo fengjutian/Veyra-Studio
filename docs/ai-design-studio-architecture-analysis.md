@@ -1,12 +1,12 @@
-# AI Design Studio 独立化架构方案
+# Veyra 独立化架构方案
 
-> 基于 Vibma 1.1.5 源码与 GitNexus 调用图的架构决策稿<br>
+> 基于旧 bridge 1.1.5 源码与 GitNexus 调用图的架构决策稿<br>
 > 状态：Draft v1.1<br>
 > 更新日期：2026-11-05<br>
 > 适用范围：产品 V1、Phase 0 技术验证与后续迁移评审
 
 > [!IMPORTANT]
-> **本文是目标架构与实施决策稿，不是当前功能说明。** 截至 2026-11-05，Vibma bridge
+> **本文是目标架构与实施决策稿，不是当前功能说明。** 截至 2026-11-05，旧 bridge
 > 已停止使用，仅作为迁移参考保留。仓库仅实现了 `design-schema`、
 > `design-runtime` 和 `design-persistence` 的早期 Phase 0 基础；独立 Studio UI、渲染器、
 > 布局与文本引擎、AI 编排及完整导出链路尚未完成。判断实际能力时，以
@@ -15,7 +15,7 @@
 
 ## 1. 决策摘要
 
-项目将建设为独立 AI 设计应用，但不能通过“给现有 Figma bridge 增加一个界面”实现。正确路径是在当前 monorepo 内建立隔离的新应用边界，以新的设计文档和命令运行时替代 Figma 提供的隐式能力。Vibma 产品链路停止使用，仅作为迁移期间的行为与设计规则参考。
+Veyra 将建设为独立 AI 设计应用，但不能通过“给现有 Figma bridge 增加一个界面”实现。正确路径是在当前 monorepo 内建立隔离的新应用边界，以新的设计文档和命令运行时替代 Figma 提供的隐式能力。旧产品链路停止使用，仅作为迁移期间的行为与设计规则参考。
 
 本方案冻结以下方向：
 
@@ -31,7 +31,7 @@
 
 ### 2.1 产品定位
 
-AI Design Studio 是本地优先的 AI 原生界面设计环境。它维护的不是最终图片，而是一份包含节点、布局、设计 token、组件、资产、编辑历史和导出语义的结构化设计文档。
+Veyra 是本地优先的 AI 原生界面设计环境。它维护的不是最终图片，而是一份包含节点、布局、设计 token、组件、资产、编辑历史和导出语义的结构化设计文档。
 
 目标用户包括：
 
@@ -357,7 +357,7 @@ Studio AI Chat ────────────────┼→ Command Bu
 Canvas / Inspector ────────────┘
 ```
 
-这保留了 Vibma 的 Agent 生态，同时保证应用在没有 MCP、relay、Figma 或外部 Agent 时仍能完整工作。
+这保留了旧 bridge 的 Agent 交互经验，同时保证应用在没有 MCP、relay、Figma 或外部 Agent 时仍能完整工作。
 
 ## 8. 渲染、存储与导出
 
@@ -500,4 +500,4 @@ interface ProjectRepository {
 7. 用基准数据完成 ADR 评审，再冻结 V1 范围、团队配置和里程碑。
 8. 完成首批第三方依赖的许可证、安全、包体积、维护状态与退出成本审查，并建立 `CanvasInteractionAdapter`、`IndexedDbProjectRepository`、`AiProvider` 和 `BrowserExportAdapter` 契约测试。
 
-最终结论：Vibma 为新产品提供的是经过验证的工具契约、结构化设计规则和 Agent 交互经验，而不是现成的独立设计引擎。AI Design Studio 的核心资产必须是宿主无关的设计文档、命令事务、布局组件系统，以及人和 AI 共用的安全编辑闭环。
+最终结论：旧 bridge 为 Veyra 提供的是经过验证的工具契约、结构化设计规则和 Agent 交互经验，而不是现成的独立设计引擎。Veyra 的核心资产必须是宿主无关的设计文档、命令事务、布局组件系统，以及人和 AI 共用的安全编辑闭环。
