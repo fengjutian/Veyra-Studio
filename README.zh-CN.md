@@ -2,7 +2,7 @@
 
 本地优先、宿主无关的 AI 界面设计环境。
 
-> **Phase 0：** 独立 Studio 正在开发，但目前还不是可用的编辑器。原 Vibma
+> **Phase 0：** 独立 Studio 正在开发，但目前还不是可用的编辑器。
 > MCP-to-Figma bridge 已转为遗留参考代码，不得作为产品运行时或默认开发路径。
 
 ## 当前范围
@@ -24,6 +24,7 @@
 npm install
 npm run build:studio-core
 npm run test:studio-core
+npm run dev:studio-web
 ```
 
 这些命令只验证 Phase 0 底层包。

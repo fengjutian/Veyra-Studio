@@ -36,6 +36,7 @@
     "visual:loop:probe": "tsx packages/studio-web/visual/autonomous-loop-probe.ts",
     "visual:mcp:probe": "tsx packages/studio-application/visual/mcp-http-probe.ts",
     "visual:vision:probe": "tsx packages/studio-web/visual/vision-probe.ts",
+    "visual:from-scratch:probe": "tsx packages/studio-web/visual/from-scratch-probe.ts",
     "visual:react:probe": "tsx packages/studio-web/visual/react-export-probe.ts",
     "visual:pdf:probe": "tsx packages/studio-web/visual/pdf-export-probe.ts",
     "visual:vault:probe": "tsx packages/studio-web/visual/vault-probe.ts",
