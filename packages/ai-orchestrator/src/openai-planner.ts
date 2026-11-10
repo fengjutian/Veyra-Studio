@@ -23,6 +23,15 @@ export interface FetchInitLike {
 
 export type FetchLike = (url: string, init?: FetchInitLike) => Promise<FetchResponseLike>;
 
+/**
+ * 规划器的默认单次请求超时。
+ *
+ * 300 秒而不是 60 秒：带推理的模型出「整页计划」时，**光思考阶段就可能好几分钟**
+ * （实测首字延迟 270 秒，正文只占 30 秒）。60 秒的默认会让这类请求必然超时，
+ * 而超时之后重试只会再等一轮——预算不够这件事该在默认值上解决。
+ */
+const DEFAULT_TIMEOUT_MS = 300_000;
+
 export class AiProviderError extends Error {
   constructor(message: string, readonly status?: number, readonly retryable = false) {
     super(message);
@@ -77,8 +86,27 @@ export interface OpenAiCompatiblePlannerOptions {
   maxTokens?: number;
   /** 打开后请求会带 response_format: json_object，部分兼容服务不支持 */
   jsonMode?: boolean;
+  /**
+   * 模型的思考开关（只有支持该参数的端点认）。
+   *
+   * 为什么需要它：**带推理的模型默认会先思考再回答**，而思考本身要花掉大量 token
+   * 与时间。实测 MiniMax-M3 出一份「整页后台管理端」计划：思考开着时 338 秒还没写完
+   * JSON（token 预算被打爆，解析器只能报「计划缺少 summary」），关掉之后 **12 秒** 写完。
+   *
+   * 取值与 MiniMax 开放平台一致：`adaptive`（自适应思考）、`disabled`（不思考）。
+   * 不传这个参数就不带 `thinking` 字段，走端点自己的默认行为。
+   */
+  thinking?: { type: "adaptive" | "disabled"; budgetTokens?: number };
   /** 用 SSE 流式接收回复；每段增量通过 `request.onDelta` 回调。 */
   stream?: boolean;
+  /**
+   * 单次请求的超时（毫秒）。默认 300 秒。
+   *
+   * 为什么不是 60 秒：**带推理的模型（MiniMax-M3 / M3.1-Flash 等）出一份整页计划，
+   * 思考阶段本身就要好几分钟**。实测同一份「整页后台管理端」提示，
+   * 首字延迟就到 270 秒、之后正文只花 30 秒——60 秒的默认会让「从零生成一页」
+   * 在真实产品里必然超时：短问短答够用，整页计划不够。
+   */
   timeoutMs?: number;
   /** 失败后最多再试几次（只对网络错误、408/429/5xx 生效）。默认 2。 */
   retries?: number;
@@ -126,6 +154,12 @@ export function createOpenAiCompatiblePlanner(options: OpenAiCompatiblePlannerOp
       if (options.temperature !== undefined) body.temperature = options.temperature;
       if (options.maxTokens !== undefined) body.max_tokens = options.maxTokens;
       if (options.jsonMode) body.response_format = { type: "json_object" };
+      if (options.thinking) {
+        body.thinking = {
+          type: options.thinking.type,
+          ...(options.thinking.budgetTokens !== undefined ? { budget_tokens: options.thinking.budgetTokens } : {}),
+        };
+      }
       if (options.stream) body.stream = true;
 
       const signal = request.signal ?? options.signal;
@@ -238,7 +272,7 @@ async function postOnce(
 ): Promise<PostResult> {
   if (signal?.aborted) throw new AiCancelledError();
   const controller = resolveAbortController();
-  const timeoutMs = options.timeoutMs ?? 60000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let timedOut = false;
   const onAbort = () => controller?.abort();
   signal?.addEventListener?.("abort", onAbort);

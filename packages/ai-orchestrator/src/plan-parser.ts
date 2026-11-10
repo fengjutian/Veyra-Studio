@@ -79,36 +79,280 @@ export function parsePlanResponse(raw: string): AiCommandPlan {
   }
 
   if (emptyPlan) throw emptyPlan;
-  const truncated = looksTruncated(text) ? "（回复被截断：max_tokens 预算不够，或生成被中断）" : "";
-  throw new PlanParseError(
-    planFailure
-      ? `模型回复里找不到合法的 JSON 计划${truncated}：${planFailure}`
-      : `模型回复里找不到合法的 JSON 计划${truncated}${parseFailure ? `：${parseFailure}` : ""}`,
+  // 整份计划解析不了，先试试按命令抢救——别让「一处少写一个括号」毁掉整页。
+  const salvaged = salvagePlan(text);
+  if (salvaged) return salvaged;
+  const structure = describeStructureProblem(text);  throw new PlanParseError(
+    [
+      "模型回复里找不到合法的 JSON 计划",
+      structure ? `（${structure}）` : "",
+      planFailure ? `：${planFailure}` : parseFailure ? `：${parseFailure}` : "",
+    ].join(""),
   );
 }
 
 /**
- * 文本里有没配平的 `{` —— 回复多半被截断了。
+ * 从坏掉的回复里**抢救命令**。
  *
- * 截断的报错必须说清楚：模型确实给了计划，只是没写完。此时若报「缺少 summary」，
- * 排查的人会跑去改提示词，而真正要调的是 max_tokens——方向完全错了。
+ * ## 为什么需要
+ *
+ * 整份计划是一个巨大的 JSON 对象。模型在一条命令末尾少写一个 `}`，
+ * 整份 JSON 就不配平，于是**整页**几十条命令全部作废——重新生成一遍要几十秒，
+ * 而且模型很可能在同一个地方再错一次。
+ *
+ * 实测一份 58 条命令、3 万字的回复里只错了两处括号：按命令切块之后，
+ * 57 条命令单独拿出来都是好的。少写括号这种「差一点」的失败，没理由整页扔掉。
+ *
+ * ## 为什么安全
+ *
+ * 抢救出来的命令**照样走 dry-run、结构审查与事务提交**——安全网一点没松：
+ * 语法坏掉的命令会被丢掉，语义错的命令会被 dry-run 拦下。
+ * 唯一多出来的是「这份计划可能不完整」，所以摘要里明说，不静默。
+ *
+ * ## 边界
+ *
+ * 只在**整份计划的 JSON 是坏的**时候才启用：
+ *
+ * - JSON 本身没问题、只是内容不合计划要求（比如缺 summary）→ 不抢救，照实报错；
+ * - 回复明显是**被截断**的（结尾停在半句话上）→ 不抢救，报错要指��调 token 预算。
+ *
+ * 能正常解析的回复走老路径，行为不变。
  */
-function looksTruncated(text: string): boolean {
+function salvagePlan(text: string): AiCommandPlan | undefined {
+  // 前提一：JSON 是坏的（外层对象要么不配平，要么 parse 不过）。
+  if (!isMalformedJson(text)) return undefined;
+  // 前提二：回复像是写完了的。被截断的回复结尾停在半句话上，
+  // 那种情况要报「被截断」，抢救出来的半截计划反而会掩盖真正的问题。
+  if (!/[}\]]\s*$/.test(text.trim())) return undefined;
+
+  const starts = findCommandStarts(text);
+  if (!starts.length) return undefined;
+
+  const commands: DesignCommand[] = [];
+  for (let index = 0; index < starts.length; index += 1) {
+    const from = starts[index]!;
+    const to = index + 1 < starts.length ? starts[index + 1]! : text.length;
+    const extracted = extractCommandObject(text, from, to);
+    if (extracted === undefined) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(extracted) as unknown;
+    } catch {
+      // 这一块自己也坏了，丢掉。
+      continue;
+    }
+    try {
+      commands.push(normalizeCommand(parsed, commands.length));
+    } catch {
+      // 类型不在词汇表 / 缺 payload：不是一条可用命令，丢掉。
+    }
+  }
+  if (!commands.length) return undefined;
+  // 前提三：救回的是「大部分」命令。救回零星几条说明回复多半是被砍断的，
+  // 那不该悄悄给出一份残缺的计划。
+  if (commands.length * 2 < starts.length) return undefined;
+
+  const summary = extractSummary(text);
+  const note = `模型回复的 JSON 不完整（少写或多了括号），已从回复中抢救出 ${commands.length} 条命令`;
+  return {
+    summary: summary ? `${note}：${summary}` : note,
+    commands,
+    assumptions: [note],
+  };
+}
+
+/**
+ * 回复里的 JSON 是不是**坏的**。
+ *
+ * 看的是**最外层**那个对象：它要么不配平（模型少写括号），要么 parse 不过
+ * （结构写错了）。最外层能 parse 成功，说明 JSON 本身没问题——那就不是
+ * 「结构坏了」，不该走抢救。
+ */
+function isMalformedJson(text: string): boolean {
+  for (const variant of [stripReasoning(text), stripFence(text), text]) {
+    const start = variant.indexOf("{");
+    if (start === -1) continue;
+    const end = findObjectEnd(variant, start);
+    if (end === -1) continue; // 外层不配平：坏掉了。
+    try {
+      JSON.parse(variant.slice(start, end + 1));
+      return false; // 外层能 parse：JSON 没问题。
+    } catch {
+      // parse 不过：坏掉了，继续看下一个变体。
+    }
+  }
+  return true;
+}
+
+/**
+ * 找出回复里所有**命令对象**的起始位置。
+ *
+ * 边界必须认准：`fills` 里也有 `"type":"solid"`，所以光看 `"type":` 会把
+ * 每个填充色都当成一条命令。认的是 `{"type":"<命令类型>"}`，且类型要过词汇表。
+ */
+function findCommandStarts(text: string): number[] {
+  const starts: number[] = [];
+  const pattern = /\{"type":"([a-zA-Z][a-zA-Z0-9.]*)"/g;
+  let match = pattern.exec(text);
+  while (match) {
+    if (isCommandType(match[1]!)) starts.push(match.index);
+    match = pattern.exec(text);
+  }
+  return starts;
+}
+
+/**
+ * 从一段文本里取出**一个命令对象**。
+ *
+ * 命令对象里没有裸的 `]`（数组都是配对的 `[…]`），所以遇到一个没有对应 `[` 的 `]`
+ * 就说明**外层结构的收尾提前插进来了**——那正是「模型少写了一个 `}`」的连锁反应：
+ * 少一个 `}`，外层数组的 `]` 就提前闭合。命令到这里就结束，后面的 `]` `}` 不要。
+ *
+ * 三种结尾都要处理：
+ *
+ * 1. 结尾正常——深度回到 0 的那个 `}` 就是命令对象的末尾；
+ * 2. 结尾缺 `}`——模型少写了闭合括号，深度到最后还差几层，补齐即可；
+ * 3. 字符串没闭合——这块被截断了，补也没用，丢掉。
+ */
+function extractCommandObject(text: string, from: number, to: number): string | undefined {
+  // 块末尾是「逗号分隔符」——补 `}` 之前要先把它去掉，否则补出来的 JSON 结尾是 `},}`。
+  const chunk = text.slice(from, to).replace(/[\s,]+$/, "");
   let depth = 0;
+  let arrayDepth = 0;
   let inString = false;
   let escaped = false;
-  for (const char of text) {
+  for (let index = 0; index < chunk.length; index += 1) {
+    const char = chunk[index]!;
     if (inString) {
       if (escaped) escaped = false;
       else if (char === "\\") escaped = true;
       else if (char === '"') inString = false;
       continue;
     }
-    if (char === '"') { inString = true; continue; }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "[") {
+      arrayDepth += 1;
+      continue;
+    }
+    if (char === "]") {
+      if (arrayDepth > 0) {
+        arrayDepth -= 1;
+        continue;
+      }
+      // 裸 `]`：外层结构的收尾提前插进来了，命令到这里结束。
+      return closeChunk(chunk.slice(0, index));
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return chunk.slice(0, index + 1);
+      if (depth < 0) return undefined;
+    }
+  }
+  if (inString) return undefined;
+  return closeChunk(chunk);
+}
+
+/** 补齐末尾缺的 `}`；已经配平就原样返回。 */
+function closeChunk(chunk: string): string {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const char of chunk) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
     if (char === "{") depth += 1;
     else if (char === "}") depth -= 1;
   }
-  return depth > 0;
+  return depth > 0 ? chunk + "}".repeat(depth) : chunk;
+}
+
+/** 从坏掉的回复里把摘要抠出来（正则匹配，值里的引号按 JSON 字符串规则解）。 */
+function extractSummary(text: string): string {
+  const match = /"summary"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(text);
+  if (!match) return "";
+  try {
+    const value = JSON.parse(match[1]!) as unknown;
+    return typeof value === "string" ? value.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * 括号配平情况：配平 / 少写 / 字符串没闭合，并给出第一处出问题的位置。
+ */
+interface BraceBalance {
+  kind: "balanced" | "unclosed" | "string";
+  /** 第一处出问题的字符下标（少写时是最外层那个一直没闭合的 `{`）。 */
+  position: number;
+  /** 结束时仍未闭合的 `{` 的个数。 */
+  depth: number;
+}
+
+function braceBalance(text: string): BraceBalance {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let openAt = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) openAt = index;
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) openAt = 0;
+    }
+  }
+  if (inString) return { kind: "string", position: openAt, depth };
+  if (depth > 0) return { kind: "unclosed", position: openAt, depth };
+  return { kind: "balanced", position: 0, depth: 0 };
+}
+
+/**
+ * 括号没配平时给出的诊断。
+ *
+ * 「少写 N 个闭合括号」比「回复被截断」有用得多：前者指向**模型写漏了**，
+ * 后者指向**预算不够**——两者的修法完全不同（改模板/改闭合 vs 调 max_tokens）。
+ */
+function describeStructureProblem(text: string): string | undefined {
+  const balance = braceBalance(text);
+  if (balance.kind === "balanced") return undefined;
+  const tail = text.slice(-40).replace(/\s+/g, " ");
+  if (balance.kind === "string") {
+    // 结尾停在一个没关上的字符串里——这就是被截断的样子（多半是 token 预算打满）。
+    return `回复被截断：max_tokens 预算不够，或生成被中断（结尾是「…${tail}」，而且第 ${balance.position} 字符处的引号没关上）`;
+  }
+  const looksFinished = /[}\]]\s*$/.test(text);
+  if (looksFinished) {
+    return `回复里的 JSON 括号没配平：有 ${balance.depth} 个「{」一直没闭合——模型多半少写了闭合括号，不是回复被截断`;
+  }
+  return `回复被截断：max_tokens 预算不够，或生成被中断（结尾是「…${tail}」）`;
 }
 
 /** 收集所有可能的 JSON 候选：先剥推理块、再剥围栏、最后原文，逐个变体扫配平对象。 */

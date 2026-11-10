@@ -81,19 +81,33 @@ export function describeCommandVocabulary(): string {
   ].join("\n");
 }
 
-/** 给模型看的节点模板：node.create / component.instantiate 必须字段齐全。 */
+/**
+ * 给模型看的节点模板：node.create / component.instantiate 必须字段齐全。
+ *
+ * **必须连命令外壳一起给**，不能只给节点对象。
+ * 只给节点对象时，模型要自己包一层 `{"type":"node.create","payload":{"node":{…}}}`，
+ * 而它经常**少写一个闭合括号**——节点与 payload 各闭合一层，command 那层忘了，
+ * 于是整份 JSON 括号失衡，解析器一个完整计划都扫不出来（实测一份整页计划少了 26 个 `}`）。
+ * 把三层外壳完整写出来，模型照抄就不会数错。
+ */
 export function describeNodeTemplate(): string {
   return [
+    "node.create 的完整写法（命令外壳 + 节点对象，三层括号都要闭合）：",
     "{",
-    '  "id": "frame:unique-id",',
-    '  "type": "frame",',
-    '  "name": "显示名称",',
-    '  "parentId": "<页面 id 或可容纳子节点的 frame id>",',
-    '  "childIds": [],',
-    '  "visible": true,',
-    '  "locked": false,',
-    '  "layout": { "mode": "absolute", "x": 48, "y": 48, "width": 240, "height": 140, "widthMode": "fixed", "heightMode": "fixed" },',
-    '  "appearance": { "opacity": 1, "fills": [{ "type": "solid", "color": "#2563eb" }], "cornerRadius": 12 }',
+    '  "type": "node.create",',
+    '  "payload": {',
+    '    "node": {',
+    '      "id": "frame:unique-id",',
+    '      "type": "frame",',
+    '      "name": "显示名称",',
+    '      "parentId": "<页面 id 或可容纳子节点的 frame id>",',
+    '      "childIds": [],',
+    '      "visible": true,',
+    '      "locked": false,',
+    '      "layout": { "mode": "absolute", "x": 48, "y": 48, "width": 240, "height": 140, "widthMode": "fixed", "heightMode": "fixed" },',
+    '      "appearance": { "opacity": 1, "fills": [{ "type": "solid", "color": "#2563eb" }], "stroke": "#e2e8f0", "strokeWidth": 1, "cornerRadius": 12 }',
+    "    }",
+    "  }",
     "}",
   ].join("\n");
 }
@@ -110,6 +124,8 @@ export function describeColorUsage(): string {
   return [
     '颜色只能写在 appearance.fills 里："fills": [{ "type": "solid", "color": "#rrggbb" }]。',
     "appearance 里没有 fill 字段（那是旧格式，运行时已不认）。",
+    '描边 stroke 是**颜色字符串**，不是 Paint 对象：写成 "stroke": "#e5e7eb"，',
+    '不要写成 { "type": "solid", "color": "#e5e7eb" }——那样会被 schema 拒掉（expected string, received object）。',
     "改整个节点或整段文字的颜色：用 node.patch 的 appearance（整块替换，要把 opacity 与 fills 写全）。",
     '只改文字里的一段颜色：用 text.patch 的 runs，例如 "runs": [{ "from": 0, "to": 4, "style": { "color": "#1f2937" } }]；text.patch 的顶层没有 color 字段。',
   ].join("\n");

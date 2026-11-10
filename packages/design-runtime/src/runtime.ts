@@ -58,18 +58,26 @@ export class DesignRuntime {
     const committedAt = options.committedAt ?? new Date().toISOString();
     if (Number.isNaN(Date.parse(committedAt))) throw new CommandError(`Invalid commit timestamp ${committedAt}`);
     draft.meta.updatedAt = committedAt;
-    validateDocument(draft);
+    // 校验的**结果**要留下来，不能只当断言用。
+    //
+    // `validateDocument` 会按 schema 剥掉未声明的字段（zod 默认 strip）。把没校验的
+    // draft 存回去的话，模型多写的字段就留在文档里了；而下一次 `preview` 会用
+    // 「校验过的文档」（新 runtime 的构造函数会校验）和「没校验的文档」做前后对比——
+    // 于是每个带多余字段的节点都变成「被改过了」，单页范围审查会把一份完全正常的计划
+    // 判成越界并直接拦下。实测：一份 23 条命令、只新建本页节点的计划被报成
+    // 「会修改 28 个页外节点」，那 28 个全是上一页的节点，模型根本没碰过它们。
+    const validated = validateDocument(draft);
 
-    const changes = { before, after: structuredClone(draft) };
-    this.document = draft;
+    const changes = { before, after: structuredClone(validated) };
+    this.document = validated;
     this.undoStack.push(changes);
     this.redoStack = [];
 
-    const warnings = collectWarnings(draft);
+    const warnings = collectWarnings(validated);
     this.transactions.push({
       commandId: envelope.commandId,
       documentId: envelope.documentId,
-      revision: draft.revision,
+      revision: validated.revision,
       committedAt,
       actor: structuredClone(envelope.actor),
       commands: structuredClone(envelope.commands),
@@ -107,12 +115,13 @@ export class DesignRuntime {
     const committedAt = request.committedAt ?? new Date().toISOString();
     if (Number.isNaN(Date.parse(committedAt))) throw new CommandError(`Invalid commit timestamp ${committedAt}`);
     after.meta.updatedAt = committedAt;
-    validateDocument(after);
-    this.document = after;
-    const warnings = collectWarnings(after);
-    const changes = { before, after: structuredClone(after) };
-    this.transactions.push({ commandId: request.commandId, documentId: after.id, revision: after.revision, committedAt, actor: structuredClone(request.actor), commands: [{ type: "history.restore", payload: { document: structuredClone(target) } }], warnings });
-    return { revision: after.revision, changes, inverse: { before: structuredClone(after), after: before }, warnings };
+    // 同上：留下校验后的文档，别留没校验的。
+    const validated = validateDocument(after);
+    this.document = validated;
+    const warnings = collectWarnings(validated);
+    const changes = { before, after: structuredClone(validated) };
+    this.transactions.push({ commandId: request.commandId, documentId: validated.id, revision: validated.revision, committedAt, actor: structuredClone(request.actor), commands: [{ type: "history.restore", payload: { document: structuredClone(target) } }], warnings });
+    return { revision: validated.revision, changes, inverse: { before: structuredClone(validated), after: before }, warnings };
   }
 }
 

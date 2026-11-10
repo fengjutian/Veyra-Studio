@@ -40,6 +40,20 @@ export interface AiSettings {
    * 解析器只能报「计划缺少 summary」——看着像模型不会设计，其实是钱不够。
    */
   maxTokens: number;
+  /**
+   * 要不要让模型先思考。
+   *
+   * - `auto`：不带 `thinking` 参数，走端点自己的默认（多数推理模型默认会思考）。
+   * - `off`：显式发 `thinking: {type:"disabled"}`，让端点**不要思考**。
+   *
+   * 为什么要有这个开关：带推理的模型**思考本身**就要吃掉大量 token 与时间。
+   * 实测 MiniMax-M3 出一份整页后台管理端计划：思考开着 338 秒还没写完 JSON
+   * （预算被打爆，解析器只报「计划缺少 summary」），关掉之后 12 秒写完。
+   *
+   * 注意不是所有模型都支持关：MiniMax-M3.1-Flash 这类强制推理的模型会拒绝
+   * `disabled`（报 `requires adaptive thinking`），所以默认是 `auto`。
+   */
+  thinkingMode: "auto" | "off";
 }
 
 /** 只用到这三个方法，方便在没有 DOM 的环境里测试。 */
@@ -78,7 +92,19 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   apiKeys: [],
   activeKeyIndex: 0,
   timeoutMs: 300_000,
-  maxTokens: 32_768,
+  /**
+   * 默认 64k 而不是 32k。
+   *
+   * 实测（MiniMax-M3.1-Flash，2026-11-10）：出一份「整页后台管理端」计划，
+   * 32k 预算会**在思考阶段就被打爆**——正文一个 JSON 都没吐出来，解析器只能报
+   * 「计划缺少 summary」，看着像模型不会设计，其实是预算不够。64k 够把整页写完。
+   */
+  maxTokens: 65_536,
+  /**
+   * 默认 `auto`：不带 `thinking` 参数，端点爱怎么想怎么想。
+   * 用户可以在设置里关掉思考（对 MiniMax-M3 这类可切换的模型有效，收益是数量级的）。
+   */
+  thinkingMode: "auto",
 };
 
 /** 当前使用的那把密钥；没有就空串。 */
@@ -122,6 +148,7 @@ export function readAiSettings(persistent?: AiSettingsStorage, session?: AiSetti
         settings.model = typeof parsed.model === "string" && parsed.model.trim() ? parsed.model.trim() : DEFAULT_AI_SETTINGS.model;
         settings.timeoutMs = clampTimeoutMs(parsed.timeoutMs);
         settings.maxTokens = clampMaxTokens(parsed.maxTokens);
+        settings.thinkingMode = clampThinkingMode(parsed.thinkingMode);
         if (typeof parsed.apiKey === "string" && parsed.apiKey.trim()) {
           legacyKey = parsed.apiKey.trim();
           // 迁移：旧版密钥挪进会话存储，并把磁盘副本里的密钥抹掉。
@@ -202,7 +229,17 @@ function persistConfig(store: AiSettingsStorage, settings: AiSettings): void {
     model: settings.model.trim(),
     timeoutMs: clampTimeoutMs(settings.timeoutMs),
     maxTokens: clampMaxTokens(settings.maxTokens),
+    thinkingMode: clampThinkingMode(settings.thinkingMode),
   }));
+}
+
+/**
+ * 把思考开关夹进可用区间。
+ *
+ * 旧记录没有这个字段（undefined）→ 用默认值 `auto`；认不得的值也当 `auto`。
+ */
+export function clampThinkingMode(value: unknown): "auto" | "off" {
+  return value === "off" ? "off" : "auto";
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { PROVIDER_PRESETS, capabilityLabels, capabilitySourceLabel, describeProvider } from "@ufira/ai-orchestrator";
-import { maskApiKey, MAX_AI_MAX_TOKENS, MAX_AI_TIMEOUT_MS, MIN_AI_MAX_TOKENS, MIN_AI_TIMEOUT_MS, clampMaxTokens, clampTimeoutMs, type AiSettings } from "./ai-settings";
+import { maskApiKey, MAX_AI_MAX_TOKENS, MAX_AI_TIMEOUT_MS, MIN_AI_MAX_TOKENS, MIN_AI_TIMEOUT_MS, clampMaxTokens, clampThinkingMode, clampTimeoutMs, type AiSettings } from "./ai-settings";
 import { clearStoredVault, hasStoredVault, openKeyRing, readStoredVault, sealKeyRing } from "./ai-key-vault";
 
 export interface AiSettingsPanelProps {
@@ -200,6 +200,21 @@ export function AiSettingsPanel({ settings, active, disabled, onSave, onClear }:
         <p className="ai-settings-hint">
           一整页计划本身就要上万 token（每条 node.create 都带完整节点对象），推理模型还要再烧一截在思考上。
           给小了回复会被截断在半个 JSON 上，看起来就像「模型不会设计」。
+        </p>
+      </label>
+      <label className="field">
+        <span className="field-label">让模型先思考</span>
+        <select
+          value={draft.thinkingMode}
+          onChange={event => update({ thinkingMode: clampThinkingMode(event.target.value) })}
+        >
+          <option value="auto">跟随端点默认（多数推理模型会思考）</option>
+          <option value="off">关闭思考（快很多，适合整页计划）</option>
+        </select>
+        <p className="ai-settings-hint">
+          带推理的模型思考本身就要吃掉大量 token 与时间：实测 MiniMax-M3 出一份整页计划，
+          思考开着 338 秒还没写完 JSON，关掉之后 12 秒写完。
+          强制推理的模型（如 M3.1-Flash）会拒绝关闭，遇到报错就改回「跟随端点默认」。
         </p>
       </label>
       <div className="field">

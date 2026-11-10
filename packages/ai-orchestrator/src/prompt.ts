@@ -53,6 +53,11 @@ function buildSystemPrompt(): string {
     "8. 如果提示里给出了「体检结论」的待修清单，就只针对清单里的问题做改动，清单之外的问题不要顺手改。",
     "9. 多页面任务先用 page.create 创建页面（新页面 id 必须唯一），再用 node.create 把节点放入对应页面；不要把不同页面的节点混到同一个 parentId。",
     "10. 跨页面设计优先复用现有 token、组件与主题；除非用户明确要求，每一页都要保持相同的颜色、字体、圆角和间距体系。",
+    "11. 坐标与尺寸一律取整数。**不要逐字符推算文本宽度、不要计算全角字符占几个像素**——",
+    "    那样既算不准，又会把回复拖到写不完。视觉上大致齐整即可，宽度按经验给整。",
+    "12. 只输出 JSON 计划本身：不要解释、不要写计算过程、不要加注释。",
+    "13. 计划较长时，**先保证结构完整**（父节点在子节点之前、命令顺序能直接执行），再补细节；",
+    "    不要为了凑节点数而堆无意义的节点，也不要因为细节多而把计划写到一半。",
   ].join("\n");
 }
 
@@ -68,7 +73,16 @@ function buildUserPrompt(request: AiPlanRequest): string {
     parts.push(describeAttachedImage(request.image));
     parts.push("");
   }
-  parts.push(summarizeDocument(request.document, request.selectedNodeIds));
+  if (request.scopePageId) {
+    // 单页范围：明说边界。光靠「摘要里没有」还不够——模型会自己推演出别的页面也有类似节点。
+    parts.push([
+      `本次计划只做页面 ${request.scopePageId} 这一页。`,
+      "摘要里没有列出的节点 id 一律不要出现在命令里，也不要改、删、复用其它页面的节点——",
+      "需要同样的东西就自己新建节点（id 自己起，带这一页的前缀）。",
+    ].join(""));
+    parts.push("");
+  }
+  parts.push(summarizeDocument(request.document, request.selectedNodeIds, request.scopePageId));
   parts.push("");
   parts.push("请只输出 JSON 计划。");
   return parts.join("\n");
@@ -91,8 +105,20 @@ function describeAttachedImage(image: AiPlanRequest["image"]): string {
   ].join("\n");
 }
 
-/** 把当前文档压成模型能读懂的紧凑摘要。 */
-export function summarizeDocument(document: DesignDocument, selectedNodeIds: string[] = []): string {
+/**
+ * 把当前文档压成模型能读懂的紧凑摘要。
+ *
+ * ## 单页范围：别把别的页面的节点 id 摊给模型
+ *
+ * 限定在某一页的任务（`scopePageId`）只列出**那一页**的节点树，其它页面只留名字。
+ *
+ * 原因实测过：摘要里带着别的页面的节点 id 时，模型会把它们当成「可以拿来改的现成节点」——
+ * 画第 3 页时，它把第 2 页的 `frame:users-sidebar`、`text:users-product-name` 等 28 个节点
+ * 逐个 patch 了一遍（"照着上一页的样子改一下"），整份计划被单页范围审查拦下，连试三次都一样。
+ *
+ * 规则 1 已经写着「只能引用摘要里出现过的节点 id」——摘要里不出现，问题就不存在了。
+ */
+export function summarizeDocument(document: DesignDocument, selectedNodeIds: string[] = [], scopePageId?: string): string {
   const lines: string[] = [];
   lines.push(`当前文档：${document.meta.name}（revision ${document.revision}）`);
 
@@ -107,6 +133,11 @@ export function summarizeDocument(document: DesignDocument, selectedNodeIds: str
   for (const pageId of document.pageOrder) {
     const page = document.pages[pageId];
     if (!page) continue;
+    if (scopePageId && pageId !== scopePageId) {
+      // 别的页面：只留一行名字，不给节点 id。
+      lines.push(`- ${page.id} 名称="${page.name}"（本次不涉及这一页，不列出它的节点）`);
+      continue;
+    }
     lines.push(`- ${page.id} 名称="${page.name}"`);
     for (const childId of page.childIds) appendNode(lines, document, childId, 1);
   }

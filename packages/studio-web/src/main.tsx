@@ -270,6 +270,8 @@ function App() {
         timeoutMs: aiSettings.timeoutMs,
         // token 预算可调：一份整页计划要上万 token，预算不够回复会被截断在半路。
         maxTokens: aiSettings.maxTokens,
+        // 思考开关：默认跟随端点；关掉之后推理模型不再先想一遍，响应快一个数量级。
+        ...(aiSettings.thinkingMode === "off" ? { thinking: { type: "disabled" as const } } : {}),
         onKeyRotated: (index, total, reason) => {
           setAiSettings(current => ({ ...current, activeKeyIndex: index }));
           setMessage(`密钥轮换：${reason}（共 ${total} 把）`);

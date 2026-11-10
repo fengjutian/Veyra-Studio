@@ -219,8 +219,14 @@ const appearanceSchema = z.object({
   opacity: z.number().min(0).max(1),
   fills: z.array(paintSchema).optional(),
   stroke: z.string().optional(),
-  // 缺省按 1px；0 没有意义（画不出线），所以要求为正数。
-  strokeWidth: z.number().finite().positive().optional(),
+  // 描边宽度（px）。0 = 不描边。
+  //
+  // 允许 0 是因为**运行时自己就这么表示**：`scene.ts` 里没有 stroke 的节点
+  // 落成 `strokeWidth: 0`，画布渲染也是 `stroke && strokeWidth > 0` 才描边。
+  // schema 却只收正数，于是「没有描边」这种最常见的写法存不进来——
+  // 模型写 `"stroke": "#ffffff", "strokeWidth": 0`（本意是不描边）会被整份文档判为非法，
+  // 一整页几十个节点全部作废。
+  strokeWidth: nonNegative.optional(),
   cornerRadius: nonNegative.optional(),
   cornerRadii: z.tuple([nonNegative, nonNegative, nonNegative, nonNegative]).optional(),
   shadow: shadowSchema.optional(),

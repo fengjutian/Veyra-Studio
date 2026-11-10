@@ -66,6 +66,14 @@ export interface AiPlanRequest {
    * "追加显示"，不必自己拼。不支持流式的 Planner 不会调用它。
    */
   onDelta?(delta: string, fullText: string): void;
+  /**
+   * 本次计划被限制在哪一页。
+   *
+   * 传了它，文档摘要里**只列这一页的节点树**——别的页面的节点 id 一个都不给模型。
+   * 理由实测过：模型看到别页的 `frame:users-sidebar` 就会去 patch 它，
+   * "照着上一页的样子改一下"，结果整份计划被范围审查拦下。
+   */
+  scopePageId?: string;
 }
 
 export interface CreatePlanOptions {
@@ -177,6 +185,7 @@ export class SafeAiEditor {
       ...(options.image ? { image: options.image } : {}),
       ...(options.selfCheck ? { selfCheck: options.selfCheck } : {}),
       ...(options.selfCheckRound !== undefined ? { selfCheckRound: options.selfCheckRound } : {}),
+      ...(options.pageId ? { scopePageId: options.pageId } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(options.onDelta ? { onDelta: options.onDelta } : {}),
     });
@@ -286,10 +295,12 @@ function reviewPageScope(before: DesignDocument, after: DesignDocument, pageId: 
     outsidePages.size ? `${outsidePages.size} 个其它页面` : "",
     outsideNodes.length ? `${outsideNodes.length} 个页外节点` : "",
   ].filter(Boolean).join("、");
+  // 把节点 id 点名：只有数字的话，拿到反馈的一方（模型）没法定位，只能反复犯同样的错。
+  const names = outsideNodes.length ? `：${outsideNodes.slice(0, 8).join("、")}` : "";
   return {
     code: "page-scope-violation",
     severity: "blocking",
-    message: `计划限定为当前页 ${pageId}，但会修改${details}`,
+    message: `计划限定为当前页 ${pageId}，但会修改${details}${names}`,
     ...(outsideNodes.length ? { nodeIds: outsideNodes.slice(0, 10) } : {}),
   };
 }

@@ -215,6 +215,43 @@ test("allows a current-page plan that stays on the requested page", async () => 
   assert.ok(project.snapshot().nodes["in-scope"]);
 });
 
+test("别的页面节点带多余字段时，本页计划不会被误判成越界", async () => {
+  // 回归：runtime 曾经把**没校验**的草稿存回文档（validateDocument 的结果被丢掉），
+  // 模型多写的字段就留在文档里。下一次 preview 用「校验过的文档」对比
+  // 「没校验的文档」，于是每个带多余字段的节点都变成「被改过了」——
+  // 一份只在本页新建节点、完全没碰别的页的计划，被单页范围审查判成
+  // 「会修改 28 个页外节点」直接拦下。实测就是被这个坑掉的。
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  await project.execute({
+    commandId: "human:pages",
+    documentId: "project:1",
+    baseRevision: 0,
+    actor: { type: "human", id: "user:1" },
+    commands: [
+      { type: "page.create", payload: { page: { id: "page:2", name: "Second", childIds: [] } } },
+      {
+        type: "node.create",
+        payload: {
+          node: {
+            ...frame("other-page-node"),
+            parentId: "page:2",
+            // 模型常犯的错：把 strokeWidth 写成 strokeWeight。
+            strokeWeight: 2,
+          } as unknown as DesignNode,
+        },
+      },
+    ],
+  });
+
+  const editor = new SafeAiEditor(project, plannerFor(frame("in-scope")));
+  const preview = await editor.createPlan("只改当前页", [], { pageId: "page:1" });
+  const violation = preview.review.findings.find(finding => finding.code === "page-scope-violation");
+  assert.equal(violation, undefined, `不该报越界：${violation?.message ?? ""}`);
+  await editor.confirm(preview.planId);
+  assert.ok(project.snapshot().nodes["in-scope"]);
+});
+
 class MemoryRepository implements ProjectRepository {
   document?: DesignDocument;
   transactions: TransactionEntry[] = [];

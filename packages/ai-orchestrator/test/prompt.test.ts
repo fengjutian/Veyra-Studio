@@ -50,6 +50,61 @@ test("the document summary lists pages, nodes, tokens and components", () => {
   assert.match(summary, /组件：/);
 });
 
+test("单页范围：摘要里不给别的页面的节点 id", () => {
+  // 实测的故障：摘要里带着别页的节点 id 时，模型会把它们当成「现成节点」逐个 patch，
+  // 整份计划被单页范围审查拦下，连试三次都是同一批节点。
+  const document = createDocument("doc:1", "测试文档", "page:1");
+  document.pageOrder = ["page:1", "page:2"];
+  document.pages["page:2"] = {
+    id: "page:2",
+    name: "第二页",
+    childIds: ["frame:other"],
+    width: 960,
+    height: 680,
+  };
+  document.nodes["frame:other"] = {
+    id: "frame:other",
+    type: "frame",
+    name: "别的页的侧栏",
+    parentId: "page:2",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: { ...defaultLayout(), x: 0, y: 0, width: 240, height: 900 },
+    appearance: { ...defaultAppearance() },
+  };
+  document.nodes["text:mine"] = {
+    id: "text:mine",
+    type: "text",
+    name: "本页文字",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: { ...defaultLayout(), x: 10, y: 10, width: 100, height: 20 },
+    appearance: { ...defaultAppearance() },
+    text: "本页",
+    fontFamily: "Inter",
+    fontSize: 14,
+    lineHeight: 21,
+  };
+  document.pages["page:1"]!.childIds = ["text:mine"];
+
+  const scoped = summarizeDocument(document, [], "page:1");
+  assert.match(scoped, /text:mine/);
+  assert.doesNotMatch(scoped, /frame:other/);
+  assert.match(scoped, /page:2 名称="第二页"（本次不涉及这一页/);
+
+  // 不限定页面时照旧全列。
+  const all = summarizeDocument(document, []);
+  assert.match(all, /frame:other/);
+
+  // 提示里也要把边界说清楚。
+  const { user } = buildPlannerPrompt({ prompt: "画这一页", document, selectedNodeIds: [], scopePageId: "page:1" });
+  assert.match(user, /只做页面 page:1/);
+  assert.doesNotMatch(user, /frame:other/);
+});
+
 test("the summary describes every fill kind without assuming a linear gradient", () => {
   const document = documentWithText();
   const node = document.nodes["text:1"]!;

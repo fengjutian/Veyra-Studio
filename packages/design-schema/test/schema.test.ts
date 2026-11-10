@@ -7,6 +7,43 @@ test("creates a valid empty document", () => {
   assert.deepEqual(validateDocument(document), document);
 });
 
+test("描边宽度 0 合法：0 就是「不描边」", () => {
+  // 运行时自己就用 0 表示没有描边（scene.ts：没有 stroke 的节点落成 strokeWidth: 0），
+  // schema 却只收正数。于是模型写「stroke 颜色 + strokeWidth: 0」（本意是不描边）
+  // 会被整份文档判为非法，一页几十个节点全部作废。
+  const document = createDocument("doc:1", "Demo");
+  document.nodes["node:1"] = {
+    id: "node:1",
+    type: "frame",
+    name: "无描边",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: { ...defaultAppearance(), stroke: "#ffffff", strokeWidth: 0 },
+  };
+  document.pages["page:1"].childIds.push("node:1");
+  assert.doesNotThrow(() => validateDocument(document));
+});
+
+test("描边宽度仍然是有限数，负数与无穷都要拒", () => {
+  const document = createDocument("doc:1", "Demo");
+  document.nodes["node:1"] = {
+    id: "node:1",
+    type: "frame",
+    name: "负宽度",
+    parentId: "page:1",
+    childIds: [],
+    visible: true,
+    locked: false,
+    layout: defaultLayout(),
+    appearance: { ...defaultAppearance(), strokeWidth: -1 },
+  };
+  document.pages["page:1"].childIds.push("node:1");
+  assert.throws(() => validateDocument(document), /strokeWidth/);
+});
+
 test("rejects orphan nodes", () => {
   const document = createDocument("doc:1", "Demo");
   document.nodes["node:1"] = {

@@ -30,6 +30,20 @@ test("executes an atomic create transaction", () => {
   assert.deepEqual(runtime.snapshot().pages["page:1"].childIds, ["node:1"]);
 });
 
+test("存进运行时的是校验后的文档，未声明的字段不留下来", () => {
+  // 回归：validateDocument 的结果曾经被丢掉，存回的是没校验的草稿。
+  // 于是模型多写的字段留在文档里，而下一次「用校验过的文档对比没校验的文档」
+  // 会把每个这样的节点判成「被改过了」——单页范围审查据此把正常计划拦成越界。
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{
+    type: "node.create",
+    payload: { node: { ...frame("node:1"), strokeWeight: 2 } as unknown as DesignNode },
+  }]));
+  const node = runtime.snapshot().nodes["node:1"] as unknown as Record<string, unknown>;
+  assert.equal(node.strokeWeight, undefined);
+  assert.equal(node.id, "node:1");
+});
+
 test("rejects stale revisions without changing the document", () => {
   const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
   assert.throws(() => runtime.execute(envelope(2, [{ type: "node.create", payload: { node: frame("node:1") } }])), RevisionConflictError);
