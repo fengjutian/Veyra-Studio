@@ -147,12 +147,10 @@ export function toParentLocalLayout(layout: LayoutSpec, absolute: { x: number; y
 /**
  * 旋转后的自动布局重排提示。
  *
- * 布局引擎**不参与旋转**：它仍按轴对齐盒排版，旋转只影响绘制与命中。所以父级是
- * stack/grid 时，转完的节点不会让兄弟节点重新排列——这件事要在界面上说清楚，
- * 而不是让用户以为是自己操作错了。
+ * 布局引擎**按旋转后的视觉包围盒占位**：stack 里的兄弟节点会让开，hug 容器会变大，
+ * grid 的自动轨道会变宽。盒子本身的尺寸不变——旋转是绘制时的变换。
  *
- * 真正支持需要改 design-layout（布局引擎目前全文没有 rotation 的概念），不在
- * studio-web 的文件所有权范围内。
+ * 绝对定位的父级不受影响（按坐标摆，旋转不改坐标），所以那里没有提示。
  */
 export function rotationRelayoutNotice(document: DesignDocument, ids: readonly string[]): string | undefined {
   const automatic = ids.filter(id => {
@@ -161,5 +159,11 @@ export function rotationRelayoutNotice(document: DesignDocument, ids: readonly s
     return Boolean(parent && parent.layout.mode !== "absolute");
   });
   if (!automatic.length) return undefined;
-  return "已旋转，但父容器是自动布局（stack/grid）：布局引擎不按旋转重排兄弟节点（需要 design-layout 支持）";
+  const grid = automatic.some(id => {
+    const parentId = document.nodes[id]?.parentId;
+    return document.nodes[parentId ?? ""]?.layout.mode === "grid";
+  });
+  return grid
+    ? "已旋转：父容器是网格，只有自动轨道会按旋转后的包围盒让位，固定轨道不会"
+    : "已旋转：父容器是自动布局（stack），兄弟节点已按旋转后的包围盒让位";
 }

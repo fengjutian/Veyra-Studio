@@ -1,4 +1,4 @@
-import { applyThemeForPage, applyTypographyToken, parseGridAreaTemplate, resolveGap, resolveGridCellRect, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
+import { applyThemeForPage, applyTypographyToken, parseGridAreaTemplate, resolveGap, resolveGridCellRect, rotatedBoxBounds, validateDocument, type DesignDocument, type DesignNode, type GridCell, type GridTrack, type NodeId } from "@ufira/design-schema";
 import type { ComputedBox, LayoutOptions, LayoutResult, LayoutWarning, Size, TextMeasurer } from "./types";
 import { createEstimateTextMeasurer } from "./text-measurement";
 import { assignCellsByOrder, ensureTracks, expandRepeatTracks, solveGrid, type GridCellInput, type GridTrackInput } from "./grid";
@@ -6,6 +6,22 @@ import { assignCellsByOrder, ensureTracks, expandRepeatTracks, solveGrid, type G
 const ZERO_PADDING = { top: 0, right: 0, bottom: 0, left: 0 };
 
 const defaultTextMeasurer: TextMeasurer = createEstimateTextMeasurer();
+
+/**
+ * 旋转后的视觉包围盒尺寸。
+ *
+ * 自动布局按它**占位**：内容转出原来的盒子之后，兄弟节点必须让出位置，否则转出去
+ * 的部分会压在下一个节点身上。盒子本身的尺寸不变——旋转是绘制时的变换，布局盒
+ * 仍是逻辑尺寸（导出、命中、约束都按它算）。
+ *
+ * 角度为 0 时原样返回，所以没有旋转的文档排版结果逐字不变。
+ */
+function rotatedExtent(node: DesignNode, size: Size): Size {
+  const angle = node.layout.rotation ?? 0;
+  if (!angle) return size;
+  const bounds = rotatedBoxBounds({ x: 0, y: 0, width: size.width, height: size.height }, angle);
+  return { width: bounds.width, height: bounds.height };
+}
 
 /**
  * 轨道声明 → 求解输入。
@@ -69,9 +85,11 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     if (node.layout.mode === "stack") {
       const horizontal = node.layout.direction === "horizontal";
       const gap = resolveGap(document, node);
-      const main = children.reduce((sum, child) => sum + (horizontal ? child.size.width : child.size.height), 0)
+      // 占位按旋转后的包围盒算：转出去的内容要占到位置，兄弟节点才不会被压住。
+      const extents = children.map(child => rotatedExtent(child.node, child.size));
+      const main = extents.reduce((sum, extent) => sum + (horizontal ? extent.width : extent.height), 0)
         + Math.max(0, children.length - 1) * gap;
-      const cross = children.reduce((max, child) => Math.max(max, horizontal ? child.size.height : child.size.width), 0);
+      const cross = extents.reduce((max, extent) => Math.max(max, horizontal ? extent.height : extent.width), 0);
       return horizontal
         ? { width: padding.left + main + padding.right, height: padding.top + cross + padding.bottom }
         : { width: padding.left + cross + padding.right, height: padding.top + main + padding.bottom };
@@ -193,10 +211,12 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
       );
       return ordered.map(cell => {
         const child = children.find(item => item.node.id === cell.nodeId);
+        // 内容尺寸按旋转后的包围盒算：自动轨道要为此留出位置。
+        const extent = child ? rotatedExtent(child.node, child.size) : undefined;
         return {
           ...cell,
-          width: child?.size.width ?? 0,
-          height: child?.size.height ?? 0,
+          width: extent?.width ?? 0,
+          height: extent?.height ?? 0,
         };
       });
     }
@@ -212,14 +232,16 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
       // 模板里没有这个区域（或模板本身有错）：跳过而不是猜一格，
       // 猜出来的位置会和导出对不上。
       if (!rect) continue;
+      // 内容尺寸按旋转后的包围盒算：自动轨道要为此留出位置。
+      const extent = rotatedExtent(child.node, child.size);
       result.push({
         nodeId: child.node.id,
         row: rect.row,
         column: rect.column,
         rowSpan: rect.rowSpan,
         columnSpan: rect.columnSpan,
-        width: child.size.width,
-        height: child.size.height,
+        width: extent.width,
+        height: extent.height,
       });
     }
     return result;
@@ -317,6 +339,23 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
       }
 
       for (const child of solved.children) {
+        const childNode = document.nodes[child.nodeId];
+        const rotation = childNode?.layout.rotation ?? 0;
+        if (rotation) {
+          // 旋转的子节点不铺满格子：格子按旋转后的包围盒留位（自动轨道会因此变宽），
+          // 盒子本身保持逻辑尺寸并在格子里居中——旋转绕盒子中心，转出去的部分才
+          // 落在格子内。
+          const natural = intrinsic(child.nodeId);
+          layoutNode(
+            child.nodeId,
+            contentX + child.x + (child.width - natural.width) / 2,
+            contentY + child.y + (child.height - natural.height) / 2,
+            child.width,
+            child.height,
+            { width: natural.width, height: natural.height },
+          );
+          continue;
+        }
         layoutNode(child.nodeId, contentX + child.x, contentY + child.y, child.width, child.height, {
           width: child.width,
           height: child.height,
@@ -331,9 +370,30 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     const gap = resolveGap(document, node);
     const children = node.childIds.map(id => document.nodes[id]);
     const fillChildren = children.filter(child => (horizontal ? child.layout.widthMode : child.layout.heightMode) === "fill");
+    /**
+     * 解析一个子节点在自动布局里的盒子尺寸（主轴 + 交叉轴）。
+     *
+     * 旋转不改变盒子尺寸，只改变**占位**：占位用旋转后的包围盒，所以这里先算盒子，
+     * 外面再按包围盒留位。
+     */
+    const resolveChildBox = (child: DesignNode, fillMain: number): { main: number; cross: number } => {
+      const mainMode = horizontal ? child.layout.widthMode : child.layout.heightMode;
+      const main = mainMode === "fill" ? fillMain : horizontal
+        ? resolveDimension(child, "width", mainAvailable)
+        : resolveDimension(child, "height", mainAvailable);
+      const crossMode = horizontal ? child.layout.heightMode : child.layout.widthMode;
+      const cross = crossMode === "fill" || node.layout.align === "stretch" ? crossAvailable : horizontal
+        ? resolveDimension(child, "height", crossAvailable)
+        : resolveDimension(child, "width", crossAvailable);
+      return { main, cross };
+    };
     const fixedMain = children
       .filter(child => !fillChildren.includes(child))
-      .reduce((sum, child) => sum + (horizontal ? resolveDimension(child, "width", mainAvailable) : resolveDimension(child, "height", mainAvailable)), 0);
+      .reduce((sum, child) => {
+        const box = resolveChildBox(child, 0);
+        const extent = rotatedExtent(child, horizontal ? { width: box.main, height: box.cross } : { width: box.cross, height: box.main });
+        return sum + (horizontal ? extent.width : extent.height);
+      }, 0);
     const gaps = Math.max(0, children.length - 1) * gap;
     const remainder = Math.max(0, mainAvailable - fixedMain - gaps);
     if (fixedMain + gaps > mainAvailable) {
@@ -343,21 +403,23 @@ export function computePageLayout(documentInput: DesignDocument, pageId: string,
     let cursor = horizontal ? contentX : contentY;
 
     for (const child of children) {
-      const mainMode = horizontal ? child.layout.widthMode : child.layout.heightMode;
-      const main = mainMode === "fill" ? fillMain : horizontal
-        ? resolveDimension(child, "width", mainAvailable)
-        : resolveDimension(child, "height", mainAvailable);
-      const crossMode = horizontal ? child.layout.heightMode : child.layout.widthMode;
-      const cross = crossMode === "fill" || node.layout.align === "stretch" ? crossAvailable : horizontal
-        ? resolveDimension(child, "height", crossAvailable)
-        : resolveDimension(child, "width", crossAvailable);
-      const crossOffset = alignmentOffset(node.layout.align ?? "start", crossAvailable, cross);
-      const childX = horizontal ? cursor : contentX + crossOffset;
-      const childY = horizontal ? contentY + crossOffset : cursor;
+      const box = resolveChildBox(child, fillMain);
+      const main = box.main;
+      const cross = box.cross;
+      // 槽位 = 旋转后的视觉包围盒。盒子在槽位里居中：旋转绕盒子中心，
+      // 转出去的部分才刚好落在槽位内，不会压到兄弟节点。
+      const extent = rotatedExtent(child, horizontal ? { width: main, height: cross } : { width: cross, height: main });
+      const slotMain = horizontal ? extent.width : extent.height;
+      const slotCross = horizontal ? extent.height : extent.width;
+      const mainInset = (slotMain - main) / 2;
+      const crossInset = (slotCross - cross) / 2;
+      const crossOffset = alignmentOffset(node.layout.align ?? "start", crossAvailable, slotCross) + crossInset;
+      const childX = horizontal ? cursor + mainInset : contentX + crossOffset;
+      const childY = horizontal ? contentY + crossOffset : cursor + mainInset;
       layoutNode(child.id, childX, childY, crossAvailable, mainAvailable, horizontal
         ? { width: main, height: cross }
         : { width: cross, height: main });
-      cursor += main + gap;
+      cursor += slotMain + gap;
     }
   };
 
