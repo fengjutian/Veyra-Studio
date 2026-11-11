@@ -113,6 +113,17 @@
   background: #ecfdf3;
   color: #18794e;
 }
+:root[data-ui-theme="light"] .topbar-ai-entry {
+  border-color: #8b5cf6;
+  background: #f5f3ff;
+  color: #6d28d9;
+}
+:root[data-ui-theme="light"] .topbar-ai-entry:hover:not(:disabled),
+:root[data-ui-theme="light"] .topbar-ai-entry.is-active {
+  border-color: #7c3aed;
+  background: #7c3aed;
+  color: #ffffff;
+}
 :root[data-ui-theme="light"] .ai-settings .field input,
 :root[data-ui-theme="light"] .ai-settings select,
 :root[data-ui-theme="light"] .token-bind-select {

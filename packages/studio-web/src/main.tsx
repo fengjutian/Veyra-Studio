@@ -2645,6 +2645,19 @@ function App() {
       </div>
       <input ref={imageInput} className="hidden-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) insertImage(file); }} />
       <div className="topbar-right">
+      <div className="toolbar-group" role="group" aria-label="AI">
+        <Tooltip label="打开 AI 设计工作区">
+          <button
+            className={`topbar-ai-entry${rightPanelOpen && inspectorTab === "ai" ? " is-active" : ""}`}
+            aria-label="打开 AI 设计工作区"
+            aria-pressed={rightPanelOpen && inspectorTab === "ai"}
+            onClick={() => { setRightPanelOpen(true); setInspectorTab("ai"); }}
+          >
+            <Icon name="aiPlan" />
+            <span>AI</span>
+          </button>
+        </Tooltip>
+      </div>
       <div className="toolbar-group history-tools" role="group" aria-label="历史">
         <Tooltip label="撤销 · Ctrl/Cmd+Z"><button className="icon-only" aria-label="撤销" disabled={busy || !project.canUndo()} onClick={() => void run(() => applyHistory("undo"))}><Icon name="undo" /></button></Tooltip>
         <Tooltip label="重做 · Shift+Ctrl/Cmd+Z"><button className="icon-only" aria-label="重做" disabled={busy || !project.canRedo()} onClick={() => void run(() => applyHistory("redo"))}><Icon name="redo" /></button></Tooltip>
