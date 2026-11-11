@@ -35,15 +35,58 @@ export interface ReviewInput {
   commands: DesignCommand[];
 }
 
+/**
+ * 审查的阈值。
+ *
+ * 这些数字以前散在代码里当魔数用，实际每个场景要的尺度不一样：单页精修改几个
+ * 节点，整页重画一次要新建上百个，一次生成整套应用更是几百上千个。写死成 20 的
+ * 后果是每一页正常生成都在报警，真正的失控反而没人看——所以阈值必须能配。
+ */
+export interface ReviewLimits {
+  /** 删除节点数超过这个值开始报警。默认 10。 */
+  bulkDelete?: number;
+  /** 新建节点数超过这个值开始报警。默认 20。 */
+  bulkCreate?: number;
+  /**
+   * 报警的严重程度。
+   *
+   * 默认 "warning"——只提醒，用户仍可确认；改成 "blocking" 就是硬闸，超限直接
+   * 拦下不让提交。
+   */
+  bulkSeverity?: ReviewSeverity;
+  /**
+   * 删除节点数超过这个值直接阻断（独立于 bulkSeverity 的硬闸）。
+   *
+   * 默认 60。删除是不可逆的，删掉的节点 id 会列在结论里。
+   */
+  bulkDeleteHard?: number;
+  /**
+   * 单条计划总改动节点数（新建 + 删除 + 修改）超过这个值直接阻断。
+   *
+   * 默认 600。设 0 关闭。
+   */
+  totalChangeHardLimit?: number;
+}
+
+const DEFAULT_REVIEW_LIMITS: Required<ReviewLimits> = {
+  bulkDelete: 10,
+  bulkCreate: 20,
+  bulkSeverity: "warning",
+  bulkDeleteHard: 60,
+  totalChangeHardLimit: 600,
+};
+
 /** 一次改动里被删除的节点（含子树），用 before 与 after 的节点集合求差。 */
 export function removedNodeIds(before: DesignDocument, after: DesignDocument): NodeId[] {
   return Object.keys(before.nodes).filter(id => !after.nodes[id]);
 }
 
 /** 审查一份已经 dry-run 过的 AI 计划。 */
-export function reviewAiPlan({ before, after, commands }: ReviewInput): ReviewResult {
+export function reviewAiPlan({ before, after, commands }: ReviewInput, limits: ReviewLimits = {}): ReviewResult {
+  const limit = { ...DEFAULT_REVIEW_LIMITS, ...limits };
   const findings: ReviewFinding[] = [];
   const removed = removedNodeIds(before, after);
+  const created = Object.keys(after.nodes).filter(id => !before.nodes[id]);
 
   // 1. 锁定节点：用户明确表达过"别动它"，AI 不得绕过。
   const lockedRemoved = removed.filter(id => before.nodes[id]?.locked);
@@ -73,33 +116,57 @@ export function reviewAiPlan({ before, after, commands }: ReviewInput): ReviewRe
   }
 
   // 4. 大批量删除：可能是"重做布局"，也可能是模型失控，交给用户判断。
-  if (removed.length > 10 && !lockedRemoved.length) {
+  if (removed.length > limit.bulkDelete && !lockedRemoved.length) {
     findings.push({
       code: "bulk-delete",
-      severity: "warning",
-      message: `计划会删除 ${removed.length} 个节点，请确认这是有意的改动`,
+      severity: limit.bulkSeverity,
+      message: limit.bulkSeverity === "blocking"
+        ? `计划会删除 ${removed.length} 个节点，超过批量删除上限 ${limit.bulkDelete}；请拆成多次小改动`
+        : `计划会删除 ${removed.length} 个节点，请确认这是有意的改动`,
       nodeIds: removed.slice(0, 10),
     });
   }
 
   // 5. 大量新建同样值得提醒：一次生成几十个图层通常是失控的信号。
-  const created = Object.keys(after.nodes).filter(id => !before.nodes[id]);
-  if (created.length > 20) {
+  if (created.length > limit.bulkCreate) {
     findings.push({
       code: "bulk-create",
-      severity: "warning",
-      message: `计划会新建 ${created.length} 个节点，改动范围偏大`,
+      severity: limit.bulkSeverity,
+      message: limit.bulkSeverity === "blocking"
+        ? `计划会新建 ${created.length} 个节点，超过批量新建上限 ${limit.bulkCreate}；请拆成多次小改动`
+        : `计划会新建 ${created.length} 个节点，改动范围偏大`,
       nodeIds: created.slice(0, 10),
     });
   }
 
-  // 6. 硬编码颜色：和运行时 warning 同一条设计规范，但这是"可改进"而非"错误"。
+  // 6. 硬闸：删除是不可逆的，删掉的量再大也不该让用户来兜底。
+  if (limit.bulkDeleteHard > 0 && removed.length > limit.bulkDeleteHard) {
+    findings.push({
+      code: "bulk-delete-hard-limit",
+      severity: "blocking",
+      message: `计划会删除 ${removed.length} 个节点，超过删除硬上限 ${limit.bulkDeleteHard}；请拆成多次小改动`,
+      nodeIds: removed.slice(0, 10),
+    });
+  }
+
+  // 7. 硬闸：单条计划改动的节点总数。拆成「新建很多 + 删除很多」的形状，
+  //    单看任一项都未必越线，合起来才是失控。
   const touched = new Set<NodeId>([...created, ...removed]);
   for (const command of commands) {
     if (command.type === "node.patch" || command.type === "node.create") {
       touched.add(command.type === "node.patch" ? command.payload.id : command.payload.node.id);
     }
   }
+  if (limit.totalChangeHardLimit > 0 && touched.size > limit.totalChangeHardLimit) {
+    findings.push({
+      code: "change-volume-hard-limit",
+      severity: "blocking",
+      message: `计划一次改动 ${touched.size} 个节点，超过单次改动硬上限 ${limit.totalChangeHardLimit}；请拆成多次小改动`,
+      nodeIds: [...touched].slice(0, 10),
+    });
+  }
+
+  // 8. 硬编码颜色：和运行时 warning 同一条设计规范，但这是"可改进"而非"错误"。
   const hardcoded = [...touched]
     .filter(id => after.nodes[id])
     .filter(id => {

@@ -1541,14 +1541,70 @@ function reparentNode(document: DesignDocument, id: NodeId, parentId: string, in
 
 function requireNode(document: DesignDocument, id: NodeId): DesignNode {
   const node = document.nodes[id];
-  if (!node) throw new CommandError(`Node ${id} does not exist`);
+  if (!node) throw new CommandError(`Node ${id} does not exist${suggestNodeHint(document, id)}`);
   return node;
+}
+
+/**
+ * 节点 id 不存在时，附上文档里最接近的几个候选 id（文本节点连文本内容一起给）。
+ *
+ * ## 为什么需要这段提示
+ *
+ * 模型是**按命名规律猜 id** 的：它想改「用户 ID」那个标签，真实 id 是
+ * `text:user-detail-basic-user-id`，它自己编出 `text:user-detail-basic-user-id-label`
+ * ——多一个后缀，节点不存在。光是「does not exist」它没法收敛，只能再猜一次，
+ * 实测连猜三次都错（同一页改了三次还在错同一个 id），整页计划因此作废。
+ *
+ * 把候选直接摆出来，模型一次就能改对；文本内容一起给，是因为模型本来就是靠
+ * 「这个标签写的是用户 ID」来认节点的，光给 id 它还是对不上号。
+ */
+function suggestNodeHint(document: DesignDocument, missingId: string): string {
+  const wanted = tokenizeNodeId(missingId);
+  if (!wanted.length) return "";
+  const scored: Array<{ id: NodeId; score: number }> = [];
+  for (const id of Object.keys(document.nodes)) {
+    const score = countSharedTokens(tokenizeNodeId(id), wanted);
+    if (score > 0) scored.push({ id, score });
+  }
+  if (!scored.length) return "";
+  scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  const parts = scored.slice(0, 3).map(item => {
+    const node = document.nodes[item.id];
+    if (!node) return item.id;
+    const label = node.type === "text" ? `（文本"${truncateForHint(node.text, 24)}"）` : `（${node.type}）`;
+    return `${item.id}${label}`;
+  });
+  return `。相近的节点：${parts.join("、")}`;
+}
+
+function tokenizeNodeId(id: string): string[] {
+  return id.split(/[:\-_.\s]+/).filter(Boolean);
+}
+
+function countSharedTokens(candidate: string[], wanted: string[]): number {
+  const wantedSet = new Set(wanted);
+  let score = 0;
+  for (const token of candidate) if (wantedSet.has(token)) score += 1;
+  return score;
+}
+
+function truncateForHint(value: string, limit: number): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat;
 }
 
 function requireContainer(document: DesignDocument, id: string): { childIds: NodeId[] } {
   const container = document.nodes[id] ?? document.pages[id];
-  if (!container) throw new CommandError(`Parent ${id} does not exist`);
-  // 布尔组也持有子节点（操作数），因此允许当作容器；文本/图片/矢量仍然不行。\n  if ("type" in container && !["frame", "component", "instance", "boolean"].includes(container.type)) throw new CommandError(`Node ${id} cannot contain children`);
+  // 父节点不存在有两种常见成因：模型把 id 拼错了，或者它引用了一个**还没创建**的父节点
+  // （node.create 的 parentId 指向的容器必须先落地）。两种都摆出候选，让模型自己看出该用哪个。
+  if (!container) {
+    throw new CommandError(
+      `Parent ${id} does not exist${suggestNodeHint(document, id)}` +
+        "。引用已有节点时用摘要里原样的 id；新建容器时，父节点的那条 node.create 必须排在子节点前面。",
+    );
+  }
+  // 布尔组也持有子节点（操作数），因此允许当作容器；文本/图片/矢量仍然不行。
+  if ("type" in container && !["frame", "component", "instance", "boolean"].includes(container.type)) throw new CommandError(`Node ${id} cannot contain children`);
   return container;
 }
 

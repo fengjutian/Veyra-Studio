@@ -46,7 +46,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FileSystemProjectRepository } from "@ufira/design-persistence/filesystem";
 import { StudioProject } from "@ufira/studio-application";
-import { SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanner, type AiPlanRequest } from "@ufira/ai-orchestrator";
+import { SafeAiEditor, createOpenAiCompatiblePlanner, type AiPlanner, type AiPlanRequest, type AiImagePayload } from "@ufira/ai-orchestrator";
 import { buildSelfCheckReport, collectSelfCheck, type SelfCheckContext } from "@ufira/ai-orchestrator";
 import type { DesignCommand } from "@ufira/design-runtime";
 import type { DesignDocument } from "@ufira/design-schema";
@@ -71,10 +71,14 @@ const SNAP_DISTANCE = 18;
  * 一次生成多少个节点。
  *
  * 这是**速度与细节的取舍点**：一条 node.create 带完整节点对象，40 条就是一万多 token。
- * 推理模型出得慢，节点一多就容易顶到超时。所以页面按「骨架 + 关键内容」来生成，
- * 细节靠骨架坐标与组件化结构补齐，而不是靠堆节点。
+ * 推理模型出得慢，节点一多就容易顶到超时。
+ *
+ * 上限从 22 提到 48 是有实测依据的：节点数越少，模型越倾向于用**一个大 frame 把整张表
+ * 拼成一坨文字**——省了节点，排版就没了（表格挤在左边、右边空一半、文字叠在一起）。
+ * 节点放宽之后，每一行表格行、每一个标签都能各自成组，排版才做得开。
+ * 代价是输出变长、JSON 更容易写坏——但解析器现在能按命令抢救，这种失败已经兜得住。
  */
-const NODE_BUDGET = { min: 12, max: 22 };
+const NODE_BUDGET = { min: 26, max: 48 };
 
 interface Args {
   outDir: string;
@@ -89,6 +93,10 @@ interface Args {
   resume: boolean;
   /** 重画已存在的页面（清掉旧节点再生成）。 */
   force: boolean;
+  /** 关掉「看图自改」那一轮（默认开启）。 */
+  noVisual: boolean;
+  /** 只跑「看图自改」：不重画页面，拿现有页面再让模型看图改一轮排版。 */
+  visualOnly: boolean;
   /** 是否关掉模型思考：off / auto。 */
   thinking: "auto" | "off";
 }
@@ -195,48 +203,74 @@ export const PAGE_SPECS: PageSpec[] = [
   },
 ];
 
-/** 有侧栏的页面共用的骨架：坐标写死，所有页面照抄，风格自然统一。 */
-const SHELL_SPEC = `【页面骨架 —— 除了登录页，所有页面都严格按这套坐标】
+/**
+ * 有侧栏的页面共用的骨架：坐标与**文案**都写死，所有页面照抄，风格自然统一。
+ *
+ * 做成函数是因为顶栏标题要**逐页不同**（用户详情页的标题必须是「用户详情」，
+ * 不是侧栏里那一项的「用户管理」）——实测写死过一次，模型把用户详情页的
+ * 顶栏标题填成了「用户管理」，两页标题一模一样，看不出自己在哪一页。
+ */
+function shellSpec(spec: PageSpec): string {
+  return `【页面骨架 —— 除了登录页，所有页面都严格按这套坐标与文案】
 - 侧边导航 frame：x=0, y=0, width=240, height=900，填充=侧栏底色（color.bg.sidebar）。
-  - logo 区：x=0, y=0, width=240, height=72，内含一个 28×28 圆角 8 的主色方块 + 右侧产品名（16px/700，主色文字）。
-  - 导航分组标题：x=16, y=92, width=208, height=20，12px/600，字间距 0.5，文本次色。
+  - logo 区：x=0, y=0, width=240, height=72，内含一个 28×28 圆角 8 的主色方块 + 右侧产品名「运营管理台」（16px/700，主色文字）。
+  - 导航分组标题：x=16, y=92, width=208, height=20，12px/600，字间距 0.5，文本次色，文案固定写「工作空间」。
   - 导航项：x=8, width=224, height=40，纵向依次排列，间距 4；每项 = 16×16 圆角 4 图标方块（主色/中性灰）+ 右侧 14px 文案（次色）。
-    当前选中项：整项填充=浅主色底，左侧一条 3px 宽的主色竖条，文案变主色且 500 字重。
-  - 底部用户区：x=0, y=812, width=240, height=88，顶部一条 1px 分隔线；里面 32×32 圆形头像 + 姓名（14px/600）+ 角色（12px 文本次色）。
+    导航项固定这 8 条，顺序不变：数据总览 / 订单管理 / 客户管理 / 商品库存 / 财务管理 / 营销活动 / 用户管理 / 系统设置。
+    当前选中项：整项填充=浅主色底，左侧一条 3px 宽的主色竖条，文案变主色且 500 字重（选中哪一条随页面变）。
+  - 底部用户区：x=0, y=812, width=240, height=88，顶部一条 1px 分隔线；里面 32×32 圆形头像 + 姓名「林晓」（14px/600）+ 角色「管理员」（12px 文本次色）。
 - 顶栏 frame：x=240, y=0, width=1200, height=64，填充=表面色（color.bg.surface），底部一条 1px 边框（color.border.default）。
-  - 左侧页面标题：x=272, y=18, 18px/700，主文本色；标题左边 8px 处放一个 20×20 的返回/菜单图标占位。
+  - 左侧页面标题：x=272, y=18, 18px/700，主文本色，**文案固定写「${spec.name}」**；标题左边 8px 处放一个 20×20 的返回/菜单图标占位（中性灰）。
   - 右侧：搜索框（240×32，圆角 6，浅灰底）、一个 20×20 通知图标方块、32×32 圆形头像，彼此间距 16，右端距边 24。
 - 内容区 frame：x=240, y=64, width=1200, height=836，填充=页面背景色（color.bg.app）。
-  内容区里的所有元素坐标都相对内容区左上角；常见边距 32，卡片之间间距 24，卡片内边距 20~24。`;
+  内容区里的所有元素坐标都相对内容区左上角；常见边距 32，卡片之间间距 24，卡片内边距 20~24。
+  **侧栏的产品名、分组标题、导航项、底部用户信息，每一页都必须逐字照抄**——不要每页另起一套。`;
+}
 
 /** 每一页都要遵守的硬性规则。 */
 const HARD_RULES = `【硬性规则】
 1. 所有节点的 layout.mode 一律用 "absolute"，坐标相对父节点，widthMode 与 heightMode 一律 "fixed"。
 2. 字体族一律写 "Inter"，字重只用 400 / 500 / 600 / 700；正文字号 13/14，标题 16/18/20/24。
-3. 行高 = 字号 × 1.5（标题可以 1.3）。文本节点要写固定宽度以便换行，高度按 行数 × 行高 给足。
+3. 行高 = 字号 × 1.5（标题可以 1.3）。**文本框高度 = 行数 × 行高 + 6~8 的余量**——
+   高度给不够，两行文字就会叠在一起，这是最常见的难看。
 4. 颜色只能从【设计系统】的 token 值里挑；不要自己发明新色值，也不要用带透明度的写法（除阴影外）。
 5. 卡片：填充=表面色，圆角 12（radius.lg），1px 边框（color.border.default）；需要浮起感时加阴影 { "x": 0, "y": 1, "blur": 3, "color": "rgba(15,23,42,0.06)" }。
 6. 按钮：主按钮=主色填充 + 白色文字；次要按钮=表面色 + 1px 边框 + 主文本色；高度 36，圆角 8。
-7. 标签（状态徽章）：圆角 6，小字号 12，浅色底 + 同色系深色文字，内边距 8~12。
-8. 图标用圆角矩形/椭圆占位即可，不要用矢量路径。
-9. 只新建当前页需要的节点，parentId 只能是当前页面 id 或本页新建的 frame id；不要改动已存在的节点。
-10. commands 里 node.create 的数量控制在 ${NODE_BUDGET.min}~${NODE_BUDGET.max} 条之间。节点不够表达这一页时，
-    用**一个 frame 承载一组同类元素**（比如一行表格行、一列导航项、一个卡片组）而不是逐个展开——
-    但 **frame 里面必须再放 text 子节点**，空的 frame 不算画完了。宁可少画一点，也不要超出这个数量。
-11. **坐标一律取整数，宽度按经验给整**（例如 180 / 160 / 120 / 96）。不要逐字符推算文本宽度、
+7. **状态标签统一**：浅色底 + 同色系深色文字 + 圆角 6 + 字号 12 + 内边距 8~12。
+   同一套系统里每一页的状态都用这个样式，不要有的带底色、有的只写彩色文字。
+8. 图标用圆角矩形/椭圆占位即可，不要用矢量路径。图标统一 16×16（顶栏 20×20），圆角 4。
+9. **表格和列表要撑满卡片**：各列宽度加起来要接近卡片内容区宽度（卡片宽 − 40），列间距 16~24，
+   文字左对齐。不要让表格挤在左边、右边空一大片。
+10. **图表用柱状图**：一根柱子一个圆角 4 的矩形，高度按数值比例；同一系列用同一个颜色，
+    不要一根一个颜色；不要用一串小矩形去拼折线或虚线。
+11. 只新建当前页需要的节点，parentId 只能是当前页面 id 或本页新建的 frame id；不要改动已存在的节点。
+12. commands 里 node.create 的数量控制在 ${NODE_BUDGET.min}~${NODE_BUDGET.max} 条之间。
+    **每一行表格行、每一个标签、每一个图标都各自成组**（一个 frame 或一个节点），
+    不要用一个大 frame 把整张表拼成一坨文字——分得越细，排版越整齐。
+13. **坐标一律取整数，宽度按经验给整**（例如 180 / 160 / 120 / 96）。不要逐字符推算文本宽度、
     不要为了对齐去算全角字符占几个像素——那会让计划写不完。视觉上大致齐整即可。
-12. **子节点的坐标相对它自己的父 frame**。卡片里的文字，x/y 是相对**那张卡片**的
+14. **子节点的坐标相对它自己的父 frame**。卡片里的文字，x/y 是相对**那张卡片**的
     （一般从 x=16~24、y=12~16 起）；不要写成相对卡片组或内容区的坐标——
     那会让文字掉到卡片外面去。
-13. **每个卡片都要有自己的文字**。不要把好几个指标塞进同一张卡，也不要留空卡片：
+15. **每个卡片都要有自己的文字**。不要把好几个指标塞进同一张卡，也不要留空卡片：
     4 张 KPI 卡就是 4 组「指标名 / 数值 / 环比」三个文本节点。
     **整页必须有文字**：标题、导航文案、按钮文字、表格内容都要有——只有 frame 没有文字的页面等于没画。
-14. **不要用 runs**。runs 要写字符起止偏移，模型算不准就会让整份计划作废；
+16. **不要用 runs**。runs 要写字符起止偏移，模型算不准就会让整份计划作废；
     文字颜色、字号统一用 node.create / node.patch 里的 appearance 与 fontSize 整块设置。
-15. **不要用 node.patch / node.delete 去改任何已存在的节点**，更不要改别的页面的节点：
+17. **不要用 node.patch / node.delete 去改任何已存在的节点**，更不要改别的页面的节点：
     这一页要的东西一律用 node.create 新建。参照的用途只是对齐样式。
-16. 没有描边就**不要写** stroke 和 strokeWidth；有描边就写 1（标准）或 2（强调）。
-17. **直接输出 JSON，不要输出任何解释、计算过程或注释**。`;
+18. 没有描边就**不要写** stroke 和 strokeWidth；有描边就写 1（标准）或 2（强调）。
+19. **卡片不许互相压住**：同一层的卡片，下一张的 y 必须 ≥ 上一张的 y + 上一张的高度 + 24（间距）。
+    卡片是「内容 + 白底」的独立块，压住就是最难看的一种错——实测新建订单页的「收货信息」
+    就被下面的「支付方式」盖掉了半张卡片。
+20. **所有内容都要落在页面 1440×900 之内**，底部留 32 的边距。
+    内容超页高会被裁掉（实测订单页的分页条被切掉了一半）。塞不下就减行数，不要往下溢出。
+21. **输入框、下拉框要撑满**：宽度不小于所在卡片内容区宽度的 70%。
+    一个 730 宽的卡片里放 270 宽的输入框，右侧会空掉一大片，看起来像没画完。
+22. **装饰性色块统一**：头像圆、导航图标占位、列表里的圆形标记这类**不带信息**的色块，
+    颜色一律用主色或中性灰（选中项用主色，其余用中性灰），不要一个一个换颜色——
+    一行 8 个头像 8 种颜色，看起来就像没设计完。**只有状态标签**才按状态用不同颜色。
+23. **直接输出 JSON，不要输出任何解释、计算过程或注释**。`;
 
 interface Credentials {
   baseUrl: string;
@@ -265,6 +299,8 @@ function parseArgs(argv: string[]): Args {
     render: !argv.includes("--no-render"),
     resume: argv.includes("--resume"),
     force: argv.includes("--force"),
+    noVisual: argv.includes("--no-visual"),
+    visualOnly: argv.includes("--visual-only"),
     thinking: value("--thinking=") === "off" ? "off" : "auto",
   };
 }
@@ -637,6 +673,8 @@ interface PageOutcome {
   warnings: string[];
   review: string[];
   snapped: Snapped[];
+  /** 看图自改那一轮有没有跑成。 */
+  visualFixed?: boolean;
   error?: string;
 }
 
@@ -653,7 +691,7 @@ interface DesignSystemOutcome {
 async function runStep(
   editor: SafeAiEditor,
   prompt: string,
-  options: { pageId?: string; label?: string; rawDir?: string; selfCheck?: SelfCheckContext } = {},
+  options: { pageId?: string; label?: string; rawDir?: string; selfCheck?: SelfCheckContext; image?: AiImagePayload } = {},
 ): Promise<{ ok: boolean; rounds: string[]; summary?: string; assumptions?: string[]; warnings: string[]; review: string[]; error?: string }> {
   const rounds: string[] = [];
   let feedback = "";
@@ -676,6 +714,7 @@ async function runStep(
       const preview = await editor.createPlan(request, [], {
         ...(options.pageId ? { pageId: options.pageId } : {}),
         ...(options.selfCheck ? { selfCheck: options.selfCheck } : {}),
+        ...(options.image ? { image: options.image } : {}),
         onDelta,
       });
       if (rawPath) {
@@ -800,7 +839,7 @@ function selfCheckForPage(document: DesignDocument, pageId: string): SelfCheckCo
     "",
   ];
   if (!spec.bare) {
-    parts.push(SHELL_SPEC, "");
+    parts.push(shellSpec(spec), "");
   }
   if (previousShell) {
     parts.push("【上一页做出来的东西 —— 只照它的样式继续做（颜色/圆角/字号/间距都对齐）；这些节点在别的页上，不能改也不能复用 id，要同样的东西就自己新建】", previousShell, "");
@@ -808,7 +847,8 @@ function selfCheckForPage(document: DesignDocument, pageId: string): SelfCheckCo
   parts.push(HARD_RULES, "");
   parts.push(
     spec.bare
-      ? `这一页没有侧栏与顶栏：整页铺页面背景色，登录卡片放在 x=520, y=170, width=400, height=420（页面 1440×900，水平居中略偏上）。`
+      ? `这一页没有侧栏与顶栏：整页铺页面背景色，登录卡片放在 x=520, y=170, width=400, height=420（页面 1440×900，水平居中略偏上）。
+**品牌名与其它页一致：卡片顶部 logo 旁边的产品名写「运营管理台」**（不要写别的名字）。`
       : pageExists
         ? `页面 ${spec.id} 已经存在，直接往里放节点，**不要** page.create。页面尺寸 1440×900。`
         : `页面 ${spec.id} 还不存在：第一步用 page.create 创建它，payload 写 { "page": { "id": "${spec.id}", "name": "${spec.name}", "childIds": [], "width": 1440, "height": 900 } }，再往里放节点。`,
@@ -922,6 +962,8 @@ interface RenderResult {
   width?: number;
   height?: number;
   error?: string;
+  /** 截图的 data URL——「给模型看这张图」要用它。 */
+  dataUrl?: string;
 }
 
 /** 用工作台的 Canvas 渲染器把每一页画成 PNG。 */
@@ -956,7 +998,7 @@ async function renderPages(document: DesignDocument, outDir: string, pageIds: st
         const base64 = image.dataUrl.slice(image.dataUrl.indexOf(",") + 1);
         const file = join(shotDir, `${pageId.replace(/[^\w-]/g, "_")}.png`);
         writeFileSync(file, Buffer.from(base64, "base64"));
-        results.push({ pageId, ok: true, path: file, width: image.width, height: image.height });
+        results.push({ pageId, ok: true, path: file, width: image.width, height: image.height, dataUrl: image.dataUrl });
       } finally {
         await tab.send("Page.close").catch(() => undefined);
       }
@@ -1029,6 +1071,141 @@ function stubPlanner(): AiPlanner {
       };
     },
   };
+}
+
+/**
+ * 只跑体检修复轮时的提示。
+ *
+ * 不重画页面，所以不需要整页生成提示——模型只要按清单改，越简洁越不容易顺手重画。
+ */
+function visualSelfCheckPrompt(spec: PageSpec): string {
+  return [
+    `页面 ${spec.id}（${spec.name}）已经画好了，现在只按体检清单修问题。`,
+    "只修清单里的问题，不要重画整页，不要新增节点。",
+    "改位置和尺寸用 node.patch 的 layout（**要写全 x / y / width / height**，整块替换）；",
+    "改文字内容用 text.patch 的 {\"text\": \"...\"}；改颜色用 node.patch 的 appearance（写全 opacity 与 fills）。",
+    "**node.patch 里没有 text / fontSize / fontFamily 字段**，写进去会被拒。",
+    "**改父容器的宽度或位置时，里面的子节点也要一起调**，别让文字掉到卡片外面。",
+    "不要用 runs，不要 node.delete，不要改别的页面。",
+  ].join("\n");
+}
+
+/**
+ * 体检 → 回喂模型修一轮。
+ *
+ * 体检用的是仓库自己的检查器（lint + 对比度 + 导出诊断），它给的是**精确读数**：
+ * 「frame:xxx 超出了页面画布，右边超出 208px」——这种话看图是看不出来的
+ * （渲染器会把溢出内容缩放适配，肉眼看着挺正常，实际被裁掉了 208px）。
+ * 所以看图自改负责「好不好看」，体检负责「对不对」，两条回路都得跑。
+ *
+ * 返回修掉多少项（修不掉就是 0）。
+ */
+async function runSelfCheckFix(
+  editor: SafeAiEditor,
+  spec: PageSpec,
+  project: StudioProject,
+  rawDir: string | undefined,
+  scopePage: boolean,
+  prompt: string,
+): Promise<number> {
+  const check = selfCheckForPage(project.snapshot(), spec.id);
+  if (!check) return 0;
+  const actionable = check.report.counts.actionable;
+  if (!actionable) {
+    console.log(`  ${spec.name} 体检：没有待修项`);
+    return 0;
+  }
+  console.log(`  ${spec.name} 体检：待修 ${actionable} 项，回喂模型修一轮`);
+  // 修复轮里说清怎么改：体检项多半是「空文本 / 字号太小 / 超出画布」，
+  // 改内容用 text.patch 的 text 字段就够了。用 runs 改局部颜色时
+  // from/to 必须落在文本长度内——模型经常算错，于是整轮白跑。
+  const fixPrompt = `${prompt}\n\n只修体检清单里的问题，不要重画整页。改文字内容用 text.patch 的 {"text": "..."}；` +
+    "要改颜色用 node.patch 的 appearance（写全 opacity 与 fills）。不要用 runs。" +
+    "\n\n**改父容器的宽度或位置时，里面的子节点也要一起调**——" +
+    "只改父不改子，文字就会掉到卡片外面（清单里会同时出现「超出画布」和「跑出父容器」）。";
+  const fix = await runStep(editor, fixPrompt, {
+    ...(scopePage ? { pageId: spec.id } : {}),
+    label: `${spec.name}-体检`,
+    rawDir,
+    selfCheck: check,
+  });
+  for (const round of fix.rounds) console.log(`  ${spec.name} ${round}`);
+  return fix.ok ? actionable : 0;
+}
+
+/**
+ * 「看图自改」那一轮：把渲染出来的截图喂给模型，让它自己挑排版毛病并改掉。
+ *
+ * ## 为什么必须有这一轮
+ *
+ * 「表格挤在左边」「文字叠在一起」「图表画得奇怪」这类毛病，靠文字规则很难说清楚——
+ * **模型看不见自己画的东西**。截图一给，它能指着说「这里歪了」「这里挤了」。
+ * 端点实测支持多模态（MiniMax-M3 能读图并答对图里的颜色）。
+ *
+ * 提示里必须把「怎么改」写成具体命令形状（node.patch 的 layout / appearance、
+ * text.patch 的 text），还要写清**哪些字段会被拒**——否则模型会把 text 塞进
+ * node.patch、把 id 按命名规律猜错，一轮 40 秒白花（实测都栽过）。
+ */
+async function runVisualFix(
+  editor: SafeAiEditor,
+  spec: PageSpec,
+  project: StudioProject,
+  outDir: string,
+  rawDir: string | undefined,
+  scopePage: boolean,
+): Promise<{ ok: boolean; rounds: string[] }> {
+  const shot = (await renderPages(project.snapshot(), outDir, [spec.id])).find(item => item.ok);
+  const dataUrl = shot?.dataUrl;
+  if (!dataUrl) return { ok: false, rounds: ["看图自改：这一页没渲染出图"] };
+  console.log(`  ${spec.name} 看图自改：把渲染结果给模型挑毛病`);
+  const visualPrompt = [
+    `这是页面 ${spec.id}（${spec.name}）当前渲染出来的样子，见附图。`,
+    "",
+    "请**看着这张图**，修掉看得见的排版问题，重点找这些：",
+    "- 文字互相重叠、行距太挤、字号小到看不清",
+    "- 表格/列表挤在左边，右边空一大片；各列没有撑开",
+    "- 元素没对齐、卡片间距不均、留白突兀",
+    "- 状态标签没有统一的底色，和其它页不一致",
+    "- 图表画得奇怪（柱子颜色乱、用小方块拼虚线）",
+    "- 状态标签样式不统一：有的页是浅色底 + 同色系深色文字，有的页是描边框——",
+    "  **整套设计里状态标签一律用浅色底 + 同色系深色文字 + 圆角 6 + 字号 12**，不要用描边。",
+    "- 装饰性色块颜色太花：头像圆、导航图标占位、圆形标记一个一个颜色不同——",
+    "  **头像与图标占位一律用主色或中性灰**（选中项主色，其余中性灰），只有状态标签才按状态用颜色。",
+    "- 字体不是 Inter（出现 system-ui / sans-serif 等）——**整套设计字体一律 Inter**。",
+    "",
+    "这一页必须满足的几条硬约束（图上就能看出来）：",
+    `- 页面顶栏的标题必须写「${spec.name}」（写错了就改过来）。`,
+    "- 品牌名统一写「运营管理台」，不要出现别的产品名。",
+    "- **卡片不许互相压住**：同一层的下一张卡片 y 必须 ≥ 上一张的 y + 上一张的高度 + 24。",
+    "- 所有内容落在页面 1440×900 内，底部留 32 边距；超出的会被裁掉（分页条被切掉一半就是这种）。",
+    "- 输入框、下拉框宽度不小于所在卡片内容区宽度的 70%，别让右边空一大片。",
+    "- 图表的柱子用圆角 4 的矩形，同一系列同一个颜色。",
+    "",
+    "怎么改：",
+    "- 改位置和尺寸用 node.patch 的 layout，**要写全 x / y / width / height**（整块替换）。",
+    "- 改颜色、圆角、填充用 node.patch 的 appearance，**要写全 opacity 与 fills**。",
+    "- 改文字内容用 text.patch 的 {\"text\": \"...\"}；改字号/字重/行高也用 text.patch。",
+    "- **node.patch 里没有 text / fontSize / fontFamily / fontWeight 字段**，写进去会被当成未知字段直接拒掉。",
+    "- **只能 patch 文档摘要里原样出现过的节点 id**——不要按命名规律推测（比如摘要里是 text:xxx-user-id，就不要写 text:xxx-user-id-label）。找不到合适的现成节点就用 node.create 新建。",
+    "- 补一个缺的东西可以用 node.create，但别整页重画，也别造一堆重复元素。",
+    "- **不要用 runs**，不要 node.delete 已有节点，不要改别的页面。",
+    "",
+    "只修图里看得出的问题，其余保持原样。现在只输出 JSON 计划。",
+  ].join("\n");
+  const fix = await runStep(editor, visualPrompt, {
+    ...(scopePage ? { pageId: spec.id } : {}),
+    label: `${spec.name}-看图`,
+    rawDir,
+    image: {
+      dataUrl,
+      mimeType: "image/png",
+      ...(shot?.width ? { width: shot.width } : {}),
+      ...(shot?.height ? { height: shot.height } : {}),
+      label: `当前页（${spec.name}）`,
+    },
+  });
+  for (const round of fix.rounds) console.log(`  ${spec.name} ${round}`);
+  return { ok: fix.ok, rounds: fix.rounds };
 }
 
 /* ------------------------------------------------------------------ *
@@ -1113,7 +1290,11 @@ async function main(): Promise<void> {
     },
   };
 
-  const editor = new SafeAiEditor(project, enforcingPlanner);
+  // 整页重画一次要新建 90~170 个节点，默认的批量新建阈值（20）会让每一页都报
+  // "改动范围偏大"。这里按实际规模放宽告警，但删除硬闸保留——删除是不可逆的。
+  const editor = new SafeAiEditor(project, enforcingPlanner, "studio-ai", {
+    reviewLimits: { bulkCreate: 300, bulkDelete: 30 },
+  });
   console.log(`模型：${usingStub ? "(stub planner)" : `${credentials!.model} @ ${credentials!.baseUrl}`}`);
   console.log(resumed ? `续跑：接着 ${outDir} 里已有的文档继续` : `起点：空白文档（一个空页面 ${firstPage.id}，零个节点）`);
   console.log(`目标：${args.pages.join(", ")}\n`);
@@ -1162,7 +1343,7 @@ async function main(): Promise<void> {
 
     // 续跑时，已经画好的页面直接跳过。
     const existing = project.snapshot().pages[spec.id];
-    if (resumed && !args.force && existing && existing.childIds.length > 0) {
+    if (resumed && !args.force && existing && existing.childIds.length > 0 && !args.visualOnly) {
       console.log(`  ${spec.name} 已有 ${existing.childIds.length} 个顶层节点，跳过`);
       outcomes.push({
         pageId: spec.id,
@@ -1175,6 +1356,54 @@ async function main(): Promise<void> {
         review: [],
         snapped: [],
       });
+      continue;
+    }
+
+    // --visual-only：不重画，只把现有页面再拿给模型看图改一轮排版。
+    //
+    // 为什么需要这个开关：重画一页要 2–5 分钟（整页计划），而「让模型看着图修排版」
+    // 只要 30–60 秒。调视觉时后者才是迭代单位——提示词改了想立刻看效果，
+    // 不该每次都把整页重画一遍。
+    if (args.visualOnly) {
+      if (!existing || existing.childIds.length === 0) {
+        console.log(`  ${spec.name} 还没有内容，跳过`);
+        continue;
+      }
+      // 先体检再看图：体检给精确读数（哪张卡片超出了画布多少像素），
+      // 看图给观感（挤不挤、齐不齐）。两条回路各管一头，缺一条都会漏。
+      const rounds: string[] = [];
+      const fixed = await runSelfCheckFix(editor, spec, project, rawDir, true, visualSelfCheckPrompt(spec));
+      if (fixed) rounds.push(`体检修掉 ${fixed} 项`);
+      if (!args.noVisual) {
+        const fix = await runVisualFix(editor, spec, project, outDir, rawDir, true);
+        rounds.push(...fix.rounds);
+        outcomes.push({
+          pageId: spec.id,
+          name: spec.name,
+          ok: fix.ok,
+          attempts: fix.rounds.length,
+          rounds,
+          nodeCount: 0,
+          warnings: [],
+          review: [],
+          snapped: [],
+          visualFixed: fix.ok,
+        });
+      } else {
+        // --no-visual：只按体检读数修，不让模型自由发挥——收敛时用它，
+        // 免得「顺手改一改」又改出新的越界。
+        outcomes.push({
+          pageId: spec.id,
+          name: spec.name,
+          ok: fixed > 0,
+          attempts: 1,
+          rounds,
+          nodeCount: 0,
+          warnings: [],
+          review: [],
+          snapped: [],
+        });
+      }
       continue;
     }
 
@@ -1196,24 +1425,19 @@ async function main(): Promise<void> {
     // 体检 → 回喂修一轮：生成完不等于画对了，仓库的检查器说了算。
     let selfCheckFixed = 0;
     if (result.ok) {
-      const check = selfCheckForPage(project.snapshot(), spec.id);
-      if (check) {
-        console.log(`  ${spec.name} 体检：待修 ${check.report.counts.actionable} 项，回喂模型修一轮`);
-        // 修复轮里说清怎么改：体检项多半是「空文本 / 字号太小」，
-        // 改内容用 text.patch 的 text 字段就够了。用 runs 改局部颜色时
-        // from/to 必须落在文本长度内——模型经常算错，于是整轮白跑。
-        const fixPrompt = `${prompt}\n\n只修体检清单里的问题，不要重画整页。改文字内容用 text.patch 的 {"text": "..."}；` +
-          "要改颜色用 node.patch 的 appearance（写全 opacity 与 fills）。不要用 runs。";
-        const fix = await runStep(editor, fixPrompt, {
-          ...(pageExists ? { pageId: spec.id } : {}),
-          label: `${spec.name}-体检`,
-          rawDir,
-          selfCheck: check,
-        });
-        for (const round of fix.rounds) console.log(`  ${spec.name} ${round}`);
-        selfCheckFixed = fix.ok ? check.report.counts.actionable : 0;
-      }
+      selfCheckFixed = await runSelfCheckFix(editor, spec, project, rawDir, pageExists, prompt);
     }
+    // 看图自改：生成完不等于好看。**把渲染出来的截图给模型看**，让它自己挑毛病。
+    //
+    // 为什么非看图不可：「表格挤在左边」「文字叠在一起」「图表画得奇怪」这类毛病，
+    // 靠文字规则很难说清楚——模型看不见自己画的东西。截图一给，它能指着说
+    // 「这里歪了」「这里挤了」。端点实测支持多模态（MiniMax-M3 能读图并答对图里的颜色）。
+    let visualFixed = false;
+    if (result.ok && args.render && !args.noVisual) {
+      const fix = await runVisualFix(editor, spec, project, outDir, rawDir, pageExists);
+      visualFixed = fix.ok;
+    }
+
     outcomes.push({
       pageId: spec.id,
       name: spec.name,
@@ -1226,12 +1450,31 @@ async function main(): Promise<void> {
       warnings: result.warnings,
       review: result.review,
       snapped: snappedChanges.slice(snappedBefore),
+      visualFixed,
       error: result.error,
     });
     console.log("");
   }
 
-  // --- 第三步：风格归一化 + 审计 ---
+  // --- 第三步：页面尺寸校正 + 风格归一化 + 审计 ---
+  //
+  // 尺寸校正放在最前面：模型 page.create 时经常漏掉 width/height（实测登录页就是
+  // undefined，渲染成 960×680，跟其它 1440×900 的页完全不是一个尺寸，同一套设计里
+  // 出现两种画布宽度，一眼就看出来）。这里统一用原生命令 page.resize 补齐。
+  for (const pageId of project.snapshot().pageOrder) {
+    const page = project.snapshot().pages[pageId];
+    if (!page || (page.width === PAGE_WIDTH && page.height === PAGE_HEIGHT)) continue;
+    const current = project.snapshot();
+    await project.execute({
+      commandId: `probe:resize:${pageId}:${current.revision}`,
+      documentId: current.id,
+      baseRevision: current.revision,
+      actor: { type: "integration", id: "admin-console-probe" },
+      commands: [{ type: "page.resize", payload: { id: pageId, width: PAGE_WIDTH, height: PAGE_HEIGHT } }],
+    });
+    console.log(`  页面尺寸校正：${pageId} ${page.width ?? "?"}×${page.height ?? "?"} → ${PAGE_WIDTH}×${PAGE_HEIGHT}`);
+  }
+
   // 先把落地后才发现的越界颜色改回调色板，再审计——审计报告的是**归一化之后**的状态。
   const styleChanges: Array<{ pageId: string; changes: Snapped[] }> = [];
   for (const outcome of outcomes.filter(item => item.ok)) {

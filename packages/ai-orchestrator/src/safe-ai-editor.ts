@@ -2,7 +2,7 @@ import type { DesignCommand, CommandEnvelope } from "@ufira/design-runtime";
 import type { DesignDocument, NodeId } from "@ufira/design-schema";
 import type { StudioExecuteResult, StudioProject } from "@ufira/studio-application";
 import { PlanEmptyError } from "./plan-parser";
-import { reviewAiPlan, type ReviewFinding, type ReviewResult } from "./review";
+import { reviewAiPlan, type ReviewFinding, type ReviewLimits, type ReviewResult } from "./review";
 import type { SelfCheckContext } from "./self-check";
 
 /** 取消信号的形状。用结构化类型，避免依赖 DOM 的 AbortSignal 声明。 */
@@ -115,6 +115,8 @@ export interface AiPlanPreview {
   warnings: string[];
   /** 结构审查结论；blocking 时必须先改计划才能提交。 */
   review: ReviewResult;
+  /** 这份计划的最晚可确认时间（毫秒时间戳）；不设过期时间时没有这个字段。 */
+  expiresAt?: number;
 }
 
 export class AiPlanNotFoundError extends Error {
@@ -145,14 +147,43 @@ export class AiPlanDryRunError extends Error {
   }
 }
 
+export interface SafeAiEditorOptions {
+  /** 同时挂着的待确认计划上限；超了淘汰最老的一条。默认 8；设 0 表示不限。 */
+  maxPendingPlans?: number;
+  /** 待确认计划的存活时间（毫秒）；超时的会被淘汰。默认 10 分钟；设 0 表示不过期。 */
+  pendingPlanTtlMs?: number;
+  /** 取当前时间的函数；默认 Date.now，测试可以注入假时钟。 */
+  now?: () => number;
+  /** 结构审查的阈值；不传就用默认那套。 */
+  reviewLimits?: ReviewLimits;
+}
+
+const DEFAULT_MAX_PENDING_PLANS = 8;
+const DEFAULT_PENDING_PLAN_TTL_MS = 10 * 60 * 1000;
+
+interface PendingPlan {
+  preview: AiPlanPreview;
+  createdAt: number;
+}
+
 export class SafeAiEditor {
-  private readonly pending = new Map<string, AiPlanPreview>();
+  private readonly pending = new Map<string, PendingPlan>();
+  private readonly maxPendingPlans: number;
+  private readonly pendingPlanTtlMs: number;
+  private readonly now: () => number;
+  private readonly reviewLimits: ReviewLimits | undefined;
 
   constructor(
     private readonly project: StudioProject,
     private readonly planner: AiPlanner,
     private readonly actorId = "studio-ai",
-  ) {}
+    options: SafeAiEditorOptions = {},
+  ) {
+    this.maxPendingPlans = options.maxPendingPlans ?? DEFAULT_MAX_PENDING_PLANS;
+    this.pendingPlanTtlMs = options.pendingPlanTtlMs ?? DEFAULT_PENDING_PLAN_TTL_MS;
+    this.now = options.now ?? (() => Date.now());
+    this.reviewLimits = options.reviewLimits;
+  }
 
   /**
    * 当前文档快照。
@@ -203,7 +234,7 @@ export class SafeAiEditor {
       throw new AiPlanDryRunError(error instanceof Error ? error.message : String(error), { cause: error });
     }
     // dry-run 证明"能跑"，审查证明"该不该跑"。
-    const review = reviewAiPlan({ before: preview.before, after: preview.after, commands: planned.commands });
+    const review = reviewAiPlan({ before: preview.before, after: preview.after, commands: planned.commands }, this.reviewLimits);
     if (options.pageId) {
       const scopeFinding = reviewPageScope(preview.before, preview.after, options.pageId);
       if (scopeFinding) {
@@ -224,7 +255,12 @@ export class SafeAiEditor {
       warnings: [...preview.result.warnings],
       review,
     };
-    this.pending.set(planId, structuredClone(result));
+    const createdAt = this.now();
+    if (this.pendingPlanTtlMs > 0) result.expiresAt = createdAt + this.pendingPlanTtlMs;
+    this.pending.set(planId, { preview: structuredClone(result), createdAt });
+    // 新计划进来之后立刻收拾一次：过期的先走，超量的再走。
+    this.evictExpired();
+    this.evictOverflow();
     return structuredClone(result);
   }
 
@@ -244,14 +280,47 @@ export class SafeAiEditor {
   }
 
   getPending(planId: string): AiPlanPreview | undefined {
+    this.evictExpired();
     const plan = this.pending.get(planId);
-    return plan ? structuredClone(plan) : undefined;
+    return plan ? structuredClone(plan.preview) : undefined;
+  }
+
+  /** 当前还挂着的待确认计划数量（过期的已经被清掉）。 */
+  get pendingCount(): number {
+    this.evictExpired();
+    return this.pending.size;
   }
 
   private requirePending(planId: string): AiPlanPreview {
+    this.evictExpired();
     const plan = this.pending.get(planId);
     if (!plan) throw new AiPlanNotFoundError(planId);
-    return plan;
+    return plan.preview;
+  }
+
+  /**
+   * 淘汰挂太久的待确认计划。
+   *
+   * 每条待确认计划都存着 before/after 两份完整文档快照，内存占用不小；模型一次改
+   * 不好就会反复生成计划，没有 TTL 的话过期计划会一直堆着。
+   */
+  private evictExpired(): void {
+    if (this.pendingPlanTtlMs <= 0) return;
+    const now = this.now();
+    for (const [planId, entry] of this.pending) {
+      if (now - entry.createdAt >= this.pendingPlanTtlMs) this.pending.delete(planId);
+    }
+  }
+
+  /** 超出同时挂载上限时，淘汰最早创建的那条。 */
+  private evictOverflow(): void {
+    if (this.maxPendingPlans <= 0) return;
+    // Map 保持插入顺序，最早创建的排在最前面。
+    while (this.pending.size > this.maxPendingPlans) {
+      const oldest = this.pending.keys().next();
+      if (oldest.done) break;
+      this.pending.delete(oldest.value);
+    }
   }
 
   private envelope(planId: string, document: DesignDocument, commands: DesignCommand[], baseRevision = document.revision): CommandEnvelope {

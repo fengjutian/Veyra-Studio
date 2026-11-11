@@ -33,6 +33,22 @@ test("the system prompt spells out the command vocabulary and the JSON contract"
   assert.match(system, /commands/);
 });
 
+test("命令词汇表说清 node.patch 不收文字字段，改文字必须走 text.patch", () => {
+  // 实测的故障：模型往 node.patch 里写 text / fontSize，运行时判未知字段直接拒，
+  // 一轮 40 秒白花。词汇表里要把「不收哪些字段」写成否定式清单。
+  const { system } = buildPlannerPrompt({ prompt: "改个颜色", document: documentWithText(), selectedNodeIds: [] });
+  assert.match(system, /node\.patch 的 patch 里\*\*没有\*\* text \/ fontSize \/ fontFamily/);
+  assert.match(system, /改文字内容与文字样式一律用 text\.patch/);
+});
+
+test("硬性规则明说不要按命名规律猜节点 id", () => {
+  // 实测的故障：模型把 text:xxx-user-id 写成 text:xxx-user-id-label，节点不存在，
+  // 连猜三次都错。规则要写成「原样出现」+「不要推测或改写」。
+  const { system } = buildPlannerPrompt({ prompt: "改个颜色", document: documentWithText(), selectedNodeIds: [] });
+  assert.match(system, /原样出现/);
+  assert.match(system, /不要按命名规律推测或改写 id/);
+});
+
 test("the user prompt carries the request, the real node ids and the selection", () => {
   const { user } = buildPlannerPrompt({ prompt: "把标题改成红色", document: documentWithText(), selectedNodeIds: ["text:1"] });
   assert.match(user, /把标题改成红色/);

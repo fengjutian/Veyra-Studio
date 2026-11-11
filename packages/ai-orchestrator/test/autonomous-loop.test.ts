@@ -196,6 +196,109 @@ test("停止条件：轮次用完就收工，并说明还有多少没修完", ()
   assert.equal(decision.stopReason, "max-rounds");
 });
 
+test("停止条件：待修项总数连续几轮没减少就判没进展（位移式震荡）", () => {
+  // 实测踩过的坑：模型每次把越界量改小一点、同时在别处弄出一个新问题，
+  // 指纹次次不同 → repeats 永远是 1，oscillating 永远判不出来。
+  // 这条判据不看指纹，只看**总数**有没有下降。
+  //
+  // 注意每轮的指纹都要不同——指纹相同的话 oscillating 会先触发，测的就不是这条了。
+  let progress = progressOf();
+  const round1 = reportOf(["lint:a#f1", "lint:b#f2", "lint:c#f3"]);
+  const round2 = reportOf(["lint:d#f4", "lint:e#f5", "lint:ff#f6"]);
+  const round3 = reportOf(["lint:g#f7", "lint:h#f8", "lint:i#f9"]);
+  const round4 = reportOf(["lint:j#f10", "lint:k#f11", "lint:l#f12"]);
+
+  // 第 1 轮：没有「上一轮」可比，不累加。
+  const first = decideNextStep({ round: 1, maxRounds: 6, report: round1, progress, oscillationThreshold: 3 });
+  assert.equal(first.action, "plan");
+  assert.equal(first.progress.noProgressRounds, 0);
+  progress = first.progress;
+
+  // 第 2 轮：总数持平 → 累计 1 轮没进展。
+  const second = decideNextStep({ round: 2, maxRounds: 6, report: round2, progress, oscillationThreshold: 3 });
+  assert.equal(second.action, "plan");
+  assert.equal(second.progress.noProgressRounds, 1);
+  progress = second.progress;
+
+  // 第 3 轮：又持平 → 累计 2 轮。
+  const third = decideNextStep({ round: 3, maxRounds: 6, report: round3, progress, oscillationThreshold: 3 });
+  assert.equal(third.action, "plan");
+  assert.equal(third.progress.noProgressRounds, 2);
+  progress = third.progress;
+
+  // 第 4 轮：连续 3 轮没减少（阈值缺省等于 oscillationThreshold=3）→ 判停。
+  const fourth = decideNextStep({ round: 4, maxRounds: 6, report: round4, progress, oscillationThreshold: 3 });
+  assert.equal(fourth.action, "stop");
+  assert.equal(fourth.stopReason, "no-progress");
+});
+
+test("停止条件：问题数真的降了就不算没进展", () => {
+  let progress = progressOf();
+  const many = reportOf(["lint:a#f1", "lint:b#f2", "lint:c#f3"]);
+  const fewer = reportOf(["lint:d#f4", "lint:e#f5"]);
+
+  progress = decideNextStep({ round: 1, maxRounds: 6, report: many, progress, oscillationThreshold: 3 }).progress;
+  const second = decideNextStep({ round: 2, maxRounds: 6, report: fewer, progress, oscillationThreshold: 3 });
+  assert.equal(second.action, "plan");
+  assert.equal(second.progress.noProgressRounds, 0);
+});
+
+test("停止条件：同一个节点被反复改就判 node-thrash", () => {
+  // 「改完又坏、坏完又改」：每次都是不同的结论，指纹判定同样看不出来。
+  let progress = progressOf();
+  const round1 = reportOf(["lint:a#f1"]);
+  const round2 = reportOf(["lint:b#f1"]);
+  const round3 = reportOf(["lint:c#f1"]);
+  const round4 = reportOf(["lint:d#f1"]);
+
+  const first = decideNextStep({
+    round: 1, maxRounds: 6, report: round1, progress, oscillationThreshold: 3, changedNodeIds: ["frame:1"],
+  });
+  assert.equal(first.action, "plan");
+  assert.equal(first.progress.nodeRepeats?.["frame:1"], 1);
+  progress = first.progress;
+
+  const second = decideNextStep({
+    round: 2, maxRounds: 6, report: round2, progress, oscillationThreshold: 3, changedNodeIds: ["frame:1"],
+  });
+  assert.equal(second.action, "plan");
+  assert.equal(second.progress.nodeRepeats?.["frame:1"], 2);
+  progress = second.progress;
+
+  const third = decideNextStep({
+    round: 3, maxRounds: 6, report: round3, progress, oscillationThreshold: 3, changedNodeIds: ["frame:1"],
+  });
+  assert.equal(third.action, "plan");
+  assert.equal(third.progress.nodeRepeats?.["frame:1"], 3);
+  progress = third.progress;
+
+  // 第 4 次改同一个节点 → 超过阈值（缺省 4）→ 判停。
+  const fourth = decideNextStep({
+    round: 4, maxRounds: 6, report: round4, progress, oscillationThreshold: 3, changedNodeIds: ["frame:1"],
+  });
+  assert.equal(fourth.action, "stop");
+  assert.equal(fourth.stopReason, "node-thrash");
+});
+
+test("停止条件：阈值设为 0 可以关掉位移式震荡这两个判据", () => {
+  let progress = progressOf();
+  const report = reportOf(["lint:a#f1"]);
+  for (let round = 1; round <= 6; round += 1) {
+    const decision = decideNextStep({
+      round,
+      maxRounds: 10,
+      report,
+      progress,
+      oscillationThreshold: 10,
+      noProgressThreshold: 0,
+      nodeChangeThreshold: 0,
+      changedNodeIds: ["frame:1"],
+    });
+    assert.equal(decision.action, "plan");
+    progress = decision.progress;
+  }
+});
+
 test("体检结论会排成给模型看的待修清单，并标出修不动的问题", () => {
   const report = reportOf(["contrast:low-contrast#text:low"]);
   const text = formatSelfCheckForPrompt({ report, stuck: ["contrast:low-contrast#text:low"], note: "上一轮改了标题颜色。" }, { round: 2 });

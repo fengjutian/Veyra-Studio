@@ -252,6 +252,62 @@ test("别的页面节点带多余字段时，本页计划不会被误判成越�
   assert.ok(project.snapshot().nodes["in-scope"]);
 });
 
+// —— 待确认计划的容量上限与 TTL ——
+//
+// 每条待确认计划都存着 before/after 两份完整文档快照。模型一次改不好就反复生成
+// 计划，不设上限的话内存会一直涨；不设 TTL 的话过期的计划也会一直挂着，
+// 用户点确认时才发现「这计划已经没了」。
+
+test("待确认计划超过容量上限时淘汰最老的一条", async () => {
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const editor = new SafeAiEditor(project, plannerFor(frame("a")), "studio-ai", { maxPendingPlans: 2 });
+
+  const first = await editor.createPlan("one");
+  const second = await editor.createPlan("two");
+  const third = await editor.createPlan("three");
+
+  assert.equal(editor.pendingCount, 2);
+  assert.equal(editor.getPending(first.planId), undefined, "最老的计划应该被淘汰");
+  assert.ok(editor.getPending(second.planId));
+  assert.ok(editor.getPending(third.planId));
+});
+
+test("待确认计划过期后不能再确认", async () => {
+  let clock = 1_000;
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const editor = new SafeAiEditor(project, plannerFor(frame("ttl")), "studio-ai", {
+    pendingPlanTtlMs: 1_000,
+    now: () => clock,
+  });
+
+  const preview = await editor.createPlan("会过期的计划");
+  assert.equal(preview.expiresAt, 2_000);
+  assert.ok(editor.getPending(preview.planId));
+
+  clock += 1_001;
+  assert.equal(editor.getPending(preview.planId), undefined);
+  assert.equal(editor.pendingCount, 0);
+  await assert.rejects(() => editor.confirm(preview.planId), /no longer pending/);
+});
+
+test("TTL 设为 0 时计划永不过期", async () => {
+  let clock = 1_000;
+  const repository = new MemoryRepository();
+  const project = await StudioProject.create(repository, "project:1", "Demo");
+  const editor = new SafeAiEditor(project, plannerFor(frame("forever")), "studio-ai", {
+    pendingPlanTtlMs: 0,
+    now: () => clock,
+  });
+
+  const preview = await editor.createPlan("不过期的计划");
+  assert.equal(preview.expiresAt, undefined);
+  clock += 10_000_000;
+  assert.ok(editor.getPending(preview.planId));
+  await editor.confirm(preview.planId);
+});
+
 class MemoryRepository implements ProjectRepository {
   document?: DesignDocument;
   transactions: TransactionEntry[] = [];

@@ -113,3 +113,99 @@ test("删除集合是前后文档的节点差集", () => {
   const before = documentWith([node("a"), node("b")]);
   assert.deepEqual(removedNodeIds(before, without(before, "a")), ["a"]);
 });
+
+// —— 阈值可配 + 改动量硬闸 ——
+//
+// 以前 10 / 20 是写死的魔数：单页精修和整页重画要的尺度完全不同，写死成 20 的
+// 后果是每次正常生成都在报警，真正的失控反而没人看。
+
+test("批量阈值可配：调大之后同样的改动不再报警", () => {
+  const before = documentWith([]);
+  const after = structuredClone(before);
+  const created = Array.from({ length: 21 }, (_, index) => node(`frame:${index}`));
+  for (const item of created) after.nodes[item.id] = item;
+  after.pages["page:1"]!.childIds = created.map(item => item.id);
+  const commands: DesignCommand[] = created.map(item => ({ type: "node.create", payload: { node: item } }));
+
+  assert.ok(reviewAiPlan({ before, after, commands }).findings.some(item => item.code === "bulk-create"));
+  const relaxed = reviewAiPlan({ before, after, commands }, { bulkCreate: 100 });
+  assert.equal(relaxed.findings.some(item => item.code === "bulk-create"), false);
+  assert.equal(relaxed.blocking, false);
+});
+
+test("批量阈值可配：调小之后同样的改动会报警", () => {
+  const before = documentWith([]);
+  const after = structuredClone(before);
+  const created = Array.from({ length: 5 }, (_, index) => node(`frame:${index}`));
+  for (const item of created) after.nodes[item.id] = item;
+  after.pages["page:1"]!.childIds = created.map(item => item.id);
+  const commands: DesignCommand[] = created.map(item => ({ type: "node.create", payload: { node: item } }));
+
+  const strict = reviewAiPlan({ before, after, commands }, { bulkCreate: 3 });
+  assert.equal(strict.findings.find(item => item.code === "bulk-create")?.severity, "warning");
+});
+
+test("批量严重程度可配成阻断：超限直接拦下", () => {
+  const before = documentWith([]);
+  const after = structuredClone(before);
+  const created = Array.from({ length: 5 }, (_, index) => node(`frame:${index}`));
+  for (const item of created) after.nodes[item.id] = item;
+  after.pages["page:1"]!.childIds = created.map(item => item.id);
+  const commands: DesignCommand[] = created.map(item => ({ type: "node.create", payload: { node: item } }));
+
+  const gated = reviewAiPlan({ before, after, commands }, { bulkCreate: 3, bulkSeverity: "blocking" });
+  assert.equal(gated.blocking, true);
+  const finding = gated.findings.find(item => item.code === "bulk-create");
+  assert.equal(finding?.severity, "blocking");
+  assert.match(finding?.message ?? "", /请拆成多次小改动/);
+});
+
+test("删除硬闸：删太多直接阻断", () => {
+  const nodes = Array.from({ length: 12 }, (_, index) => node(`frame:${index}`));
+  const before = documentWith(nodes);
+  const after = without(before, ...nodes.map(item => item.id));
+  const commands: DesignCommand[] = nodes.map(item => ({ type: "node.delete", payload: { id: item.id } }));
+
+  const gated = reviewAiPlan({ before, after, commands }, { bulkDeleteHard: 5 });
+  assert.equal(gated.blocking, true);
+  const finding = gated.findings.find(item => item.code === "bulk-delete-hard-limit");
+  assert.equal(finding?.severity, "blocking");
+  assert.equal(finding?.nodeIds?.length, 10);
+});
+
+test("单次改动总量硬闸：新建加删除合起来超限就阻断", () => {
+  const nodes = Array.from({ length: 4 }, (_, index) => node(`frame:${index}`));
+  const before = documentWith(nodes);
+  const after = structuredClone(before);
+  delete after.nodes["frame:0"];
+  delete after.nodes["frame:1"];
+  after.pages["page:1"]!.childIds = ["frame:2", "frame:3", "frame:new"];
+  after.nodes["frame:new"] = node("frame:new");
+  const commands: DesignCommand[] = [
+    { type: "node.delete", payload: { id: "frame:0" } },
+    { type: "node.delete", payload: { id: "frame:1" } },
+    { type: "node.create", payload: { node: node("frame:new") } },
+    { type: "node.patch", payload: { id: "frame:2" } },
+  ];
+
+  const gated = reviewAiPlan({ before, after, commands }, { totalChangeHardLimit: 3 });
+  assert.equal(gated.blocking, true);
+  const finding = gated.findings.find(item => item.code === "change-volume-hard-limit");
+  assert.equal(finding?.severity, "blocking");
+
+  const relaxed = reviewAiPlan({ before, after, commands }, { totalChangeHardLimit: 50 });
+  assert.equal(relaxed.findings.some(item => item.code === "change-volume-hard-limit"), false);
+  assert.equal(relaxed.blocking, false);
+});
+
+test("默认硬闸不会误伤正常规模的改动", () => {
+  const nodes = Array.from({ length: 12 }, (_, index) => node(`frame:${index}`));
+  const before = documentWith(nodes);
+  const after = without(before, ...nodes.map(item => item.id));
+  const commands: DesignCommand[] = nodes.map(item => ({ type: "node.delete", payload: { id: item.id } }));
+
+  const review = reviewAiPlan({ before, after, commands });
+  assert.equal(review.findings.some(item => item.code === "bulk-delete-hard-limit"), false);
+  assert.equal(review.findings.some(item => item.code === "change-volume-hard-limit"), false);
+  assert.equal(review.blocking, false);
+});

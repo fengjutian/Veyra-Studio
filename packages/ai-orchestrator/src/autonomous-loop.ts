@@ -26,9 +26,22 @@ import { collectSelfCheck, selfCheckFingerprint, type SelfCheckContext, type Sel
  * - `execute-error`：命令提交失败。
  * - `cancelled`：用户取消。
  * - `oscillating`：同一个问题反复出现且修不动——模型在原地打转，继续跑只是烧钱。
+ * - `no-progress`：待修项的**总数**连续几轮没有减少——模型可能在修 A 的同时弄坏 B，
+ *   每次换了个问题，指纹也跟着换，于是上面那条永远判不出来。
+ * - `node-thrash`：同一个节点被反复改——改完又坏、坏完又改。
  *
  * 震荡判定靠**指纹**（来源 + 代码 + 节点 id）：同一个指纹连续出现若干轮就判定
  * 修不动，从待修清单里剔除。剩下的问题全被判死时，循环以 `oscillating` 收尾。
+ *
+ * ## 指纹判定会漏掉「位移式震荡」
+ *
+ * 指纹跟着**具体那条结论**走，而结论里带着数值——「右边超出 184px」和
+ * 「右边超出 168px」是两个不同的指纹。于是模型每次把越界量改小一点、
+ * 同时在别处弄出一个新问题，指纹就次次不同，`repeats` 永远是 1，永远判不出震荡。
+ *
+ * 实测踩过：同一页的越界在 184 → 168 → 8 之间来回，同步引入别处的问题，
+ * 指纹级判定一次都没触发。所以另加两个**与指纹无关**的判据：
+ * 待修项总数有没有下降、同一个节点被改了几次。
  */
 
 export type LoopStopReason =
@@ -40,16 +53,29 @@ export type LoopStopReason =
   | "planner-error"
   | "execute-error"
   | "cancelled"
-  | "oscillating";
+  | "oscillating"
+  | "no-progress"
+  | "node-thrash";
 
 /** 循环进度：每个指纹连续出现了多少轮，以及哪些已经判定修不动。 */
 export interface LoopProgress {
   repeats: Record<string, number>;
   stuck: string[];
+  /**
+   * 上一轮**开始时**的待修项数量。
+   *
+   * 用来判断「问题总数有没有变少」：本轮开始时的待修数就是上一轮结束时的待修数，
+   * 拿它和上一轮开始时的数比，就知道上一轮到底有没有进展。
+   */
+  lastActionable?: number;
+  /** 连续多少轮「待修项没减少」。 */
+  noProgressRounds?: number;
+  /** 每个节点累计被改了多少次。 */
+  nodeRepeats?: Record<string, number>;
 }
 
 export function createLoopProgress(): LoopProgress {
-  return { repeats: {}, stuck: [] };
+  return { repeats: {}, stuck: [], noProgressRounds: 0, nodeRepeats: {} };
 }
 
 export interface LoopDecision {
@@ -73,8 +99,28 @@ export function decideNextStep(input: {
   report: SelfCheckReport;
   progress: LoopProgress;
   oscillationThreshold: number;
+  /**
+   * 连续多少轮「待修项总数没减少」就判定为没进展。
+   *
+   * 缺省与 `oscillationThreshold` 同值；0 表示关闭这一判据。
+   */
+  noProgressThreshold?: number;
+  /**
+   * 同一个节点最多允许被改多少次；超过就判定为在原地打转。
+   *
+   * 缺省 4；0 表示关闭这一判据。
+   */
+  nodeChangeThreshold?: number;
+  /** 上一轮落地时改动过的节点 id。 */
+  changedNodeIds?: NodeId[];
 }): LoopDecision {
   const threshold = Math.max(1, Math.trunc(input.oscillationThreshold));
+  const noProgressThreshold = input.noProgressThreshold === undefined
+    ? threshold
+    : Math.max(0, Math.trunc(input.noProgressThreshold));
+  const nodeChangeThreshold = input.nodeChangeThreshold === undefined
+    ? 4
+    : Math.max(0, Math.trunc(input.nodeChangeThreshold));
   const current = new Set(input.report.fingerprints);
 
   // 连续出现计数：还在的 +1，已经消失的清零（问题被修掉了就重新开始计数）。
@@ -87,13 +133,40 @@ export function decideNextStep(input: {
   const stuck = [...current].filter(fingerprint => (repeats[fingerprint] ?? 0) >= threshold).sort();
   const stuckSet = new Set(stuck);
   const todo = input.report.issues.filter(issue => issue.actionable && !stuckSet.has(selfCheckFingerprint(issue)));
-  const progress: LoopProgress = { repeats, stuck };
+
+  // ── 判据二：待修项总数有没有下降 ──────────────────────────────────
+  //
+  // 本轮开始时的待修数 = 上一轮结束时的待修数；和「上一轮开始时的待修数」比，
+  // 就知道上一轮到底有没有进展。这条**不看指纹**，所以位移式震荡也逃不掉。
+  const actionable = input.report.counts.actionable;
+  const noProgressRounds = input.progress.lastActionable !== undefined && actionable >= input.progress.lastActionable
+    ? (input.progress.noProgressRounds ?? 0) + 1
+    : 0;
+
+  // ── 判据三：同一个节点被改了几次 ──────────────────────────────────
+  const nodeRepeats: Record<string, number> = { ...(input.progress.nodeRepeats ?? {}) };
+  for (const nodeId of input.changedNodeIds ?? []) {
+    nodeRepeats[nodeId] = (nodeRepeats[nodeId] ?? 0) + 1;
+  }
+  const thrashedNode = Object.keys(nodeRepeats)
+    .filter(nodeId => nodeRepeats[nodeId]! >= nodeChangeThreshold)
+    .sort((a, b) => nodeRepeats[b]! - nodeRepeats[a]! || a.localeCompare(b))[0];
+
+  const progress: LoopProgress = {
+    repeats,
+    stuck,
+    lastActionable: actionable,
+    noProgressRounds,
+    nodeRepeats,
+  };
 
   const stop = (stopReason: LoopStopReason): LoopDecision => ({ action: "stop", stopReason, todo, progress });
 
   if (input.report.counts.actionable === 0) return stop("converged");
   // 待修项全被判死：模型在原地打转，再跑一轮也不会变好。
   if (!todo.length) return stop("oscillating");
+  if (nodeChangeThreshold > 0 && thrashedNode) return stop("node-thrash");
+  if (noProgressThreshold > 0 && noProgressRounds >= noProgressThreshold) return stop("no-progress");
   if (input.round > input.maxRounds) return stop("max-rounds");
   return { action: "plan", todo, progress };
 }
@@ -124,6 +197,15 @@ export interface AutonomousLoopOptions {
   maxRounds?: number;
   /** 同一个问题连续出现多少轮就判定为「修不动」；缺省 3。 */
   oscillationThreshold?: number;
+  /**
+   * 连续多少轮「待修项总数没减少」就判定为没进展；缺省与 `oscillationThreshold` 同值。
+   * 0 表示关闭这一判据。
+   */
+  noProgressThreshold?: number;
+  /**
+   * 同一个节点最多允许被改多少次；超过就判定为在原地打转。缺省 4。0 表示关闭。
+   */
+  nodeChangeThreshold?: number;
   /** 一轮之内最多要几版计划；缺省 2（第一版 + 一次带反馈的重来）。 */
   maxPlanAttempts?: number;
   /**
@@ -179,10 +261,20 @@ export async function runAutonomousLoop(editor: SafeAiEditor, options: Autonomou
   const rounds: AutonomousRound[] = [];
   let appliedCommands = 0;
   let round = 0;
+  /** 上一轮落地时改动过的节点——用来判断「同一个节点被反复改」。 */
+  let changedNodeIds: NodeId[] = [];
 
   const finish = (stopReason: LoopStopReason, note?: string): AutonomousLoopResult => ({
     stopReason,
-    message: describeStop(stopReason, { goal, maxRounds, report, stuck: progress.stuck, appliedCommands, note }),
+    message: describeStop(stopReason, {
+      goal,
+      maxRounds,
+      report,
+      stuck: progress.stuck,
+      appliedCommands,
+      ...(progress.nodeRepeats ? { nodeRepeats: progress.nodeRepeats } : {}),
+      ...(note ? { note } : {}),
+    }),
     rounds,
     report,
     appliedCommands,
@@ -199,7 +291,16 @@ export async function runAutonomousLoop(editor: SafeAiEditor, options: Autonomou
     round += 1;
     if (options.signal?.aborted) return finish("cancelled");
 
-    const decision = decideNextStep({ round, maxRounds, report, progress, oscillationThreshold: threshold });
+    const decision = decideNextStep({
+      round,
+      maxRounds,
+      report,
+      progress,
+      oscillationThreshold: threshold,
+      ...(options.noProgressThreshold !== undefined ? { noProgressThreshold: options.noProgressThreshold } : {}),
+      ...(options.nodeChangeThreshold !== undefined ? { nodeChangeThreshold: options.nodeChangeThreshold } : {}),
+      ...(changedNodeIds.length ? { changedNodeIds } : {}),
+    });
     progress = decision.progress;
     if (decision.action === "stop") return finish(decision.stopReason as LoopStopReason);
 
@@ -272,6 +373,7 @@ export async function runAutonomousLoop(editor: SafeAiEditor, options: Autonomou
     }
 
     appliedCommands += plan.commands.length;
+    changedNodeIds = [...plan.affectedNodeIds];
     const after = collectSelfCheck(editor.snapshot(), options.selfCheck);
     pushRound({ round, report, todo: decision.todo, summary: plan.summary, appliedCommands: plan.commands.length, after, warnings: plan.warnings });
     report = after;
@@ -302,7 +404,15 @@ function buildRoundNote(goal: string, round: number, maxRounds: number, rounds: 
 
 function describeStop(
   stopReason: LoopStopReason,
-  context: { goal: string; maxRounds: number; report: SelfCheckReport; stuck: string[]; appliedCommands: number; note?: string },
+  context: {
+    goal: string;
+    maxRounds: number;
+    report: SelfCheckReport;
+    stuck: string[];
+    appliedCommands: number;
+    nodeRepeats?: Record<string, number>;
+    note?: string;
+  },
 ): string {
   const remaining = context.report.counts.actionable;
   const suffix = context.note ? `：${context.note}` : "";
@@ -325,6 +435,15 @@ function describeStop(
       return "已取消自主运行。";
     case "oscillating":
       return `反复修不动的问题被判为无解，循环已停止：${context.stuck.join("、") || "（无）"}`;
+    case "no-progress":
+      return `待修项总数连续几轮没有减少（还剩 ${remaining} 项），模型没有进展，循环已停止。`;
+    case "node-thrash": {
+      const worst = Object.entries(context.nodeRepeats ?? {})
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, 3)
+        .map(([nodeId, count]) => `${nodeId}（${count} 次）`);
+      return `同一个节点被反复改，模型在原地打转，循环已停止：${worst.join("、") || "（无）"}`;
+    }
   }
 }
 

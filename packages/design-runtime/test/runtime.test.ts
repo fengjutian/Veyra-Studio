@@ -274,3 +274,46 @@ test("only shapes can be used as a mask", () => {
   runtime.execute(envelope(1, [{ type: "node.patch", payload: { id: "r", patch: { mask: true } } }]));
   assert.equal(runtime.snapshot().nodes["r"]!.mask, true);
 });
+
+test("节点 id 不存在时报错会摆出最接近的候选 id 和它们的文本", () => {
+  // 模型是按命名规律猜 id 的（真实 text:xxx-user-id，它写成 text:xxx-user-id-label）。
+  // 光一句 does not exist 它收敛不了，只能反复猜错；候选摆出来它一次就能改对。
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  const text: DesignNode = {
+    ...frame("text:user-detail-basic-user-id"),
+    type: "text",
+    text: "用户 ID",
+    fontFamily: "Inter",
+    fontSize: 14,
+    lineHeight: 20,
+  };
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: text } }]));
+  assert.throws(
+    () => runtime.execute(envelope(1, [{ type: "node.patch", payload: { id: "text:user-detail-basic-user-id-label", patch: { name: "改" } } }])),
+    /does not exist.*相近的节点：.*text:user-detail-basic-user-id（文本"用户 ID"）/s,
+  );
+});
+
+test("完全对不上的 id 不会硬凑候选", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: frame("frame:card-1") } }]));
+  assert.throws(
+    () => runtime.execute(envelope(1, [{ type: "node.patch", payload: { id: "zzz", patch: { name: "改" } } }])),
+    (error: unknown) => error instanceof CommandError && !/相近的节点/.test(error.message),
+  );
+});
+
+test("父节点不存在时报错会摆出候选，并说明父节点要排在子节点前面", () => {
+  // 实测的故障：模型给 node.create 的 parentId 指向了一个它还没创建的容器，
+  // 整页计划因此作废。错误里要同时给出「相近的 id」和「父节点要排在前面」。
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo"));
+  runtime.execute(envelope(0, [{ type: "node.create", payload: { node: frame("frame:order-create-form") } }]));
+  assert.throws(
+    () => runtime.execute(envelope(1, [{ type: "node.create", payload: { node: { ...frame("text:1"), parentId: "frame:order-create-form-2" } } }])),
+    /Parent frame:order-create-form-2 does not exist.*frame:order-create-form/,
+  );
+  assert.throws(
+    () => runtime.execute(envelope(1, [{ type: "node.create", payload: { node: { ...frame("text:1"), parentId: "frame:order-create-form-2" } } }])),
+    /父节点的那条 node\.create 必须排在子节点前面/,
+  );
+});

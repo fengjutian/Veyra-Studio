@@ -54,7 +54,15 @@ export type LintCode =
   /** 字号小于可读下限。 */
   | "tiny-text"
   /** 带交互的节点没有可读的名字。 */
-  | "interactive-without-name";
+  | "interactive-without-name"
+  /** 同级的两个文本框互相压住了——文字会叠在一起。 */
+  | "text-overlap"
+  /** 节点超出了它所在页面的画布——导出/截图时会被裁掉。 */
+  | "out-of-bounds"
+  /** 同级的两个容器互相压住了。 */
+  | "frame-overlap"
+  /** 子节点跑出了它所在的父容器。 */
+  | "out-of-parent";
 
 export type LintSeverity = "warning" | "info";
 
@@ -73,6 +81,18 @@ export interface LintOptions {
   grid?: number;
   /** 关闭某条规则：`{ "off-grid": false }`。 */
   rules?: Partial<Record<LintCode, boolean>>;
+  /** 文本框重叠到多少才算叠在一起（px²）；缺省 36。设 0 表示只要有重叠就报。 */
+  textOverlapArea?: number;
+  /** 容器重叠到多少才算压住（px²）；缺省 400。 */
+  frameOverlapArea?: number;
+  /** 越出画布时允许多少像素（px）；缺省 2。 */
+  outOfBoundsTolerance?: number;
+  /** 文本节点超出父容器的容差（px）；缺省 24。 */
+  textOverflowTolerance?: number;
+  /** 可读字号下限（px）；缺省 12。 */
+  minReadableFontSize?: number;
+  /** 尺寸达到父容器多少比例算「背景层」（0~1）；缺省 0.9。 */
+  backgroundSizeRatio?: number;
 }
 
 const DEFAULT_GRID = 8;
@@ -84,6 +104,135 @@ const DEFAULT_GRID = 8;
  * 一律报出来会淹掉真正的 8px 事故，所以这里只卡 12。
  */
 const MIN_READABLE_FONT_SIZE = 12;
+
+/**
+ * 文本框重叠到多少才算「叠在一起」。
+ *
+ * 取 36px²（6×6）：相邻的两行文字框本来就挨着，边角压上几个像素是正常的；
+ * 真正叠字的时候，重叠面积往往是几百上千平方像素。
+ */
+const TEXT_OVERLAP_AREA = 36;
+
+/**
+ * 节点越出画布时允许多少像素。
+ *
+ * 给 2px 余量：边框宽度、浮点坐标、以及「差一像素刚好贴边」的正常布局都不该报。
+ */
+const OUT_OF_BOUNDS_TOLERANCE = 2;
+
+/**
+ * 文本节点超出父容器的容差（px）。
+ *
+ * 比容器宽松：模型常给同一列的文本统一宽度，框比字宽一点甚至宽出十几像素很常见，
+ * **文字本身并没有掉出卡片**，视觉上看不出来。容器（卡片、按钮、输入框）超出则是真错，
+ * 用 2px 的严容差。
+ */
+const TEXT_OVERFLOW_TOLERANCE = 24;
+
+/**
+ * 容器重叠到多少才算「压住」。
+ *
+ * 取 400px²（约 20×20）：两张卡片边角相切、或者一张小图标块压在卡片边上都不算；
+ * 真正压住时，重叠面积往往是几百上千平方像素（实测整张卡片被盖住一半）。
+ */
+const FRAME_OVERLAP_AREA = 400;
+
+/**
+ * 背景层判定：尺寸达到父容器多少比例就算「铺满」。
+ *
+ * 背景层和内容层本来就叠在一起——登录页的整页背景里就放着登录卡片，这不是错。
+ */
+const BACKGROUND_SIZE_RATIO = 0.9;
+
+/** lint 的判定阈值。默认值保持原样，只是搬到了可配置的地方。 */
+interface LintLimits {
+  textOverlapArea: number;
+  frameOverlapArea: number;
+  outOfBoundsTolerance: number;
+  textOverflowTolerance: number;
+  minReadableFontSize: number;
+  backgroundSizeRatio: number;
+}
+
+function resolveLimits(options: LintOptions): LintLimits {
+  return {
+    textOverlapArea: options.textOverlapArea ?? TEXT_OVERLAP_AREA,
+    frameOverlapArea: options.frameOverlapArea ?? FRAME_OVERLAP_AREA,
+    outOfBoundsTolerance: options.outOfBoundsTolerance ?? OUT_OF_BOUNDS_TOLERANCE,
+    textOverflowTolerance: options.textOverflowTolerance ?? TEXT_OVERFLOW_TOLERANCE,
+    minReadableFontSize: options.minReadableFontSize ?? MIN_READABLE_FONT_SIZE,
+    backgroundSizeRatio: options.backgroundSizeRatio ?? BACKGROUND_SIZE_RATIO,
+  };
+}
+
+/** 能装子节点的容器类型——只有这些之间互相压住才算错。 */
+const CONTAINER_TYPES = new Set(["frame", "instance", "boolean"]);
+
+/** 两个节点的外接矩形重叠面积（平方像素）。不重叠时返回 0。 */
+function overlapArea(left: DesignNode, right: DesignNode): number {
+  const width = Math.min(left.layout.x + left.layout.width, right.layout.x + right.layout.width) - Math.max(left.layout.x, right.layout.x);
+  const height = Math.min(left.layout.y + left.layout.height, right.layout.y + right.layout.height) - Math.max(left.layout.y, right.layout.y);
+  if (width <= 0 || height <= 0) return 0;
+  // hug 尺寸的框宽高可能还是 0，算出来的面积没意义。
+  if (left.layout.width <= 0 || left.layout.height <= 0 || right.layout.width <= 0 || right.layout.height <= 0) return 0;
+  return width * height;
+}
+
+/**
+ * 两个容器压住了，给出**可以直接照做的**重排方案。
+ *
+ * 只说「它们压住了」模型是改不对的——它看不到这一行的几何关系，只能瞎挪，
+ * 实测连挪三次都压着别的元素（把按钮塞进搜索框的位置、把按钮和下拉框叠在一起）。
+ *
+ * 这里给的是**整行的排布结果**：这一行每个容器应该放在哪个 x。
+ * 放不下时明确告诉它「哪一行总宽超了容器多少、该把哪个改窄」，
+ * 剩下的按顺序排开即可。
+ */
+function describeOverlapFix(left: DesignNode, right: DesignNode, siblings: DesignNode[], parentWidth: number): string {
+  const gap = 16;
+  const containers = siblings
+    .filter(sibling => CONTAINER_TYPES.has(sibling.type))
+    .sort((a, b) => a.layout.x - b.layout.x);
+  if (!containers.length) return "";
+  const start = containers[0]!.layout.x;
+  const totalWidth = containers.reduce((sum, sibling) => sum + sibling.layout.width, 0);
+  const available = parentWidth - start * 2;
+  const needed = totalWidth + gap * Math.max(0, containers.length - 1);
+  if (needed > available) {
+    const widest = containers.slice().sort((a, b) => b.layout.width - a.layout.width)[0]!;
+    const shrink = needed - available;
+    return (
+      `这一行的 ${containers.length} 个元素总宽 ${Math.round(totalWidth)}px，加上间距要 ${Math.round(needed)}px，` +
+      `放不进 ${Math.round(available)}px 的容器——先把 ${widest.id} 的宽度改到 ${Math.max(80, Math.round(widest.layout.width - shrink))}px，` +
+      `再按 x 从小到大顺序排开、间距 16px。`
+    );
+  }
+  let cursor = start;
+  const plan = containers.map(sibling => {
+    const x = Math.round(cursor);
+    cursor += sibling.layout.width + gap;
+    return `${sibling.id} 的 x 改成 ${x}`;
+  });
+  return `这一行按 x 从小到大顺序排开、间距 16px：${plan.join("，")}。`;
+}
+
+/**
+ * 这个节点是不是「铺满父级」的背景层。
+ *
+ * 背景层和内容层本来就叠在一起——登录页的整页背景里就放着登录卡片，
+ * 这不是错。所以判断容器重叠时，尺寸接近父容器的那些要跳过。
+ *
+ * 根节点的父级是**页面**（页面不是 DesignNode），这时拿页面尺寸当父容器尺寸。
+ */
+function isBackgroundLike(
+  node: DesignNode,
+  parent: { layout: { width: number; height: number } } | undefined,
+  ratio = BACKGROUND_SIZE_RATIO,
+): boolean {
+  if (!parent) return false;
+  if (parent.layout.width <= 0 || parent.layout.height <= 0) return false;
+  return node.layout.width >= parent.layout.width * ratio && node.layout.height >= parent.layout.height * ratio;
+}
 
 /**
  * 自动生成的节点名。
@@ -121,16 +270,52 @@ function enabled(options: LintOptions, code: LintCode): boolean {
  */
 export function lintDocument(document: DesignDocument, options: LintOptions = {}): LintIssue[] {
   const grid = Math.max(1, Math.trunc(options.grid ?? DEFAULT_GRID));
+  const limits = resolveLimits(options);
   const issues: LintIssue[] = [];
   const hasColorTokens = hasTokenOfType(document, "color");
   const hasNumberTokens = hasTokenOfType(document, "number");
   /** 节点属于哪一页——跨页面规则要用。 */
   const pageOfNode = new Map<NodeId, PageId>();
 
-  const visit = (nodeId: NodeId, siblings: DesignNode[], parent: DesignNode | undefined, pageId: PageId): void => {
+  /**
+   * 递归遍历一个节点。
+   *
+   * `origin` 是当前节点**相对页面**的绝对坐标；为 null 表示坐标不可信
+   * （祖先里有一层是 stack / grid，子节点的位置由布局引擎算，写在 layout 里的是 0）。
+   * 越界检查只在坐标可信时才做得。
+   *
+   * `ancestorOut` 表示祖先里已经有节点越界了。越界的根因几乎总是**最外层那个
+   * 超尺寸的容器**——把它挪好，里面的子节点跟着就好了。只报根因，结论数量能从
+   * 几十条收敛到几条，模型一轮就修得完。
+   */
+  const visit = (
+    nodeId: NodeId,
+    siblings: DesignNode[],
+    parent: DesignNode | undefined,
+    pageId: PageId,
+    origin: { x: number; y: number } | null,
+    ancestorOut: boolean,
+  ): void => {
     const node = document.nodes[nodeId];
     if (!node) return;
     pageOfNode.set(node.id, pageId);
+    const page = document.pages[pageId];
+    /**
+     * 同级节点**共同的**父容器：根节点时是页面（页面不是 DesignNode，用它的尺寸）。
+     * frame-overlap 比较的是同级节点，用它。
+     */
+    const siblingParentBox = parent ?? (page ? { layout: { width: page.width ?? 0, height: page.height ?? 0 } } : undefined);
+    /**
+     * `parent` **自己**的父容器：判断 parent 是不是「铺满上一级」的背景层要用它。
+     *
+     * 这两个不能混：混了的话每个节点都会拿自己去比自己的尺寸，于是人人都是背景层，
+     * 越界与重叠的结论会全部消失（踩过一次：out-of-parent 一条都没报）。
+     */
+    const parentBox = parent
+      ? (document.nodes[parent.parentId]
+        ? { layout: { width: document.nodes[parent.parentId]!.layout.width, height: document.nodes[parent.parentId]!.layout.height } }
+        : (page ? { layout: { width: page.width ?? 0, height: page.height ?? 0 } } : undefined))
+      : undefined;
 
     // 硬编码填充：只在有颜色 token 的文档里报；渐变不算硬编码（token 只能表达单色）。
     if (enabled(options, "hardcoded-fill") && hasColorTokens && !tokenColor(document, node.bindings?.fill)) {
@@ -206,6 +391,30 @@ export function lintDocument(document: DesignDocument, options: LintOptions = {}
       }
     }
 
+    // 文本互相重叠：同一父节点下两个文本框压在一起，文字就会叠着显示。
+    //
+    // 这条是实测出来的：AI 生成整页计划时经常把两行文字塞进高度不够的框里，
+    // 渲染出来就是「名字和邮箱叠成两行」。别的规则都查不出来——每一行单独看
+    // 都合法（字号正常、位置在栅格上、内容非空），只有**两个框叠在一起**才是问题。
+    if (enabled(options, "text-overlap") && node.type === "text" && node.text.trim()) {
+      const clash = siblings.find(sibling =>
+        sibling.id !== node.id
+        && sibling.type === "text"
+        && sibling.text.trim()
+        && overlapArea(node, sibling) > limits.textOverlapArea
+        && sibling.id > node.id,
+      );
+      if (clash) {
+        issues.push({
+          code: "text-overlap",
+          severity: "warning",
+          nodeId: node.id,
+          message: `${node.id} 和 ${clash.id} 的文本框重叠在一起，文字会叠着显示`,
+          detail: `重叠 ${Math.round(overlapArea(node, clash))}px²`,
+        });
+      }
+    }
+
     // ── 可访问性：空文本 ───────────────────────────────────────────
     // 空文本节点在导出物里就是一个空标签，读屏器读不出任何东西。
     if (enabled(options, "empty-text") && node.type === "text" && !node.text.trim()) {
@@ -219,12 +428,12 @@ export function lintDocument(document: DesignDocument, options: LintOptions = {}
     }
 
     // ── 可访问性：字号过小 ─────────────────────────────────────────
-    if (enabled(options, "tiny-text") && node.type === "text" && node.text.trim() && node.fontSize < MIN_READABLE_FONT_SIZE) {
+    if (enabled(options, "tiny-text") && node.type === "text" && node.text.trim() && node.fontSize < limits.minReadableFontSize) {
       issues.push({
         code: "tiny-text",
         severity: "warning",
         nodeId: node.id,
-        message: `${node.id} 的字号 ${node.fontSize}px 低于可读下限 ${MIN_READABLE_FONT_SIZE}px`,
+        message: `${node.id} 的字号 ${node.fontSize}px 低于可读下限 ${limits.minReadableFontSize}px`,
         detail: `${node.fontSize}px`,
       });
     }
@@ -243,8 +452,100 @@ export function lintDocument(document: DesignDocument, options: LintOptions = {}
       }
     }
 
+    // 节点超出页面画布：导出与截图都会把它裁掉，底部按钮条被切掉一半就是这种。
+    //
+    // 这条是实测出来的：模型把内容区排得比画布高，页面底部的东西（「取消 / 保存」
+    // 那一行）落在 900 之外，截图上只看得见半条。别的规则都查不出来——
+    // 每个节点单独看都合法（位置在栅格上、尺寸正常），只有**相对整页画布**才知道越界了。
+    //
+    // `outOfBounds` 算出来后要传给子节点：祖先越界时，子节点是被牵连的，不重复报。
+    let outOfBounds = false;
+    if (origin) {
+      const absX = origin.x + node.layout.x;
+      const absY = origin.y + node.layout.y;
+      const width = node.layout.width;
+      const height = node.layout.height;
+      if (page?.width && page.height) {
+        const over: string[] = [];
+        if (absX < -limits.outOfBoundsTolerance) over.push(`左边超出 ${Math.round(-absX)}px`);
+        if (absY < -limits.outOfBoundsTolerance) over.push(`上边超出 ${Math.round(-absY)}px`);
+        if (absX + width > page.width + limits.outOfBoundsTolerance) over.push(`右边超出 ${Math.round(absX + width - page.width)}px`);
+        if (absY + height > page.height + limits.outOfBoundsTolerance) over.push(`下边超出 ${Math.round(absY + height - page.height)}px`);
+        outOfBounds = over.length > 0;
+        if (outOfBounds && !ancestorOut && enabled(options, "out-of-bounds")) {
+          issues.push({
+            code: "out-of-bounds",
+            severity: "warning",
+            nodeId: node.id,
+            message: `${node.id} 超出了页面 ${pageId} 的画布`,
+            detail: over.join("，"),
+          });
+        }
+      }
+    }
+
+    // 容器互相压住：一张卡片盖住另一张，最难看的错法之一。
+    //
+    // 实测出来的：新建订单页的「收货信息」卡片被下面的「支付方式」卡片盖掉了半张。
+    // 文本重叠规则查不出来——压住的是两张卡片，文字框本身没有互相压。
+    //
+    // 铺满父级的**背景层**不算错（登录页的整页背景和中间的登录卡片本来就叠着），
+    // 因此尺寸接近父容器的那种一律跳过。
+    if (enabled(options, "frame-overlap") && CONTAINER_TYPES.has(node.type) && !isBackgroundLike(node, siblingParentBox, limits.backgroundSizeRatio)) {
+      const clash = siblings.find(sibling =>
+        sibling.id !== node.id
+        && CONTAINER_TYPES.has(sibling.type)
+        && !isBackgroundLike(sibling, siblingParentBox, limits.backgroundSizeRatio)
+        && overlapArea(node, sibling) > limits.frameOverlapArea
+        && sibling.id > node.id,
+      );
+      if (clash) {
+        issues.push({
+          code: "frame-overlap",
+          severity: "warning",
+          nodeId: node.id,
+          message: `${node.id} 和 ${clash.id} 这两个容器互相压住了`,
+          detail: `重叠 ${Math.round(overlapArea(node, clash))}px²。${describeOverlapFix(node, clash, siblings, parent?.layout.width ?? 0)}`,
+        });
+      }
+    }
+
+    // 子节点跑出父容器：文字掉到卡片外面、输入框探出卡片右边。
+    //
+    // 实测出来的：模型把卡片改窄（1032 → 824）以解决「超出画布」，却**没动里面的子节点**——
+    // 子节点还是原来那个 x，于是文字跑出卡片 184px。改父不改子，边界就破了。
+    //
+    // 背景层（铺满父级的那种）不算：它里面的东西随便放。
+    if (enabled(options, "out-of-parent") && parent && parent.layout.mode === "absolute"
+      && CONTAINER_TYPES.has(parent.type)
+      && !isBackgroundLike(node, parent, limits.backgroundSizeRatio)
+      && !isBackgroundLike(parent, parentBox, limits.backgroundSizeRatio)) {
+      const tolerance = node.type === "text" ? limits.textOverflowTolerance : limits.outOfBoundsTolerance;
+      const over: string[] = [];
+      if (node.layout.x < -tolerance) over.push(`左边超出 ${Math.round(-node.layout.x)}px`);
+      if (node.layout.y < -tolerance) over.push(`上边超出 ${Math.round(-node.layout.y)}px`);
+      if (node.layout.x + node.layout.width > parent.layout.width + tolerance) {
+        over.push(`右边超出 ${Math.round(node.layout.x + node.layout.width - parent.layout.width)}px`);
+      }
+      if (node.layout.y + node.layout.height > parent.layout.height + tolerance) {
+        over.push(`下边超出 ${Math.round(node.layout.y + node.layout.height - parent.layout.height)}px`);
+      }
+      if (over.length) {
+        issues.push({
+          code: "out-of-parent",
+          severity: "warning",
+          nodeId: node.id,
+          message: `${node.id} 跑出了父容器 ${parent.id}`,
+          detail: over.join("，"),
+        });
+      }
+    }
+
     const children = node.childIds.map(id => document.nodes[id]).filter((child): child is DesignNode => Boolean(child));
-    for (const childId of node.childIds) visit(childId, children, node, pageId);
+    const childOrigin = origin && node.layout.mode === "absolute"
+      ? { x: origin.x + node.layout.x, y: origin.y + node.layout.y }
+      : null;
+    for (const childId of node.childIds) visit(childId, children, node, pageId, childOrigin, ancestorOut || outOfBounds);
   };
 
   // 每个页面单独处理：根节点之间互为同级，跨页不算同级（否则同名页面会互相误报）。
@@ -252,7 +553,7 @@ export function lintDocument(document: DesignDocument, options: LintOptions = {}
     const roots = (document.pages[pageId]?.childIds ?? [])
       .map(id => document.nodes[id])
       .filter((node): node is DesignNode => Boolean(node));
-    for (const rootId of document.pages[pageId]?.childIds ?? []) visit(rootId, roots, undefined, pageId);
+    for (const rootId of document.pages[pageId]?.childIds ?? []) visit(rootId, roots, undefined, pageId, { x: 0, y: 0 }, false);
   }
 
   // ── 跨节点规则：跨页面一致性 ─────────────────────────────────────
@@ -518,6 +819,10 @@ export const LINT_RULE_TITLES: Record<LintCode, string> = {
   "empty-text": "空文本",
   "tiny-text": "字号过小",
   "interactive-without-name": "交互节点没有可读名字",
+  "text-overlap": "文本互相重叠",
+  "out-of-bounds": "超出画布",
+  "frame-overlap": "容器互相压住",
+  "out-of-parent": "跑出父容器",
 };
 
 /**
@@ -541,6 +846,10 @@ const AUTO_FIXABLE_CODES = new Set<LintCode>([
   "empty-text",
   "tiny-text",
   "interactive-without-name",
+  "text-overlap",
+  "out-of-bounds",
+  "frame-overlap",
+  "out-of-parent",
 ]);
 
 /**
