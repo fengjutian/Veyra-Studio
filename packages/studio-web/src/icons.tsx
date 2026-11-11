@@ -48,6 +48,7 @@ import {
   Lock,
   LockOpen,
   MousePointer2,
+  MoreHorizontal,
   PanelLeft,
   PanelRight,
   Package,
@@ -146,6 +147,7 @@ export const ICONS = {
   themeDark: Moon,
   themeLight: Sun,
   settings: Settings,
+  more: MoreHorizontal,
   prototypePlay: Play,
 
   // 通用

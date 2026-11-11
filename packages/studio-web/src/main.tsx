@@ -2705,6 +2705,11 @@ function App() {
           <h2>页面</h2>
           <span className="panel-count">{document.pageOrder.length}</span>
           <Tooltip label="新增页面"><button className="icon-only" aria-label="新增页面" disabled={busy} onClick={createPage}><Icon name="pageAdd" /></button></Tooltip>
+          <ToolbarMenu label="页面操作" icon="more" iconOnly items={[
+            { label: "重命名页面", icon: "rename", disabled: busy, onSelect: renamePage },
+            { label: "设置页面主题", icon: "themeLight", disabled: busy, onSelect: setPageTheme },
+            { label: "删除当前页面", icon: "pageDelete", danger: true, disabled: busy || document.pageOrder.length === 1 || page.childIds.length > 0, onSelect: deletePage },
+          ]} />
         </div>
         <div className="page-list" role="listbox" aria-label="页面列表">
           {document.pageOrder.map(id => {
@@ -2717,11 +2722,6 @@ function App() {
               {item && item.childIds.length > 0 && <span className="page-row-meta">{item.childIds.length}</span>}
             </button>;
           })}
-        </div>
-        <div className="page-actions">
-          <button disabled={busy} onClick={renamePage}><Icon name="rename" />重命名</button>
-          <button disabled={busy} onClick={setPageTheme}>主题</button>
-          <Tooltip label={page.childIds.length ? "请先清空页面" : "删除当前页面"}><button disabled={busy || document.pageOrder.length === 1 || page.childIds.length > 0} onClick={deletePage}><Icon name="pageDelete" />删除</button></Tooltip>
         </div>
         <div className="page-size-control">
           <label>
@@ -2769,16 +2769,15 @@ function App() {
             <Tooltip label="复制 · Ctrl/Cmd+C"><button className="icon-only" aria-label="复制" disabled={busy || !selectedIds.length} onClick={copySelection}><Icon name="copy" /></button></Tooltip>
             <Tooltip label="粘贴 · Ctrl/Cmd+V"><button className="icon-only" aria-label="粘贴" disabled={busy || !clipboard.current} onClick={pasteSelection}><Icon name="paste" /></button></Tooltip>
             <Tooltip label="重复 · Ctrl/Cmd+D"><button className="icon-only" aria-label="重复" disabled={busy || !selectedIds.length} onClick={duplicateSelection}><Icon name="duplicate" /></button></Tooltip>
-            <span className="tool-divider" aria-hidden="true" />
-            <Tooltip label="编组 · Ctrl/Cmd+G"><button className="icon-only" aria-label="编组" disabled={busy || selectedIds.length < 2 || !selectionSameParent} onClick={groupSelection}><Icon name="group" /></button></Tooltip>
-            <Tooltip label="取消编组 · Shift+Ctrl/Cmd+G"><button className="icon-only" aria-label="取消编组" disabled={busy || selectedIds.length !== 1 || selected.type !== "frame" || !selected.childIds.length} onClick={ungroupSelection}><Icon name="ungroup" /></button></Tooltip>
-          </div>
-          <div className="layer-tool-row">
-            <span className="layer-tool-label">顺序</span>
-            <Tooltip label="置底"><button className="icon-only" aria-label="置底" disabled={busy || selectedLayerIndex <= 0} onClick={() => reorderLayer(0)}><Icon name="toBack" /></button></Tooltip>
-            <Tooltip label="下移 · Ctrl/Cmd+["><button className="icon-only" aria-label="下移" disabled={busy || selectedLayerIndex <= 0} onClick={() => reorderLayer(selectedLayerIndex - 1)}><Icon name="moveDown" /></button></Tooltip>
-            <Tooltip label="上移 · Ctrl/Cmd+]"><button className="icon-only" aria-label="上移" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} onClick={() => reorderLayer(selectedLayerIndex + 1)}><Icon name="moveUp" /></button></Tooltip>
-            <Tooltip label="置顶"><button className="icon-only" aria-label="置顶" disabled={busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1} onClick={() => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1)}><Icon name="toFront" /></button></Tooltip>
+            <span className="layer-tool-spacer" />
+            <ToolbarMenu label="更多图层操作" icon="more" iconOnly items={[
+              { label: "编组", icon: "group", disabled: busy || selectedIds.length < 2 || !selectionSameParent, onSelect: groupSelection },
+              { label: "取消编组", icon: "ungroup", disabled: busy || selectedIds.length !== 1 || selected.type !== "frame" || !selected.childIds.length, onSelect: ungroupSelection },
+              { label: "置于底层", icon: "toBack", disabled: busy || selectedLayerIndex <= 0, onSelect: () => reorderLayer(0) },
+              { label: "下移一层", icon: "moveDown", disabled: busy || selectedLayerIndex <= 0, onSelect: () => reorderLayer(selectedLayerIndex - 1) },
+              { label: "上移一层", icon: "moveUp", disabled: busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1, onSelect: () => reorderLayer(selectedLayerIndex + 1) },
+              { label: "置于顶层", icon: "toFront", disabled: busy || selectedLayerIndex < 0 || selectedLayerIndex >= (selectedOwner?.childIds.length ?? 0) - 1, onSelect: () => reorderLayer((selectedOwner?.childIds.length ?? 1) - 1) },
+            ]} />
           </div>
         </div>
         <LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} />

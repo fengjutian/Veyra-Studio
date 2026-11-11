@@ -9,9 +9,10 @@ export interface ToolbarMenuItem {
   onSelect(): void;
 }
 
-export function ToolbarMenu({ label, icon, items, children }: {
+export function ToolbarMenu({ label, icon, iconOnly = false, items, children }: {
   label: string;
   icon?: IconName;
+  iconOnly?: boolean;
   items: ToolbarMenuItem[];
   children?: ReactNode;
 }) {
@@ -44,10 +45,9 @@ export function ToolbarMenu({ label, icon, items, children }: {
     : undefined;
 
   return <div className="toolbar-menu" ref={root}>
-    <button ref={trigger} className="toolbar-menu-trigger" aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+    <button ref={trigger} className={`toolbar-menu-trigger${iconOnly ? " icon-only" : ""}`} aria-label={label} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       {icon ? <Icon name={icon} /> : null}
-      <span>{children ?? label}</span>
-      <Icon name="chevronDown" size={11} />
+      {iconOnly ? null : <><span>{children ?? label}</span><Icon name="chevronDown" size={11} /></>}
     </button>
     {open ? <div className="toolbar-menu-content" role="menu" aria-label={label} style={menuPosition}>
       {items.map(item => <button

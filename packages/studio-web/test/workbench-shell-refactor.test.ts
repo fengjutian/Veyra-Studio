@@ -29,6 +29,13 @@ test("左侧页面与图层使用独立页签", () => {
   assert.match(mainSource, /leftPanelTab === "layers".*layers-block/s);
 });
 
+test("页面和低频图层操作收进菜单", () => {
+  assert.match(mainSource, /<ToolbarMenu label="页面操作" icon="more" iconOnly/);
+  assert.match(mainSource, /<ToolbarMenu label="更多图层操作" icon="more" iconOnly/);
+  assert.match(mainSource, /label: "设置页面主题"/);
+  assert.match(mainSource, /label: "置于顶层"/);
+});
+
 test("检查器使用卡片分区和统一控件表面", () => {
   const workbenchCss = readFileSync(fileURLToPath(new URL("../src/workbench.css", import.meta.url)), "utf8");
   assert.match(workbenchCss, /--control-surface:/);
