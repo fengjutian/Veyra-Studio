@@ -9,6 +9,6 @@ export function clampInspectorWidth(width: number, viewportWidth: number): numbe
 
 export function defaultInspectorWidth(viewportWidth: number): number {
   if (viewportWidth <= 1180) return MIN_INSPECTOR_WIDTH;
-  if (viewportWidth <= 1440) return 272;
-  return 288;
+  if (viewportWidth <= 1440) return 304;
+  return 320;
 }

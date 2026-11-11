@@ -13,6 +13,9 @@
   --workbench-muted: #667085;
   --workbench-dim: #8a94a6;
   --workbench-accent-soft: #ede9fe;
+  --control-surface: #ffffff;
+  --control-border: #cbd2df;
+  --section-surface: #ffffff;
   color: #172033;
 }
 
@@ -58,6 +61,13 @@
   box-shadow: 0 12px 32px #34405426;
 }
 :root[data-ui-theme="light"] .layer-tools button { color: #667085; }
+:root[data-ui-theme="light"] .left-panel-tabs button.is-active {
+  border-color: #c4b5fd;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+:root[data-ui-theme="light"] .left-panel-tabs button span { background: #eef1f6; color: #667085; }
+:root[data-ui-theme="light"] .left-panel-tabs button.is-active span { background: #ddd6fe; color: #5b21b6; }
 :root[data-ui-theme="light"] .layer-tools button:hover:not(:disabled) { background: #ede9fe; color: #5b21b6; }
 :root[data-ui-theme="light"] .page-size-control select,
 :root[data-ui-theme="light"] .page-size-custom input { border-color: #cbd2df; background: #f7f8fb; color: #172033; }
@@ -202,6 +212,13 @@
 }
 :root[data-ui-theme="light"] .segmented { border-color: #d7dce6; background: #eef1f6; }
 :root[data-ui-theme="light"] .inspector-section + .inspector-section { border-top-color: #e4e7ec; }
+:root[data-ui-theme="light"] .inspector-body > .inspector-section {
+  border-color: #dfe3eb;
+  background: #ffffff;
+  box-shadow: 0 1px 2px #3440540a;
+}
+:root[data-ui-theme="light"] .inspector-section h2,
+:root[data-ui-theme="light"] .inspector-section .section-heading h2 { color: #344054; }
 :root[data-ui-theme="light"] .instance-override-appearance input[type="color"] { border-color: #cbd2df; background: #ffffff; }
 :root[data-ui-theme="light"] .studio .topbar button.header-danger:hover:not(:disabled) { background: #fff1f0; color: #b42318; }
 

@@ -21,3 +21,17 @@ test("右侧主导航保持四个高频入口", () => {
 test("AI 工作区打开时不再重复显示画布命令条", () => {
   assert.match(mainSource, /!\(rightPanelOpen && inspectorTab === "ai"\)/);
 });
+
+test("左侧页面与图层使用独立页签", () => {
+  assert.match(mainSource, /leftPanelTab.*useState<"pages" \| "layers">\("layers"\)/);
+  assert.match(mainSource, /role="tablist" aria-label="左侧面板"/);
+  assert.match(mainSource, /leftPanelTab === "pages".*pages-block/s);
+  assert.match(mainSource, /leftPanelTab === "layers".*layers-block/s);
+});
+
+test("检查器使用卡片分区和统一控件表面", () => {
+  const workbenchCss = readFileSync(fileURLToPath(new URL("../src/workbench.css", import.meta.url)), "utf8");
+  assert.match(workbenchCss, /--control-surface:/);
+  assert.match(workbenchCss, /\.inspector-body > \.inspector-section/);
+  assert.match(workbenchCss, /\.inspector select,/);
+});

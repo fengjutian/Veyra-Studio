@@ -10,6 +10,6 @@ test("inspector width stays within the panel and viewport limits", () => {
 
 test("default inspector width follows the responsive layout", () => {
   assert.equal(defaultInspectorWidth(1000), 256);
-  assert.equal(defaultInspectorWidth(1300), 272);
-  assert.equal(defaultInspectorWidth(1600), 288);
+  assert.equal(defaultInspectorWidth(1300), 304);
+  assert.equal(defaultInspectorWidth(1600), 320);
 });

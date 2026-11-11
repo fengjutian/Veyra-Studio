@@ -182,6 +182,7 @@ function App() {
   }, [scroller, zoom]);
   const [panning, setPanning] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [leftPanelTab, setLeftPanelTab] = useState<"pages" | "layers">("layers");
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiTheme());
   useEffect(() => {
@@ -2690,7 +2691,15 @@ function App() {
     </header>
 
     <aside className="layers">
-      <div className="panel-block pages-block">
+      <div className="left-panel-tabs" role="tablist" aria-label="左侧面板">
+        <button role="tab" aria-selected={leftPanelTab === "pages"} className={leftPanelTab === "pages" ? "is-active" : ""} onClick={() => setLeftPanelTab("pages")}>
+          页面 <span>{document.pageOrder.length}</span>
+        </button>
+        <button role="tab" aria-selected={leftPanelTab === "layers"} className={leftPanelTab === "layers" ? "is-active" : ""} onClick={() => setLeftPanelTab("layers")}>
+          图层 <span>{page.childIds.length}</span>
+        </button>
+      </div>
+      {leftPanelTab === "pages" ? <div className="panel-block pages-block" role="tabpanel" aria-label="页面">
         <div className="panel-head">
           <h2>页面</h2>
           <span className="panel-count">{document.pageOrder.length}</span>
@@ -2747,8 +2756,8 @@ function App() {
             }}>应用</button>
           </div>
         </div>
-      </div>
-      <div className="panel-block layers-block">
+      </div> : null}
+      {leftPanelTab === "layers" ? <div className="panel-block layers-block" role="tabpanel" aria-label="图层">
         <div className="panel-head">
           <h2>图层</h2>
           <span className="panel-count">{page.childIds.length}</span>
@@ -2772,7 +2781,7 @@ function App() {
           </div>
         </div>
         <LayerTree document={document} rootIds={page.childIds} selectedIds={selectedIds} onSelect={(nodeId, event) => setSelectedIds(current => event.shiftKey ? toggleId(current, nodeId) : [nodeId])} onReorder={reorderFromTree} />
-      </div>
+      </div> : null}
     </aside>    <section className="workspace">
       <div className={`canvas-scroller${panMode ? " pan-mode" : ""}${panning ? " panning" : ""}`} ref={setScroller} onScroll={syncCanvasViewport} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={endPan} onPointerCancel={endPan}>
         <ContextMenuRoot>

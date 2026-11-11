@@ -9,11 +9,13 @@ test("light theme covers every workbench page and overlay", () => {
   const requiredSurfaces = [
     ".pages-block",
     ".layer-tools",
+    ".left-panel-tabs",
     ".inspector input",
     ".external-provider-row",
     ".history-row",
     ".storage-project",
     ".settings-page > .inspector-section",
+    ".inspector-body > .inspector-section",
     ".settings-theme-option",
     ".topbar-ai-entry",
     ".toolbar-menu-content",
