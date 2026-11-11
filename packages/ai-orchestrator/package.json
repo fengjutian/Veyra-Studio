@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@ufira/design-persistence": "*",
-    "@types/node": "^25.5.0",
+    "@types/node": "^26.6.6",
     "tsup": "^8.5.1",
     "typescript": "^5.9.3"
   }
