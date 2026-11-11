@@ -75,3 +75,26 @@ test("exports per-run font size", () => {
   const svg = exportPageToSvg(document, { pageId: "page:1", viewport: VIEWPORT });
   assert.match(svg.svg, /<tspan font-size="32">ab<\/tspan>cdef/);
 });
+
+test("exports per-run line height", () => {
+  const document = documentWithText({
+    runs: [{ from: 0, to: 2, style: { lineHeight: 40 } }],
+  });
+  const html = exportPageToHtml(document, { pageId: "page:1", viewport: VIEWPORT });
+  assert.match(html.html, /<span style="line-height:40px">ab<\/span>cdef/);
+});
+
+test("SVG advances paragraphs by the tallest line height in each paragraph", () => {
+  // SVG 不换行（每段一行），所以段内行高覆盖只体现为段与段之间的推进距离。
+  const document = documentWithText({
+    text: "ab\ncd",
+    runs: [{ from: 0, to: 2, style: { lineHeight: 48 } }],
+    paragraphStyles: [{ from: 0, to: 2, style: { listType: "bullet" } }, { from: 3, to: 5, style: { listType: "bullet" } }],
+  });
+  const svg = exportPageToSvg(document, { pageId: "page:1", viewport: VIEWPORT });
+  // 列表标记与正文各是一个 <text>，所以这里只取正文（第二个一组）。
+  const ys = [...svg.svg.matchAll(/<text [^>]*y="([\d.]+)"[^>]*>(?:ab|cd)</g)].map(match => Number(match[1]));
+  assert.equal(ys.length, 2);
+  // 第一段行高 48（run 覆盖值 48 > 节点级 24），第二段退回节点级 24。
+  assert.equal(ys[1]! - ys[0]!, 48);
+});

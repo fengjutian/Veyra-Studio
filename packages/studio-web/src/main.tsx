@@ -3,12 +3,14 @@ import { createRoot } from "react-dom/client";
 import * as Tabs from "@radix-ui/react-tabs";
 import { AiCancelledError, PlanParseError, PLACEHOLDER_ASSET_URL, SafeAiEditor, createOpenAiCompatiblePlanner, describeProvider, runAutonomousLoop, type AiImagePayload, type AiPlanPreview, type AiPlanner, type AutonomousRound } from "@ufira/ai-orchestrator";
 import type { CommandEnvelope, DesignCommand, TransactionEntry } from "@ufira/design-runtime";
-import { absolutePath, applyThemeForPage, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
+import { absolutePath, applyThemeForPage, applyTypographyToken, defaultAppearance, defaultLayout, findTheme, inheritedTokenSource, isTokenOverridden, lintDocument, normalizePath, parseStyleTokens, proposalToToken, supportsBooleanOperand, themeTokenMap, vectorPathCommands, CURRENT_SCHEMA_VERSION, findOwningComponentId, isInsideSubtree, migrateDocument, type AssetMetadata, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ConstraintAxis, type Constraints, type DesignDocument, type DesignNode, type ImageNode, type TextPatch, type TokenValue, type VectorGeometry } from "@ufira/design-schema";
 import { StudioProject, assetDataUrl, collectAssetUsage, collectContrastIssues, collectExternalAssetDiagnostics, collectExternalAttributions, createAssetResolver, createHttpExternalAssetProvider, findMissingAssets, HistoryReconstructionError, installPaperBooleanEngine, planExternalProviderPurge, prepareFontFaces, prepareVectorPdfFonts, reconstructDocumentAt, renderAttributionMarkdown, resolveExternalAsset, PACKAGE_DOCUMENT_NAME, type ExternalAssetProvider } from "@ufira/studio-application";
 import type { AutosaveStatus, ProjectRepository, ProjectStorageUsage, ProjectSummary, SnapshotSummary } from "@ufira/design-persistence";
 import { currentAutosaveStatus, flushAutosave, installAutosaveFlush, repository, subscribeAutosave } from "./autosave-store";
 import { copyNodeTrees, pasteNodeTrees, type NodeClipboard } from "./node-clipboard";
 import { planGroup, planUngroup } from "./grouping";
+import { rotationRelayoutNotice, toParentLocalLayout } from "./renderer/multi-rotate";
+import { collectInstanceConstraintTargets, findInstanceCopy, planInstanceConstraintOverride } from "./instance-constraint-override";
 import { allLocked, deletableRoots, editableNodes } from "./selection-policy";
 import { arrangeNodes, nudgeNodes, nudgeReorder, type Arrangement } from "./node-arrangement";
 import {
@@ -31,12 +33,12 @@ import { useCanvasLayout } from "./canvas-layout";
 import { resetBrowserTextMeasurementCache } from "./browser-text-measurer";
 import { registerFontSubsetter } from "./font-subset-client";
 import { collectFontFamilies, collectMissingFonts, loadDocumentFonts, prepareFonts } from "./font-loading";
-import { clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "./canvas-zoom";
+import { clampZoom, contentBounds, fitZoom, selectionBounds, zoomAtPoint, zoomFromDrag, zoomPercent, zoomStep } from "./canvas-zoom";
 import { PAGE_SIZE_PRESETS, matchingPageSizePreset, pageSize } from "./page-size";
 import { canStartCanvasPan, centeredCanvasScroll, clampScroll, panScroll } from "./canvas-pan";
 import { formatVariant, listComponents, makeInstanceNode, variantOptions } from "./components";
 import { currentValuesFromForm, nextValuesFromForm, parseVariantProperties, validateVariantForm, variantCurrentFields, variantNextFields } from "./variant-form";
-import { PropertyPanel } from "./property-panel";
+import { PropertyPanel, Segmented } from "./property-panel";
 import { TokenPanel } from "./token-panel";
 import { InstancePanel } from "./instance-panel";
 import { newPropertyId } from "./component-props";
@@ -165,6 +167,14 @@ function App() {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   // 缩放与抓手都是视图状态：不写进文档，也不涨 revision。
   const [zoom, setZoom] = useState(1);
+  // 缩放还要能被指针手势**同步**读到：状态更新是异步的，拖动时每一帧都得用当前缩放
+  // 算锚点位置，所以另存一份 ref。
+  const zoomRef = useRef(1);
+  const updateZoom = useCallback((next: number | ((current: number) => number)) => {
+    const value = typeof next === "function" ? next(zoomRef.current) : next;
+    zoomRef.current = value;
+    setZoom(value);
+  }, []);
   // 当前画布工具。和缩放一样只是视图状态：切工具不改文档，也不进快照。
   const [tool, setTool] = useState<ToolId>("select");
   const panMode = tool === "hand";
@@ -478,12 +488,11 @@ function App() {
     const onWheel = (event: WheelEvent) => {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
-      setZoom(current => clampZoom(current * (event.deltaY < 0 ? 1.1 : 1 / 1.1)));
+      updateZoom(current => clampZoom(current * (event.deltaY < 0 ? 1.1 : 1 / 1.1)));
     };
     scroller.addEventListener("wheel", onWheel, { passive: false });
     return () => scroller.removeEventListener("wheel", onWheel);
-  }, [scroller]);
-
+  }, [scroller, updateZoom]);
   const activePageId = document && currentPageId && document.pages[currentPageId] ? currentPageId : document?.pageOrder[0];
   const activePageSize = pageSize(document?.pages[activePageId ?? ""]);
   // 页面自带的主题（翻到哪页就用哪页的），显式选择优先于它。
@@ -562,7 +571,7 @@ function App() {
     initialFitDone.current = true;
     const frame = requestAnimationFrame(() => {
       const viewport = { width: Math.max(1, scroller.clientWidth - 56), height: Math.max(1, scroller.clientHeight - 92) };
-      setZoom(fitZoom(activePageSize, viewport, 12));
+      updateZoom(fitZoom(activePageSize, viewport, 12));
       requestAnimationFrame(() => {
         const centered = centeredCanvasScroll(scroller.scrollWidth, scroller.scrollHeight, scroller.clientWidth, scroller.clientHeight);
         scroller.scrollLeft = centered.scrollLeft;
@@ -570,7 +579,7 @@ function App() {
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [scroller, document, activePageSize.width, activePageSize.height]);
+  }, [scroller, document, activePageSize.width, activePageSize.height, updateZoom]);
 
   // 这个 hook 必须在提前 return 之前调用：加载态渲染的 hook 数量要和项目加载后
   // 完全一致，否则 React 会直接抛「渲染了比上次更多的 hook」，整棵 App 崩掉。
@@ -651,6 +660,21 @@ function App() {
   const multiSelectionBounds = selectedIds.length > 1 ? selectionBounds(canvasLayout.boxes, selectedIds) : undefined;
   const multiToolbarTop = multiSelectionBounds ? Math.max(4, CANVAS_STAGE_OFFSET_TOP + multiSelectionBounds.y * zoom - 44) : 0;
   const canArrange = !selectionLocked && selectionSameParent;
+  // 旋转角度读数：拖动时显示当前角度；静止时单选显示节点自己的角度。
+  // 多选没有「组的绝对角度」——每个节点各自存角度，静止时只能显示增量。
+  const rotationAngle = canvasDrag.rotationPreview
+    ? canvasDrag.rotationPreview.angle
+    : selectedIds.length === 1 ? document.nodes[selectedIds[0]!]?.layout.rotation : undefined;
+  // 实例内的约束覆盖：选中的节点是某个实例的物化副本时才出现这一段。
+  const instanceCopy = selected ? findInstanceCopy(document, selected.id) : undefined;
+  const instanceConstraintTarget = instanceCopy
+    ? collectInstanceConstraintTargets(document, instanceCopy.instanceId).find(target => target.copyId === selected!.id)
+    : undefined;
+  // 覆盖能力的状态说明：运行时还没放行时界面要直说，而不是让人以为改了没生效。
+  const instanceConstraintOverrideReason = instanceConstraintTarget
+    ? planInstanceConstraintOverride(instanceConstraintTarget, instanceConstraintTarget.constraints ?? { horizontal: "start", vertical: "start" }).reason
+      ?? "修改会写进这个实例的覆盖记录，组件定义与其它实例不受影响。"
+    : "";
 
   const run = async (operation: () => Promise<void>) => {
     if (operationInFlight.current) return;
@@ -1246,7 +1270,7 @@ function App() {
     await execute([{ type: "page.resize", payload: { id: page.id, width, height } }]);
     if (scroller) {
       const viewport = { width: Math.max(1, scroller.clientWidth - 56), height: Math.max(1, scroller.clientHeight - 92) };
-      setZoom(fitZoom({ width, height }, viewport, 12));
+      updateZoom(fitZoom({ width, height }, viewport, 12));
       requestAnimationFrame(() => {
         const centered = centeredCanvasScroll(scroller.scrollWidth, scroller.scrollHeight, scroller.clientWidth, scroller.clientHeight);
         scroller.scrollLeft = centered.scrollLeft;
@@ -1289,6 +1313,51 @@ function App() {
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
   /**
+   * 缩放工具的手势状态。
+   *
+   * 锚点记的是**场景坐标**：缩放之后要把这个点挪回鼠标下面，所以要的是画布里的位置，
+   * 而不是屏幕像素。
+   */
+  const zoomGesture = useRef<{ pointerId: number; anchor: { x: number; y: number }; startClientY: number; startZoom: number; moved: boolean } | null>(null);
+  /** 以某个场景点为锚点缩放，并同步滚动位置，保证锚点停在鼠标下面。 */
+  const zoomAtAnchor = (nextZoom: number, anchor: { x: number; y: number }) => {
+    const current = zoomRef.current;
+    const clamped = clampZoom(nextZoom);
+    updateZoom(clamped);
+    if (!scroller) return;
+    const next = zoomAtPoint(current, clamped, anchor, { scrollLeft: scroller.scrollLeft, scrollTop: scroller.scrollTop });
+    scroller.scrollLeft = clampScroll(next.scrollLeft, scroller.scrollWidth - scroller.clientWidth);
+    scroller.scrollTop = clampScroll(next.scrollTop, scroller.scrollHeight - scroller.clientHeight);
+    syncCanvasViewport();
+  };
+  /**
+   * 缩放工具：单击放大、Alt+单击缩小、拖动连续缩放。
+   *
+   * 拖动时缩放围绕**按下点**，不是围绕当前指针——指针在动，拿它当锚点会越缩越飘。
+   */
+  const zoomToolHandlers = {
+    onPointerDownCapture: (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.button !== 0) return;
+      zoomGesture.current = { pointerId: event.pointerId, anchor: canvasPointOf(event), startClientY: event.clientY, startZoom: zoomRef.current, moved: false };
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      event.stopPropagation();
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
+      const state = zoomGesture.current;
+      if (!state || state.pointerId !== event.pointerId) return;
+      if (!state.moved && Math.abs(event.clientY - state.startClientY) > 3) state.moved = true;
+      if (!state.moved) return;
+      zoomAtAnchor(zoomFromDrag(state.startClientY, event.clientY, state.startZoom), state.anchor);
+    },
+    onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => {
+      const state = zoomGesture.current;
+      zoomGesture.current = null;
+      if (!state) return;
+      if (!state.moved) zoomAtAnchor(zoomStep(state.startZoom, event.altKey ? -1 : 1), state.anchor);
+    },
+    onPointerCancel: () => { zoomGesture.current = null; },
+  };
+  /**
    * 单击选中完全由 Canvas 命中决定；只有选择工具才改变选中态。
    *
    * 路径编辑期间直接忽略：编辑态下点手柄可能落在图形包围盒之外，让它顺带跑一遍选中
@@ -1326,7 +1395,11 @@ function App() {
       setSelectedIds([hit]);
     }
   };
-  const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>) => changes.length && void run(() => execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } }))));
+  const patchLayouts = (changes: Array<{ id: string; layout: DesignNode["layout"] }>, notice?: string) => changes.length && void run(async () => {
+    await execute(changes.map(change => ({ type: "node.patch", payload: { id: change.id, patch: { layout: change.layout } } })));
+    // 提交成功后再补提示：execute 自己会写「已提交 · rN」，提示要盖在它后面。
+    if (notice) setMessage(notice);
+  });
   /**
    * 画布拖动的提交：换父级 + 坐标换算。
    *
@@ -1361,11 +1434,30 @@ function App() {
     }
     const local = changes.map(change => {
       const origin = parentContentOrigin(current, hitTestScene, current.nodes[change.id]?.parentId);
-      return { id: change.id, layout: { ...change.layout, x: change.layout.x - origin.x, y: change.layout.y - origin.y } };
+      // 提交上来的坐标一律是**绝对**坐标，这里换算成父级局部坐标。
+      return { id: change.id, layout: toParentLocalLayout(change.layout, { x: change.layout.x, y: change.layout.y }, origin) };
     });
-    patchLayouts(local);
+    // 旋转不参与布局：父级是自动布局时，转完的节点不会让兄弟节点重新排列。
+    // 这件事要说出来，否则用户以为是自己操作错了。（只有带角度的提交才提示。）
+    const rotated = local.filter(change => change.layout.rotation !== undefined).map(change => change.id);
+    const notice = rotated.length ? rotationRelayoutNotice(current, rotated) : undefined;
+    patchLayouts(local, notice);
   };
   const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints" | "overflow" | "position">>) => selected && patchNode(selected.id, patchValue);
+  /**
+   * 实例内的约束覆盖。
+   *
+   * 覆盖的是**这个实例**里的物化副本，组件定义与别的实例不受影响。运行时目前还不
+   * 接受这种覆盖（design-schema 的 OverrideField 与 design-runtime 的
+   * component.override 都没放行 constraints），所以这一段现在只会把「为什么还不行」
+   * 说清楚；运行时支持之后，改动只需要落在 `instance-constraint-override.ts` 与这里。
+   */
+  const overrideInstanceConstraints = (constraints: Constraints) => {
+    if (!instanceConstraintTarget || !instanceCopy) return;
+    const plan = planInstanceConstraintOverride(instanceConstraintTarget, constraints);
+    if (!plan.supported) { setMessage(plan.reason ?? "运行时还不支持实例内的约束覆盖"); return; }
+    void run(() => execute([{ type: "component.override", payload: { instanceId: instanceCopy.instanceId, sourceNodeId: instanceConstraintTarget.sourceNodeId, patch: plan.patch } } as unknown as DesignCommand]));
+  };
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
   const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
   // 段落样式走独立命令：它是带区间语义的结构，不能混进 text.patch。
@@ -2290,8 +2382,7 @@ function App() {
       width: Math.max(1, scroller.clientWidth - 56),
       height: Math.max(1, scroller.clientHeight - 92),
     };
-    setZoom(fitZoom(bounds, viewport, 8));
-    // 缩放会在下一帧改变 stage 的滚动尺寸；等布局落定后再居中，保证一次点击
+    updateZoom(fitZoom(bounds, viewport, 8));    // 缩放会在下一帧改变 stage 的滚动尺寸；等布局落定后再居中，保证一次点击
     // 同时完成「看全」与「回到内容中央」，而不是只改右下角的百分比。
     requestAnimationFrame(() => {
       const centered = centeredCanvasScroll(scroller.scrollWidth, scroller.scrollHeight, scroller.clientWidth, scroller.clientHeight);
@@ -2444,11 +2535,11 @@ function App() {
     await execute(commands);
     setMessage(`已创建变体「${formatVariant(properties, nextValues)}」`);
   });
-  /** 编组：把同级的多个对象包进一个不带填充的 frame。 */
+  /** 编组：把选中的对象包进一个不带填充的 frame；跨父级也能编，frame 落在最近共同祖先里。 */
   const groupSelection = () => {
     if (selectionLocked) return;
     const plan = planGroup(document, selectedIds, canvasLayout.boxes, { id: `frame:${crypto.randomUUID().slice(0, 8)}` });
-    if (!plan) { setMessage("只有同一个父级下的两个及以上对象可以编组"); return; }
+    if (!plan) { setMessage("至少选两个对象才能编组"); return; }
     void run(async () => { await execute(plan.commands); setSelectedIds([plan.frameId]); setMessage(`已编组 ${plan.nodeIds.length} 个对象`); });
   };
   /** 用剪贴板内容填充实例的插槽；多个插槽时让用户选。 */
@@ -2548,7 +2639,7 @@ function App() {
     if (selectionLocked || selectedIds.length !== 1) return;
     const plan = planUngroup(document, selectedIds[0]!, canvasLayout.boxes);
     if (!plan) { setMessage("选中的对象不是带子节点的编组"); return; }
-    void run(async () => { await execute(plan.commands); setSelectedIds(plan.childIds); setMessage(`已取消编组，放出 ${plan.childIds.length} 个对象`); });
+    void run(async () => { await execute(plan.commands); setSelectedIds(plan.childIds); setMessage(`已取消编组，放出 ${plan.childIds.length} 个对象（放回编组的父级，不回到各自的原父级）`); });
   };
   nudgeAction.current = (dx, dy) => {
     if (busy) return;
@@ -2773,7 +2864,7 @@ function App() {
             <Tooltip label="重复 · Ctrl/Cmd+D"><button className="icon-only" aria-label="重复" disabled={busy || !selectedIds.length} onClick={duplicateSelection}><Icon name="duplicate" /></button></Tooltip>
             <span className="layer-tool-spacer" />
             <ToolbarMenu label="更多图层操作" icon="more" iconOnly items={[
-              { label: "编组", icon: "group", disabled: busy || selectedIds.length < 2 || !selectionSameParent, onSelect: groupSelection },
+              { label: "编组", icon: "group", disabled: busy || selectedIds.length < 2, onSelect: groupSelection },
               { label: "取消编组", icon: "ungroup", disabled: busy || selectedIds.length !== 1 || selected.type !== "frame" || !selected.childIds.length, onSelect: ungroupSelection },
               { label: "置于底层", icon: "toBack", disabled: busy || selectedLayerIndex <= 0, onSelect: () => reorderLayer(0) },
               { label: "下移一层", icon: "moveDown", disabled: busy || selectedLayerIndex <= 0, onSelect: () => reorderLayer(selectedLayerIndex - 1) },
@@ -2793,8 +2884,8 @@ function App() {
                 <span className="canvas-frame-name">{page.name}</span>
                 <span className="canvas-frame-size">{activePageSize.width} × {activePageSize.height}</span>
               </div>
-              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}${canvasDrag.hoverRotate && tool === "select" ? " rotate-hover" : ""}${pathEditId && pathEdit.hoverSegment ? " segment-hover" : ""}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : pathEditId ? pathEdit.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } handleCanvasDoubleClick(event); }}>
-                <CanvasSurface repository={repository} projectId={document.id} document={themedDocument ?? document} pageId={page.id} boxes={canvasLayout.boxes} width={activePageSize.width} height={activePageSize.height} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} editAnchorTypes={pathEdit.anchorTypes} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+              <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}${canvasDrag.hoverRotate && tool === "select" ? " rotate-hover" : ""}${pathEditId && pathEdit.hoverSegment ? " segment-hover" : ""}`} style={{ zoom, ...(tool === "zoom" ? { cursor: "zoom-in" } : {}) }} {...(tool === "pen" ? pen.handlers : tool === "zoom" ? zoomToolHandlers : pathEditId ? pathEdit.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } handleCanvasDoubleClick(event); }}>
+                <CanvasSurface repository={repository} projectId={document.id} document={themedDocument ?? document} pageId={page.id} boxes={canvasLayout.boxes} width={activePageSize.width} height={activePageSize.height} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.rotationPreview?.items} rotationAngle={rotationAngle} showRotateHandle={selectedIds.length >= 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} editAnchorTypes={pathEdit.anchorTypes} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
               {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
                 <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>
@@ -2843,7 +2934,7 @@ function App() {
                   {spec.label}
                 </ContextMenuItem>
               ))}
-            </ContextMenuSub>}<ContextMenuItem icon="nodeComponent" disabled={busy || !selectionSameParent} onSelect={groupSelection}>编组</ContextMenuItem>{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}{contextIds.length === 1 && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={ungroupSelection}>取消编组</ContextMenuItem>}{contextIds.length === 1 && selected?.type === "instance" && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={detachComponent}>脱离组件</ContextMenuItem>}</> : <>
+            </ContextMenuSub>}<ContextMenuItem icon="nodeComponent" disabled={busy || selectedIds.length < 2} onSelect={groupSelection}>编组</ContextMenuItem>{contextIds.length === 1 && <ContextMenuItem icon={selected?.locked ? "unlock" : "lock"} disabled={busy} onSelect={() => { if (selected) patchNode(selected.id, { locked: !selected.locked }); }}>{selected?.locked ? "解锁" : "锁定"}</ContextMenuItem>}{contextIds.length === 1 && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={ungroupSelection}>取消编组</ContextMenuItem>}{contextIds.length === 1 && selected?.type === "instance" && <ContextMenuItem icon="tokenUnbind" disabled={busy} onSelect={detachComponent}>脱离组件</ContextMenuItem>}</> : <>
             <ContextMenuItem icon="paste" shortcut="Ctrl/Cmd+V" disabled={busy || !clipboard.current} onSelect={pasteSelection}>粘贴</ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuSub label="添加" icon="addFrame">
@@ -2858,9 +2949,9 @@ function App() {
       <WorkbenchFeedback message={message} busy={busy} onDismiss={() => setMessage("就绪")} />
       <div className="canvas-controls">
         <Tooltip label={panMode ? "退出抓手 · H" : "抓手拖动画布 · H"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setTool(current => current === "hand" ? "select" : "hand")}><Icon name="pan" /></button></Tooltip>
-        <Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => setZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip>
-        <Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => setZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip>
-        <Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip>
+        <Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => updateZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip>
+        <Tooltip label="重置为 100%"><button className="zoom-value" onClick={() => updateZoom(1)}>{zoomPercent(zoom)}%</button></Tooltip>
+        <Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => updateZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip>
         <Tooltip label="适应内容"><button className="icon-only zoom-fit" aria-label="适应内容" onClick={fitCanvas}><Icon name="zoomFit" /></button></Tooltip>
       </div>
       {!(rightPanelOpen && inspectorTab === "ai") && <div className={`ai-command-dock${planning ? " is-planning" : ""}`}>
@@ -2970,6 +3061,27 @@ function App() {
                 {selected.type === "frame" && findOwningComponentId(document, selected.id) && <Toggle label="作为插槽" checked={Boolean(selected.slot)} onChange={slot => patchNode(selected.id, { slot })} />}
                 {selected.type === "instance" && <button disabled={busy || !clipboard.current} onClick={fillInstanceSlot}><Icon name="nodeComponent" />用剪贴板填充插槽</button>}
                 {selected.type === "instance" && <InstancePanel document={document} instance={selected} disabled={busy} variants={variantOptions(document, selected.componentId)} onSwitchVariant={componentId => void run(() => execute([{ type: "component.switchVariant", payload: { id: selected.id, componentId } }]))} onOverride={(sourceNodeId, patch) => void run(() => execute([{ type: "component.override", payload: { instanceId: selected.id, sourceNodeId, patch } }]))} onReset={sourceNodeId => void run(() => execute([{ type: "component.resetOverride", payload: { instanceId: selected.id, sourceNodeId } }]))} onResetAll={resetAllOverrides} onDetach={detachComponent} onSetProperty={(propertyId, value) => void setInstanceProperty(selected.id, propertyId, value)} onResetProperty={propertyId => void resetInstanceProperty(selected.id, propertyId)} />}
+                {/* 实例内的约束覆盖：只影响这个实例，组件定义与其它实例不受影响。 */}
+                {instanceConstraintTarget && (
+                  <section className="inspector-section">
+                    <h2>实例约束覆盖</h2>
+                    <Segmented
+                      label="水平"
+                      value={instanceConstraintTarget.constraints?.horizontal ?? "start"}
+                      disabled={busy}
+                      options={[{ value: "start", label: "左" }, { value: "end", label: "右" }, { value: "center", label: "居中" }, { value: "stretch", label: "拉伸" }, { value: "scale", label: "缩放" }]}
+                      onChange={horizontal => overrideInstanceConstraints({ horizontal: horizontal as ConstraintAxis, vertical: instanceConstraintTarget.constraints?.vertical ?? "start" })}
+                    />
+                    <Segmented
+                      label="垂直"
+                      value={instanceConstraintTarget.constraints?.vertical ?? "start"}
+                      disabled={busy}
+                      options={[{ value: "start", label: "上" }, { value: "end", label: "下" }, { value: "center", label: "居中" }, { value: "stretch", label: "拉伸" }, { value: "scale", label: "缩放" }]}
+                      onChange={vertical => overrideInstanceConstraints({ horizontal: instanceConstraintTarget.constraints?.horizontal ?? "start", vertical: vertical as ConstraintAxis })}
+                    />
+                    <p className="field-hint">只改这个实例里的副本，组件定义与其它实例不受影响。{instanceConstraintOverrideReason}</p>
+                  </section>
+                )}
                 {owningComponentId && (
                   <ComponentPropsPanel
                     document={document}

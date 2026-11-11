@@ -3,8 +3,11 @@ import type { FontStyle } from "./types";
 /**
  * 段内样式覆盖。
  *
- * 只放「一段文字里能变的东西」：字重、字形、颜色。字号和行高不进这里——
- * 它们会改变行盒高度，属于排版参数而不是字符样式，混在一起会让布局方程变难。
+ * 只放「一段文字里能变的东西」：字重、字形、颜色、字号。
+ *
+ * `lineHeight`（px）是唯一的例外：它不进这里做排版参数，而是作为**行盒高度下限**
+ * 参与行高计算——行盒高度 = max(节点级 lineHeight, 该行所有 run 的 lineHeight,
+ * 该行最大字号)。它不改换行位置（换行只看字号与宽度），只把所在的行撑高。
  */
 export interface TextRunStyle {
   fontWeight?: number;
@@ -12,6 +15,8 @@ export interface TextRunStyle {
   /** 字号（px）；缺省沿用节点级字号。会同时影响换行与行高。 */
   fontSize?: number;
   color?: string;
+  /** 行高（px）；缺省沿用节点级行高。只抬高所在行的行盒，不影响换行位置。 */
+  lineHeight?: number;
 }
 
 /**
@@ -32,14 +37,18 @@ export interface TextRunSegment {
 }
 
 /** 段内样式的字段名；UI 与校验共用，避免两处各写一份。 */
-export const TEXT_RUN_STYLE_FIELDS = ["fontWeight", "fontStyle", "fontSize", "color"] as const;
+export const TEXT_RUN_STYLE_FIELDS = ["fontWeight", "fontStyle", "fontSize", "color", "lineHeight"] as const;
 
 export function isEmptyRunStyle(style: TextRunStyle): boolean {
-  return style.fontWeight === undefined && style.fontStyle === undefined && style.fontSize === undefined && style.color === undefined;
+  return style.fontWeight === undefined && style.fontStyle === undefined && style.fontSize === undefined && style.color === undefined && style.lineHeight === undefined;
 }
 
 export function sameRunStyle(a: TextRunStyle, b: TextRunStyle): boolean {
-  return a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && a.fontSize === b.fontSize && a.color === b.color;
+  return a.fontWeight === b.fontWeight
+    && a.fontStyle === b.fontStyle
+    && a.fontSize === b.fontSize
+    && a.color === b.color
+    && a.lineHeight === b.lineHeight;
 }
 
 /** 该下标是否落在代理对中间。UTF-16 下标可以切在 emoji 中间，那样切出来的两半都不是合法字符。 */
@@ -67,6 +76,9 @@ function validateRunStyle(style: TextRunStyle, index: number): string | undefine
   }
   if (style.color !== undefined && (typeof style.color !== "string" || !style.color.trim())) {
     return `runs.${index}.style.color must be a non-empty string`;
+  }
+  if (style.lineHeight !== undefined && (!Number.isFinite(style.lineHeight) || style.lineHeight <= 0)) {
+    return `runs.${index}.style.lineHeight must be a positive number`;
   }
   return undefined;
 }

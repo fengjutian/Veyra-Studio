@@ -1,4 +1,4 @@
-import { primaryFillColor, tokenColor, type DesignDocument, type DesignNode, type NodeId, type TextNode } from "@ufira/design-schema";
+import { primaryFillColor, textFillColor, tokenColor, type DesignDocument, type DesignNode, type NodeId, type TextNode } from "@ufira/design-schema";
 
 /**
  * 可访问性检查（当前覆盖对比度）。
@@ -104,7 +104,9 @@ export function effectiveBackground(document: DesignDocument, node: DesignNode):
  */
 function colorRanges(document: DesignDocument, node: TextNode): Array<{ color: string; from: number; to: number }> {
   const length = Math.min(node.text.length, MAX_ANALYZED_CHARS);
-  const base = primaryFillColor(document, node);
+  // 文字色与渲染端同一套规则（第一层填充 → 渐变取首个色标 → 默认文字色），
+  // 否则「没有填充的文本」会被当成无色，真实渲染出来却是深色的。
+  const base = textFillColor(document, node);
   const colors: string[] = new Array(length).fill(base ?? "");
   for (const run of node.runs ?? []) {
     if (!run.style?.color) continue;

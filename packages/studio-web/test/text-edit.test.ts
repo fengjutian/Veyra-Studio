@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { commitText, textEditAction } from "../src/text-edit";
+import { commitText, textEditAction, textEditBoldShortcut } from "../src/text-edit";
 
 test("enter commits the canvas text edit", () => {
   assert.equal(textEditAction("Enter", false), "commit");
@@ -30,4 +30,12 @@ test("a changed draft is committed verbatim", () => {
 
 test("an emptied draft is committed as an empty text", () => {
   assert.equal(commitText("标题", ""), "");
+});
+
+test("ctrl/cmd+b is the bold shortcut for the selected text", () => {
+  assert.equal(textEditBoldShortcut("b", true), true);
+  assert.equal(textEditBoldShortcut("B", true), true);
+  // 没有修饰键就是普通的打字。
+  assert.equal(textEditBoldShortcut("b", false), false);
+  assert.equal(textEditBoldShortcut("i", true), false);
 });

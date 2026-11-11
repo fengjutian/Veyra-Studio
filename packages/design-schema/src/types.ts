@@ -172,7 +172,12 @@ export interface LayoutSpec {
  */
 export type CornerRadii = [number, number, number, number];
 
-/** 投影。没有 `spread`：Canvas 的 shadow 没有扩散半径，三套实现不一致的字段先不给。 */
+/**
+ * 阴影（投影 / 内阴影）。
+ *
+ * `spread`（扩散半径）与 `type`（投影 / 内阴影）是**可选**字段：旧文档没有它们，
+ * 行为与升级前逐字一致，格式版本也不用动。
+ */
 export interface ShadowSpec {
   /** 水平偏移，px。 */
   x: number;
@@ -182,6 +187,18 @@ export interface ShadowSpec {
   blur: number;
   /** CSS 颜色。 */
   color: string;
+  /**
+   * 扩散半径（px）：把阴影轮廓向外扩这么多再模糊，对应 CSS `box-shadow` 的第 4 个值。
+   *
+   * 缺省 0（不扩散）。正数向外扩、负数向内收。
+   */
+  spread?: number;
+  /**
+   * 阴影类型：缺省 `drop`（投影，落在形状外面）；`inner` 是内阴影（落在形状内部）。
+   *
+   * 内阴影的偏移方向与投影相反——与 CSS `box-shadow: inset` 同一套语义。
+   */
+  type?: "drop" | "inner";
 }
 
 /**
@@ -370,6 +387,12 @@ export interface BaseNode {
    * 新类型会牵动判别联合、导出、组件和 AI 计划解析的每一处。
    */
   mask?: boolean;
+  /**
+   * 蒙版边缘羽化半径（px）：蒙版轮廓被模糊，被裁剪的内容在边缘渐隐。
+   *
+   * 只对 `mask: true` 的节点有意义；缺省 0（硬边，与升级前一致）。
+   */
+  maskFeather?: number;
   /**
    * 原型交互：点击等事件触发的动作。
    *

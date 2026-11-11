@@ -7,6 +7,8 @@
  * 角度约定与 CSS 一致：`0deg` 指向上方，顺时针为正。画布 y 轴向下，所以方向向量是
  * `(sin θ, -cos θ)`。
  */
+import type { PathCommand } from "./geometry";
+
 export interface GradientLine {
   x1: number;
   y1: number;
@@ -101,5 +103,91 @@ export function ellipticalGradientMatrix(geometry: EllipticalGeometry, angle = 0
     cos * geometry.ry + 0,
     geometry.cx,
     geometry.cy,
+  ];
+}
+
+/** 圆弧的三次贝塞尔系数（0.5522847498 ≈ 4/3·(√2−1)）。 */
+const ARC_KAPPA = 0.5522847498307936;
+
+/**
+ * 颜色的 alpha 分量（0–1）。
+ *
+ * 支持 `#rgb` / `#rrggbb` / `#rrggbbaa` / `rgb()` / `rgba()`；
+ * 认不出来的写法按**不透明**处理——宁可少一个效果，也不要把半透明的东西画成全透明。
+ */
+export function colorAlpha(value: string): number {
+  const text = value.trim();
+  const hex = /^#([0-9a-f]{3,8})$/i.exec(text);
+  if (hex) {
+    const digits = hex[1]!;
+    if (digits.length === 3 || digits.length === 4) {
+      const alpha = digits.length === 4 ? digits[3]! : undefined;
+      return alpha ? Number.parseInt(alpha + alpha, 16) / 255 : 1;
+    }
+    if (digits.length === 6) return 1;
+    return Number.parseInt(digits.slice(6, 8), 16) / 255;
+  }
+  const rgba = /^rgba?\(([^)]*)\)$/i.exec(text);
+  if (rgba) {
+    const parts = rgba[1]!.split(",").map(part => part.trim());
+    if (parts.length >= 4) {
+      const alpha = Number.parseFloat(parts[3]!);
+      if (Number.isFinite(alpha)) return Math.min(Math.max(alpha, 0), 1);
+    }
+    return 1;
+  }
+  return 1;
+}
+
+/**
+ * 圆角矩形的路径（绝对坐标）。
+ *
+ * 用**三次贝塞尔**而不是圆弧：路径命令只有 M/L/C/Q/Z，HTML 的 `clip-path: path()`
+ * 与 SVG 的 `d` 都吃这套写法，一份路径两处用不必各写一份圆弧。
+ *
+ * 半径按 CSS `border-radius` 的规则钳到短边的一半——半径互相穿透的形状
+ * 在 CSS 里会被同样地缩掉，这里跟着走。
+ */
+export function roundedRectPath(
+  box: { x: number; y: number; width: number; height: number },
+  radii: [number, number, number, number],
+): PathCommand[] {
+  const limit = Math.max(0, Math.min(box.width, box.height) / 2);
+  const [topLeft, topRight, bottomRight, bottomLeft] = radii.map(value => Math.min(Math.max(value, 0), limit)) as [number, number, number, number];
+  const { x, y, width, height } = box;
+  const right = x + width;
+  const bottom = y + height;
+  const corner = (radius: number) => radius * ARC_KAPPA;
+  return [
+    { command: "M", point: { x: x + topLeft, y } },
+    { command: "L", point: { x: right - topRight, y } },
+    {
+      command: "C",
+      control1: { x: right - topRight + corner(topRight), y },
+      control2: { x: right, y: topRight - corner(topRight) },
+      point: { x: right, y: topRight },
+    },
+    { command: "L", point: { x: right, y: bottom - bottomRight } },
+    {
+      command: "C",
+      control1: { x: right, y: bottom - bottomRight + corner(bottomRight) },
+      control2: { x: right - bottomRight + corner(bottomRight), y: bottom },
+      point: { x: right - bottomRight, y: bottom },
+    },
+    { command: "L", point: { x: x + bottomLeft, y: bottom } },
+    {
+      command: "C",
+      control1: { x: x + bottomLeft - corner(bottomLeft), y: bottom },
+      control2: { x, y: bottom - bottomLeft + corner(bottomLeft) },
+      point: { x, y: bottom - bottomLeft },
+    },
+    { command: "L", point: { x, y: topLeft } },
+    {
+      command: "C",
+      control1: { x, y: topLeft - corner(topLeft) },
+      control2: { x: x + topLeft - corner(topLeft), y },
+      point: { x: x + topLeft, y },
+    },
+    { command: "Z" },
   ];
 }

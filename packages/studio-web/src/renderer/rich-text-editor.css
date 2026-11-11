@@ -2,3 +2,9 @@
 .rich-text-editor{position:absolute;z-index:30;border:1px solid #8b5cf6;border-radius:4px;background:#fff;color:#111;padding:2px;outline:none;overflow:hidden;white-space:pre-wrap;overflow-wrap:break-word}
 .rich-text-editor .rte-paragraph{min-height:1em}
 .rich-text-editor .rte-marker{display:inline-block;box-sizing:content-box;user-select:none;-webkit-user-select:none;vertical-align:baseline}
+/* 选区工具条：加粗 / 颜色 / 字号。浮在文本框上方，跟着节点走。 */
+.rte-toolbar{position:absolute;z-index:31;display:flex;align-items:center;gap:6px;padding:4px 6px;border:1px solid #363d4b;border-radius:6px;background:#242936;color:#e7e9ee;box-shadow:0 6px 18px rgba(0,0,0,.35)}
+.rte-toolbar .rte-tool{width:24px;height:24px;border:1px solid #363d4b;border-radius:4px;background:#1b1f29;color:#e7e9ee;cursor:pointer;font-size:13px;line-height:1}
+.rte-toolbar .rte-tool:hover{background:#2f3542}
+.rte-toolbar .rte-tool-color{width:24px;height:24px;padding:0;border:1px solid #363d4b;border-radius:4px;background:#1b1f29;cursor:pointer}
+.rte-toolbar .rte-tool-size{width:48px;height:24px;border:1px solid #363d4b;border-radius:4px;background:#1b1f29;color:#e7e9ee;font-size:12px;padding:0 4px}

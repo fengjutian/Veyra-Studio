@@ -1,4 +1,4 @@
-import { absolutePath, canvasCompositeFor, ellipticalGeometry, gradientLine, radialGeometry, LIST_MARKER_GAP, type CornerRadii, type Paint, type PathCommand } from "@ufira/design-schema";
+import { absolutePath, canvasCompositeFor, colorAlpha, ellipticalGeometry, gradientLine, radialGeometry, LIST_MARKER_GAP, type CornerRadii, type Paint, type PathCommand, type ShadowSpec } from "@ufira/design-schema";
 import { layoutRichText, type RichTextStyle } from "@ufira/design-layout";
 import { rotatedBounds, toRadians } from "./rotation";
 import type { SceneBox, SceneNode } from "./scene";
@@ -149,7 +149,7 @@ function paintScale(options: PaintOptions): number {
  * 绘制一个节点。
  *
  * 这里只做三件事的**调度**：可见性判断、背景模糊（作用在节点后面的内容上，
- * 必须先做）、以及混合模式（要把整个图层组离屏合成）。
+ * 必须先做）、以及图层组效果（图层模糊与混合模式都要「整棵子树离屏合成」）。
  * 真正的绘制在 {@link drawNodeContent}。
  */
 function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions, inheritedOpacity: number): void {
@@ -161,40 +161,42 @@ function drawNode(context: CanvasRenderingContext2D, node: SceneNode, options: P
   if (node.backgroundBlur) paintBackgroundBlur(context, node, options);
 
   const composite = canvasCompositeFor(node.blendMode);
-  if (composite) {
-    // 图层级混合：节点和它的整棵子树作为一个图层组，整体与背景混合。
-    drawBlendedGroup(context, node, options, inheritedOpacity, composite);
+  // 图层模糊与混合模式都是**图层组**级别的效果：节点和它的整棵子树作为一个整体
+  // 离屏合成，再整体模糊 / 整体与背景混合（与 Figma 一致）。
+  if (composite || node.blur) {
+    drawLayerGroup(context, node, options, inheritedOpacity, composite, node.blur ?? 0);
     return;
   }
   drawNodeContent(context, node, options, inheritedOpacity);
 }
 
 /**
- * 图层级混合模式：把整个图层组画进离屏，再作为一个整体混合回主画布。
+ * 图层组合成：整棵子树先画进离屏，再按需要模糊 / 与背景混合。
  *
- * Canvas 的 `globalCompositeOperation` 是**就地**的：它把「正在画的内容」与
- * 「画布上已有内容」混合，没有「一个图层组整体参与混合」的概念。
- * Figma 的语义要靠离屏合成才能对上：先在离屏上画完整个图层组，
- * 再用混合模式把这张离屏贴回主画布。
+ * Canvas 的 `globalCompositeOperation` 与 `filter` 都是**就地**的：没有
+ * 「一个图层组整体参与」的概念。Figma 的语义要靠离屏合成才能对上——混合模式与
+ * 图层模糊共用这一套机制。
  *
- * 嵌套自然成立：子节点有混合模式时，会在父节点的离屏层里再开一层离屏。
+ * 图层模糊模糊的是**整棵子树**（与 SVG 的 `<g filter>`、HTML 的 `filter: blur()`
+ * 同一套语义）；之前画布只模糊节点自身，三端对不上。
  */
-function drawBlendedGroup(
+function drawLayerGroup(
   context: CanvasRenderingContext2D,
   node: SceneNode,
   options: PaintOptions,
   inheritedOpacity: number,
-  composite: NonNullable<ReturnType<typeof canvasCompositeFor>>,
+  composite: NonNullable<ReturnType<typeof canvasCompositeFor>> | undefined,
+  blur: number,
 ): void {
   const scale = paintScale(options);
   const bounds = subtreeBounds(node);
   const surface = createSurface(options, Math.max(1, Math.ceil(bounds.width * scale)), Math.max(1, Math.ceil(bounds.height * scale)));
   if (!surface) {
-    // 没有离屏画布：只能退回「就地混合」的近似——父层与子层不再作为整组参与混合。
+    // 没有离屏画布：只能退回「就地」的近似——父层与子层不再作为整组参与。
     // 这种降级必须说清楚，不能悄悄发生。
-    options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：混合模式退化为就地混合，图层组不再整体参与。`);
+    options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：图层效果退化为就地绘制，图层组不再整体参与。`);
     context.save();
-    context.globalCompositeOperation = composite;
+    if (composite) context.globalCompositeOperation = composite;
     drawNodeContent(context, node, options, inheritedOpacity);
     context.restore();
     return;
@@ -202,9 +204,25 @@ function drawBlendedGroup(
   // 离屏层的坐标系与主画布一致（同样的缩放），只是平移到包围盒的原点。
   surface.context.setTransform(scale, 0, 0, scale, -bounds.x * scale, -bounds.y * scale);
   drawNodeContent(surface.context, node, options, inheritedOpacity);
+
+  let layer = surface;
+  if (blur > 0) {
+    const blurred = createSurface(options, surface.width, surface.height);
+    if (!blurred) {
+      options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：图层模糊已跳过。`);
+    } else {
+      // 滤镜长度按设备像素算，模糊半径才不会随缩放漂移（与背景模糊同一套约定）。
+      blurred.context.setTransform(1, 0, 0, 1, 0, 0);
+      blurred.context.filter = `blur(${blur * scale}px)`;
+      blurred.context.drawImage(surface.canvas, 0, 0);
+      blurred.context.filter = "none";
+      layer = blurred;
+    }
+  }
+
   context.save();
-  context.globalCompositeOperation = composite;
-  context.drawImage(surface.canvas, bounds.x, bounds.y, bounds.width, bounds.height);
+  if (composite) context.globalCompositeOperation = composite;
+  context.drawImage(layer.canvas, bounds.x, bounds.y, bounds.width, bounds.height);
   context.restore();
 }
 
@@ -231,7 +249,10 @@ function subtreeBounds(node: SceneNode): SceneBox {
 
 /** 阴影与图层模糊会溢出盒子，离屏合成时要多留这些像素。 */
 function effectPadding(node: SceneNode): number {
-  const shadow = node.shadow ? node.shadow.blur + Math.max(Math.abs(node.shadow.x), Math.abs(node.shadow.y)) : 0;
+  // 扩散半径也会把阴影撑出盒子，合成时同样要留出余量。
+  const shadow = node.shadow
+    ? node.shadow.blur + Math.abs(node.shadow.spread ?? 0) + Math.max(Math.abs(node.shadow.x), Math.abs(node.shadow.y))
+    : 0;
   const blur = node.blur ? node.blur * 3 : 0;
   return shadow + blur;
 }
@@ -297,7 +318,7 @@ function paintBackgroundBlur(context: CanvasRenderingContext2D, node: SceneNode,
   context.restore();
 }
 
-/** 实际绘制一个节点：自身 + 子树。混合模式与背景模糊由 {@link drawNode} 负责调度。 */
+/** 实际绘制一个节点：自身 + 子树。混合模式、图层模糊与背景模糊由 {@link drawNode} 调度。 */
 function drawNodeContent(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions, inheritedOpacity: number): void {
   const opacity = clamp(inheritedOpacity * node.opacity, 0, 1);
   if (opacity <= 0) return;
@@ -312,14 +333,15 @@ function drawNodeContent(context: CanvasRenderingContext2D, node: SceneNode, opt
   // `filter` 在新浏览器里才有；缺了就当没有模糊，不要让整页崩掉。
   if ("filter" in context) context.filter = "none";
 
-  if (node.shadow) {
-    context.shadowColor = node.shadow.color;
-    context.shadowBlur = node.shadow.blur;
-    context.shadowOffsetX = node.shadow.x;
-    context.shadowOffsetY = node.shadow.y;
-  }
-  if (node.blur) {
-    if ("filter" in context) context.filter = `blur(${node.blur}px)`;
+  // 阴影分两种画法：Canvas 的 `shadow*` 能直接画的走快速路径，
+  // 扩散半径与内阴影画不出来，走离屏合成（语义与 CSS `box-shadow` 对齐）。
+  const shadow = node.shadow;
+  const manual = shadow && needsManualShadow(shadow) ? shadow : undefined;
+  if (shadow && !manual) {
+    context.shadowColor = shadow.color;
+    context.shadowBlur = shadow.blur;
+    context.shadowOffsetX = shadow.x;
+    context.shadowOffsetY = shadow.y;
   }
 
   // 旋转绕节点中心；子树画在同一个上下文里，因此自动继承父级的旋转。
@@ -331,12 +353,22 @@ function drawNodeContent(context: CanvasRenderingContext2D, node: SceneNode, opt
     context.translate(-centerX, -centerY);
   }
 
+  // 投影画在内容下面。
+  if (manual && manual.type !== "inner") paintManualDropShadow(context, node, options, manual);
+
+  // 背景阶段：形状的填充。
+  if (!node.text && !node.image) drawShapeFill(context, node, options);
+
+  // 内阴影画在填充之上、内容之下——与 CSS `box-shadow: inset` 的层序一致。
+  if (manual && manual.type === "inner") paintManualInnerShadow(context, node, options, manual);
+
+  // 前景阶段：描边、文字、图片。
   if (node.text) {
     drawText(context, node, opacity);
   } else if (node.image) {
     drawImage(context, node, options);
   } else {
-    drawShape(context, node, options);
+    drawShapeStroke(context, node);
   }
 
   if (node.children.length) {
@@ -349,6 +381,11 @@ function drawNodeContent(context: CanvasRenderingContext2D, node: SceneNode, opt
       if (child.mask) continue;
       const masks = child.maskedBy;
       if (masks?.length) {
+        // 软蒙版（半透明 / 羽化）要靠离屏合成，`clip()` 做不到。
+        if (masks.some(isSoftMask)) {
+          drawSoftMaskedChild(context, child, masks, options, opacity);
+          continue;
+        }
         // 多层蒙版叠加：每个 save 里依次 clip，画完 restore 掉这一层。
         context.save();
         for (const mask of masks) {
@@ -366,34 +403,271 @@ function drawNodeContent(context: CanvasRenderingContext2D, node: SceneNode, opt
   context.restore();
 }
 
-function drawShape(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions): void {
+/**
+ * 这个阴影能不能用 Canvas 的 `shadow*` 直接画。
+ *
+ * 不能的两种情况：扩散半径（`shadow*` 没有这个概念）与内阴影
+ * （`shadow*` 只会把影子投到形状外面）。
+ */
+function needsManualShadow(shadow: ShadowSpec): boolean {
+  return shadow.type === "inner" || Boolean(shadow.spread);
+}
+
+/**
+ * 带扩散半径的投影：离屏合成。
+ *
+ * Canvas 的 `shadow*` 没有扩散半径，只能自己拼：形状先沿轮廓向外膨胀
+ * （描一条 2×spread 宽的圆角边），再整张模糊，最后按偏移贴回内容下面。
+ *
+ * 离屏层用**设备像素**坐标：滤镜长度按设备像素算，模糊半径才不会随缩放漂移。
+ */
+function paintManualDropShadow(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions, shadow: ShadowSpec): void {
+  const scale = paintScale(options);
+  const spread = shadow.spread ?? 0;
+  const padding = Math.abs(spread) + shadow.blur * 3 + Math.max(Math.abs(shadow.x), Math.abs(shadow.y));
+  const originX = node.box.x - padding;
+  const originY = node.box.y - padding;
+  const width = node.box.width + padding * 2;
+  const height = node.box.height + padding * 2;
+  const surface = createSurface(options, Math.max(1, Math.ceil(width * scale)), Math.max(1, Math.ceil(height * scale)));
+  if (!surface) {
+    options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：带扩散半径的投影已跳过。`);
+    return;
+  }
+  const device = deviceNode(node, originX, originY, scale);
+  surface.context.setTransform(1, 0, 0, 1, 0, 0);
+  surface.context.fillStyle = shadow.color;
+  shapePath(surface.context, device);
+  surface.context.fill();
+  if (spread > 0) {
+    // 向外膨胀：沿轮廓描一条 2×spread 宽的边（圆角连接，与 CSS 的膨胀一致）。
+    surface.context.strokeStyle = shadow.color;
+    surface.context.lineJoin = "round";
+    surface.context.lineWidth = spread * 2 * scale;
+    surface.context.stroke();
+  } else if (spread < 0) {
+    // 向内收缩：把多出来的部分擦掉。
+    surface.context.globalCompositeOperation = "destination-out";
+    surface.context.strokeStyle = "#000000";
+    surface.context.lineJoin = "round";
+    surface.context.lineWidth = -spread * 2 * scale;
+    surface.context.stroke();
+    surface.context.globalCompositeOperation = "source-over";
+  }
+  // 模糊：整张投射物一起模糊——分两次模糊会让重叠处更深。
+  const blurred = createSurface(options, surface.width, surface.height);
+  if (!blurred) {
+    options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：带扩散半径的投影已跳过。`);
+    return;
+  }
+  blurred.context.setTransform(1, 0, 0, 1, 0, 0);
+  blurred.context.filter = `blur(${shadow.blur * scale}px)`;
+  blurred.context.drawImage(surface.canvas, 0, 0);
+  blurred.context.filter = "none";
+  // 偏移只挪位置，不改模糊（与 CSS 一样：先模糊再偏移）。
+  context.drawImage(blurred.canvas, originX + shadow.x, originY + shadow.y, width, height);
+}
+
+/**
+ * 内阴影：离屏合成。
+ *
+ * 语义与 CSS `box-shadow: inset` 一致：形状减去「模糊并偏移后的自己」，
+ * 剩下的区域就是内阴影——因此偏移方向与投影相反。
+ */
+function paintManualInnerShadow(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions, shadow: ShadowSpec): void {
+  const scale = paintScale(options);
+  const spread = shadow.spread ?? 0;
+  const width = node.box.width;
+  const height = node.box.height;
+  const surface = createSurface(options, Math.max(1, Math.ceil(width * scale)), Math.max(1, Math.ceil(height * scale)));
+  if (!surface) {
+    options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：内阴影已跳过。`);
+    return;
+  }
+  const device = deviceNode(node, node.box.x, node.box.y, scale);
+  surface.context.setTransform(1, 0, 0, 1, 0, 0);
+  // 1) 铺满阴影色。
+  surface.context.fillStyle = shadow.color;
+  shapePath(surface.context, device);
+  surface.context.fill();
+
+  // 2) 挖掉「模糊并偏移后的自己」。扩散半径为正时，挖掉的是**收缩**后的形状
+  //    （CSS 的内阴影扩散是向内收的）。
+  let hole = surface;
+  if (spread > 0) {
+    const eroded = createSurface(options, surface.width, surface.height);
+    if (!eroded) {
+      options.onWarning?.(`画布无法为节点 ${node.id} 创建离屏画布：内阴影的扩散半径已忽略。`);
+    } else {
+      eroded.context.setTransform(1, 0, 0, 1, 0, 0);
+      eroded.context.fillStyle = "#000000";
+      shapePath(eroded.context, device);
+      eroded.context.fill();
+      eroded.context.globalCompositeOperation = "destination-out";
+      eroded.context.strokeStyle = "#000000";
+      eroded.context.lineJoin = "round";
+      eroded.context.lineWidth = spread * 2 * scale;
+      eroded.context.stroke();
+      eroded.context.globalCompositeOperation = "source-over";
+      hole = eroded;
+    }
+  }
+  surface.context.globalCompositeOperation = "destination-out";
+  surface.context.filter = `blur(${shadow.blur * scale}px)`;
+  surface.context.translate(shadow.x * scale, shadow.y * scale);
+  if (hole === surface) {
+    shapePath(surface.context, device);
+    surface.context.fill();
+  } else {
+    surface.context.drawImage(hole.canvas, 0, 0);
+  }
+  surface.context.filter = "none";
+  surface.context.globalCompositeOperation = "source-over";
+
+  // 3) 贴回：裁到形状内部（内阴影不会跑到形状外面）。
+  context.save();
+  shapePath(context, node);
+  context.clip();
+  context.drawImage(surface.canvas, node.box.x, node.box.y, width, height);
+  context.restore();
+}
+
+/**
+ * 蒙版的不透明度：节点自身透明度 × 第一层实色填充的 alpha。
+ *
+ * 蒙版的**填充色**不影响裁剪形状（形状由节点类型决定），只有透明度参与裁剪。
+ */
+function maskAlpha(mask: SceneNode): number {
+  const paint = mask.paints?.[0];
+  const color = paint?.type === "solid" ? paint.color : mask.fill;
+  return mask.opacity * (color ? colorAlpha(color) : 1);
+}
+
+/**
+ * 软蒙版：半透明或带羽化。
+ *
+ * 硬蒙版走 `clip()`（与升级前逐字一致）；软蒙版要靠离屏合成才能做出来。
+ */
+function isSoftMask(mask: SceneNode): boolean {
+  return maskAlpha(mask) < 1 || (mask.maskFeather ?? 0) > 0;
+}
+
+/**
+ * 软蒙版：离屏合成。
+ *
+ * `clip()` 只能按形状硬裁剪，做不到「半透明裁剪」与「边缘渐隐」——
+ * 那需要把被裁剪的内容先画进离屏，再用蒙版的 alpha 做一次 `destination-in`。
+ *
+ * 多层蒙版是**交集**：后面的蒙版用 `destination-in` 裁掉前面之外的部分。
+ */
+function drawSoftMaskedChild(
+  context: CanvasRenderingContext2D,
+  child: SceneNode,
+  masks: SceneNode[],
+  options: PaintOptions,
+  inheritedOpacity: number,
+): void {
+  const scale = paintScale(options);
+  const bounds = subtreeBounds(child);
+  const content = createSurface(options, Math.max(1, Math.ceil(bounds.width * scale)), Math.max(1, Math.ceil(bounds.height * scale)));
+  if (!content) {
+    options.onWarning?.(`画布无法为节点 ${child.id} 创建离屏画布：软蒙版退化为硬裁剪。`);
+    drawClippedChild(context, child, masks, options, inheritedOpacity);
+    return;
+  }
+  content.context.setTransform(scale, 0, 0, scale, -bounds.x * scale, -bounds.y * scale);
+  drawNode(content.context, child, options, inheritedOpacity);
+
+  const maskLayer = createSurface(options, content.width, content.height);
+  if (!maskLayer) {
+    options.onWarning?.(`画布无法为节点 ${child.id} 创建离屏画布：软蒙版退化为硬裁剪。`);
+    context.drawImage(content.canvas, bounds.x, bounds.y, bounds.width, bounds.height);
+    return;
+  }
+  maskLayer.context.setTransform(scale, 0, 0, scale, -bounds.x * scale, -bounds.y * scale);
+  masks.forEach((mask, index) => {
+    maskLayer.context.globalCompositeOperation = index === 0 ? "source-over" : "destination-in";
+    const alpha = maskAlpha(mask);
+    const feather = mask.maskFeather ?? 0;
+    // 羽化：蒙版轮廓被模糊，边缘因此渐隐。
+    if (feather > 0) maskLayer.context.filter = `blur(${feather * scale}px)`;
+    maskLayer.context.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+    shapePath(maskLayer.context, mask);
+    maskLayer.context.fill();
+    if (feather > 0) maskLayer.context.filter = "none";
+  });
+  maskLayer.context.globalCompositeOperation = "source-over";
+
+  // 内容只在蒙版不透明的地方留下。
+  content.context.setTransform(1, 0, 0, 1, 0, 0);
+  content.context.globalCompositeOperation = "destination-in";
+  content.context.drawImage(maskLayer.canvas, 0, 0);
+  content.context.globalCompositeOperation = "source-over";
+  context.drawImage(content.canvas, bounds.x, bounds.y, bounds.width, bounds.height);
+}
+
+/** 硬蒙版：依次 clip（多层叠加即交集）。 */
+function drawClippedChild(
+  context: CanvasRenderingContext2D,
+  child: SceneNode,
+  masks: SceneNode[],
+  options: PaintOptions,
+  inheritedOpacity: number,
+): void {
+  context.save();
+  for (const mask of masks) {
+    shapePath(context, mask);
+    context.clip();
+  }
+  drawNode(context, child, options, inheritedOpacity);
+  context.restore();
+}
+
+/** 设备像素坐标下的节点副本（滤镜与线宽都按设备像素算）。 */
+function deviceNode(node: SceneNode, originX: number, originY: number, scale: number): SceneNode {
+  return {
+    ...node,
+    box: {
+      x: (node.box.x - originX) * scale,
+      y: (node.box.y - originY) * scale,
+      width: node.box.width * scale,
+      height: node.box.height * scale,
+    },
+    radius: node.radius * scale,
+    ...(node.radii ? { radii: node.radii.map(radius => radius * scale) as CornerRadii } : {}),
+  };
+}
+
+/** 形状的填充阶段：多层填充从下往上逐层覆盖。 */
+function drawShapeFill(context: CanvasRenderingContext2D, node: SceneNode, options: PaintOptions): void {
   const paints = node.paints?.length ? node.paints : node.fill ? [{ type: "solid" as const, color: node.fill }] : [];
-  if (paints.length) {
-    shapePath(context, node);
-    // 从下往上逐层覆盖：数组顺序就是 Figma 的填充层顺序（第 0 层在最底下）。
-    paints.forEach((paint, index) => {
-      if (paint.type === "elliptical") {
-        // 椭圆渐变不能靠 fillStyle 表达（Canvas 只有圆形径向渐变），走离屏贴图。
-        paintEllipticalGradient(context, node, paint, options);
-      } else {
-        context.fillStyle = canvasPaint(context, node, paint);
-        context.fill();
-      }
-      // 阴影只需要投一次：多层填充各投一次会让影子叠得更黑。
-      if (index === 0) {
-        context.shadowColor = "transparent";
-        context.shadowBlur = 0;
-        context.shadowOffsetX = 0;
-        context.shadowOffsetY = 0;
-      }
-    });
-  }
-  if (node.stroke && node.strokeWidth > 0) {
-    shapePath(context, node);
-    context.strokeStyle = node.stroke;
-    context.lineWidth = node.strokeWidth;
-    context.stroke();
-  }
+  if (!paints.length) return;
+  shapePath(context, node);
+  paints.forEach((paint, index) => {
+    if (paint.type === "elliptical") {
+      // 椭圆渐变不能靠 fillStyle 表达（Canvas 只有圆形径向渐变），走离屏贴图。
+      paintEllipticalGradient(context, node, paint, options);
+    } else {
+      context.fillStyle = canvasPaint(context, node, paint);
+      context.fill();
+    }
+    // 阴影只需要投一次：多层填充各投一次会让影子叠得更黑。
+    if (index === 0) {
+      context.shadowColor = "transparent";
+      context.shadowBlur = 0;
+      context.shadowOffsetX = 0;
+      context.shadowOffsetY = 0;
+    }
+  });
+}
+
+/** 形状的描边阶段。 */
+function drawShapeStroke(context: CanvasRenderingContext2D, node: SceneNode): void {
+  if (!node.stroke || node.strokeWidth <= 0) return;
+  shapePath(context, node);
+  context.strokeStyle = node.stroke;
+  context.lineWidth = node.strokeWidth;
+  context.stroke();
 }
 
 /**

@@ -2,9 +2,9 @@
   "environment": {
     "os": "win32",
     "osRelease": "win32 10.0.26200",
-    "browser": "Chrome 156.0.0.0",
-    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
-    "generatedAt": "2026-11-09T07:20:35.924Z"
+    "browser": "Chrome 157.0.0.0",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+    "generatedAt": "2026-11-11T07:28:05.376Z"
   },
   "focusOrder": [
     {
@@ -51,6 +51,11 @@
       "auditId": "tool.text",
       "role": "button",
       "name": "文本"
+    },
+    {
+      "auditId": "tool.zoom",
+      "role": "button",
+      "name": "缩放"
     },
     {
       "auditId": "history.undo",
@@ -111,6 +116,7 @@
     "button：星形",
     "button：钢笔",
     "button：文本",
+    "button：缩放",
     "button：撤销",
     "button：重做",
     "option：画布渲染基线",

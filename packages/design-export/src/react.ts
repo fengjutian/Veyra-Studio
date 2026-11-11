@@ -4,6 +4,7 @@ import {
   MAX_LIST_INDENT,
   absolutePath,
   applyThemeForPage,
+  computeBooleanBounds,
   computeBooleanGeometry,
   ellipticalGeometry,
   ellipticalGradientMatrix,
@@ -27,9 +28,11 @@ import {
   createTokenVariables,
   documentUsesBlendMode,
   maskClipPath,
+  maskImageUrl,
   nodeStyle,
   num,
   safeAssetUrl,
+  textFillDiagnostics,
 } from "./html";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic } from "./types";
@@ -226,6 +229,19 @@ function renderSiblingList(
     if (!rendered) continue;
     let wrapped = rendered;
     for (const mask of masks) {
+      // 软蒙版（半透明 / 羽化）：用 mask-image 走 alpha 遮罩，与 HTML 导出同一套规则。
+      const image = maskImageUrl(context.document, mask, parent);
+      if (image) {
+        const maskValue = JSON.stringify(`url(${image})`);
+        wrapped = [
+          `${"  ".repeat(depth)}<div`,
+          `${"  ".repeat(depth)}  style={{ position: "absolute", inset: 0, maskImage: ${maskValue}, WebkitMaskImage: ${maskValue}, maskSize: "100% 100%", maskRepeat: "no-repeat" }}`,
+          `${"  ".repeat(depth)}>`,
+          indentBlock(wrapped, depth + 1),
+          `${"  ".repeat(depth)}</div>`,
+        ].join("\n");
+        continue;
+      }
       const clip = maskClipPath(context.document, mask);
       if (!clip) continue;
       const wrapper = [
@@ -261,9 +277,17 @@ function renderNode(
   style.boxSizing = "border-box";
   style.minWidth = 0;
   style.minHeight = 0;
+  // 布尔组的参考框取操作数并集（含旋转）：div 尺寸跟着并集走，形状才不会被拉变形。
+  const booleanBounds = node.type === "boolean" ? computeBooleanBounds(document, node, {}) ?? node.layout : undefined;
+  if (booleanBounds) {
+    style.width = `${Number(booleanBounds.width.toFixed(4))}px`;
+    style.height = `${Number(booleanBounds.height.toFixed(4))}px`;
+  }
   const attributes = [`data-node-id=${JSON.stringify(node.id)}`, `style={${styleLiteral(style, depth * 2 + 2)}}`];
 
   if (node.type === "text") {
+    // 文字色的近似（多层 / 渐变）如实记一条诊断，与 HTML 导出同一套规则。
+    textFillDiagnostics(document, node, context.diagnostics, node.id);
     if (!node.paragraphStyles?.length) {
       const propName = registerTextProp(context, node);
       const children = propName ? `{${propName}}` : textChildren(node, depth + 1);
@@ -289,12 +313,14 @@ function renderNode(
   }
 
   if (node.type === "boolean") {
-    const commands = computeBooleanGeometry(document, node, {}, node.layout);
+    // 参考框取操作数并集（含旋转）：与 HTML 导出同一套规则。
+    const bounds = booleanBounds!;
+    const commands = computeBooleanGeometry(document, node, {}, bounds);
     if (!commands?.length) {
       context.diagnostics.push({ nodeId: node.id, feature: "boolean", support: "unsupported", message: "Boolean group produced an empty shape" });
       return element("div", attributes, "", depth);
     }
-    return renderVector(context, node as unknown as DesignNode & { type: "vector" }, attributes, commands, depth);
+    return renderVector(context, node as unknown as DesignNode & { type: "vector" }, attributes, commands, depth, bounds);
   }
 
   if (node.type === "vector") {
@@ -348,10 +374,11 @@ function renderVector(
   attributes: string[],
   commands: ReturnType<typeof vectorPathCommands>,
   depth: number,
+  box?: { width: number; height: number },
 ): string {
   const document = context.document;
-  const width = Math.max(node.layout.width, 1);
-  const height = Math.max(node.layout.height, 1);
+  const width = Math.max(box?.width ?? node.layout.width, 1);
+  const height = Math.max(box?.height ?? node.layout.height, 1);
   const d = pathDataFromCommands(absolutePath(commands, { x: 0, y: 0, width, height }));
   const fills = resolveFills(document, node);
   const defs: string[] = [];

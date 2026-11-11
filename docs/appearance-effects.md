@@ -111,8 +111,11 @@ export interface AppearanceSpec {
 ## 4. 非目标
 
 - 多填充层、渐变网格、遮罩填充；
-- 内阴影（inner shadow）与图层模糊以外的效果（背景模糊）；
-- 阴影的 `spread`（见 §2.1）。
+- 渐变网格、渐变文字的 HTML 精确实现（CSS `background-clip:text` 会破坏选中与可访问性）；
+- 阴影与模糊之外的其它效果。
+
+> 2026-11-11 更新：内阴影、阴影 `spread` 与**子树整体模糊**已实现（见 §7），
+> 本节原先列的「内阴影」「阴影的 spread」不再是限制。
 
 ## 5. P6.1 实现结果（2026-11-08）
 
@@ -130,6 +133,7 @@ export interface AppearanceSpec {
   `studio-web` 375 条、`design-export` 58 条通过。
 
 非目标（写在 §4）：`spread`、内阴影、子树整体模糊、背景模糊。
+（2026-11-11：`spread`、内阴影与子树整体模糊已实现，见 §7；背景模糊仍是非目标。）
 ## 6. P6.2 实现结果（2026-11-08）
 
 - **模型**：`Paint = { solid } | { linear, angle, stops }`；`AppearanceSpec.fills?: Paint[]`
@@ -139,7 +143,8 @@ export interface AppearanceSpec {
   节点原样返回（不凭空造空数组，避免把「无填充」和「空填充层」混掉）。
 - **读取收敛**：`resolveFills()` 是唯一入口——颜色 token 绑定生效时整组填充压成单一实色
   （一个颜色 token 表达不了渐变）。`primaryFillColor()` 给只接受单色的地方用（文本颜色、
-  对比度检查、批量面板、实例面板）。
+  对比度检查、批量面板、实例面板）。它在 `design-schema/src/tokens.ts`，不在 `paint.ts`
+  （`paint.ts` 只有渐变几何函数）。
 - **画布**：`gradientLine()`（design-schema）算出渐变线，`createLinearGradient` + 按
   offset 排序后 `addColorStop`。
 - **导出**：HTML 输出 `linear-gradient(θdeg, color offset%, …)`；SVG 输出
@@ -184,3 +189,57 @@ export interface AppearanceSpec {
 - **面板**：实色层现在有两个入口（改为线性渐变 / 改为径向渐变）；径向层可调中心 X/Y 与
   半径（都用百分比显示），起始色/结束色沿用同一套色标编辑。
 - **不做**椭圆渐变（`ellipse` 形式的径向渐变）：三处渲染的语义差异比收益大，需要时再加。
+
+> 2026-11-11 更新：椭圆渐变、混合模式与背景模糊已实现，见 §9。
+
+## 9. 阴影 spread、内阴影、子树模糊与文本上色（2026-11-11）
+
+### 9.1 阴影 `spread`
+
+`ShadowSpec` 增加可选 `spread?: number`（px），语义对齐 CSS `box-shadow` 第 4 值。
+
+Canvas 的 `shadow*` **没有扩散半径**，所以走离屏合成：形状先沿轮廓向外膨胀（描一条
+`2×spread` 宽的圆角边，与 CSS 的几何膨胀等价；负 spread 用 `destination-out` 向内收缩），
+再整张模糊，最后按偏移贴回内容下面。离屏层用**设备像素**坐标，模糊半径不随缩放漂移。
+
+- **HTML**：`box-shadow: x y blur spread color`；
+- **SVG**：`feMorphology(dilate)` → `feGaussianBlur` → `feOffset` → `feFlood` → `feComposite(in)` → `feMerge`；
+- **普通投影仍走 `shadow*` 快速路径**（`needsManualShadow()` 只在有 spread 或 inner 时才转离屏），
+  旧渲染逐字不变。
+
+### 9.2 内阴影
+
+`ShadowSpec` 增加可选 `type?: "drop" | "inner"`（缺省 `drop`）。语义与 CSS `box-shadow: inset`
+一致：颜色在形状**内部**、从边缘向内，偏移方向与投影相反。
+
+- **HTML**：`box-shadow: inset …`；
+- **SVG**：`feComposite(SourceAlpha, 模糊偏移后的自己, out)`；
+- **Canvas**：离屏合成——铺满阴影色，再挖掉「模糊并偏移后的自己」，剩下的即内阴影。
+  正 spread 时挖掉的是**收缩**后的形状（CSS 的内阴影扩散是向内收的）。
+
+### 9.3 子树整体模糊（修掉三端语义不一致）
+
+原先**画布只模糊节点自身，SVG/HTML 却模糊整棵子树**——同一份文档在不同出口看到的画面不一样。
+现在统一为**模糊整棵子树**（对齐 Figma 的图层模糊）：画布改为「整棵子树画进离屏 → 模糊 → 贴回」，
+复用混合模式那套离屏机制（`drawLayerGroup`）。`backgroundBlur`（背景模糊）语义未动。
+
+### 9.4 文本多层填充上色（修掉两个真缺陷）
+
+原先：① SVG 在 ≥2 层填充时写 `fill:none`，**文字完全不可见**；② HTML 导出**根本没有输出
+`color:`**，文字颜色靠浏览器默认色/继承，与画布不一致。
+
+现在规则集中在 `design-schema/src/tokens.ts` 的 `textFillColor()`，画布 / HTML / SVG /
+对比度检查**共用这一份**：
+
+- 单层填充 → 用该层的颜色（渐变取第一个色标）；
+- 多层填充 → 只按第一层上色（后面的层是形状装饰，不参与文字颜色）；
+- 完全没有填充 → 用 `TEXT_DEFAULT_COLOR`（`#111111`，画布原本的兜底值）。
+
+多层与渐变在支持矩阵标 `approximated` 并出诊断（`text-fill-multi` / `text-fill-gradient`）。
+SVG 的单层渐变文字仍是**精确**的（真渐变填充）；HTML 与画布按首个色标近似。
+
+### 9.5 已知限制
+
+- 渐变文字在 HTML/画布只能按首个色标近似（CSS `background-clip:text` 会破坏选中与可访问性）。
+- 阴影与模糊的**层序**仍有细微差异：SVG 是「先模糊再投影」（投影不被模糊），HTML 是 CSS 滤镜
+  （投影被一起模糊），画布随 HTML。

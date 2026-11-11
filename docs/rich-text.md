@@ -75,8 +75,10 @@ interface TextNode {
 - 按码点拆字符、逐字累加宽度；
 - 溢出时回退到本行**最后一个空格**断行（拉丁文优先断词，中文按字断行）；
 - 行尾空格不参与行宽（与 CSS 一致）；
-- 输出「行 → 段 → x 偏移 + 行高」，画布与测量器共用；行高 = max(节点行高, 该行最大字号)，
+- 输出「行 → 段 → x 偏移 + 行高」，画布与测量器共用；行高 = max(节点行高, 该行 run 的行高覆盖, 该行最大字号)，
   所以段内大字号会把这一行撑高，不会被相邻行压住。
+
+> 2026-11-11 更新：段内**行高覆盖**已实现（见 §9），行高取值多了一个来源。
 
 三个测量入口（估算器、浏览器 Canvas、宿主注入）都走它：
 
@@ -107,20 +109,73 @@ interface TextNode {
 3. 「清除选区样式」把这段区间恢复成节点级样式；
 4. 提示文案随选区变化（显示「已选中 N 个字符」）。
 
-画布内联编辑（双击文本）仍是一个纯文本 `textarea`：提交时若文字变了而没给 `runs`，
-运行时用 `remapTextRuns()` 按前后缀对齐，所以「在段首插字」不会把样式留在原地。
+画布内联编辑（双击文本）是结构化 `contenteditable`（段落块 + 段内 run + 列表标记），
+**已能直接改样式**——见 §9.2。提交时若只给了文字而没给 `runs`，运行时用
+`remapTextRuns()` 按前后缀对齐，所以「在段首插字」不会把样式留在原地。
 
 ## 7. 已知限制
 
-- 段内不支持行高/字体族覆盖（字号见 §1）；HTML 的行高仍是节点级 `line-height`，
-  **段内字号在 HTML 里可能溢出固定行高**（浏览器按 CSS line-height 排，不像画布那样撑高行盒）；
+- 段内不支持**字体族**覆盖（字号与行高见 §1 / §9）；
 - 组件实例的文本覆盖（`component.override`）只同步 `text`，不同步 `runs`；
 - SVG 导出不换行（既有行为），富文本只解决样式不分段的问题；
 - 段内颜色的取值不做校验（任意 CSS 颜色字符串），token 绑定不适用于段内覆盖；
 - 段落级样式（列表、缩进）走独立模型与独立命令 `text.paragraph.set`，
-  不与段内 `runs` 混用——详见 `paragraph-styles.md`；
-- **画布内联编辑器已能显示段内样式与列表**（结构化 `contenteditable`，
-  见 `inline-text-editing.md`）；但编辑器里不能直接改样式，仍要经属性面板。
+  不与段内 `runs` 混用——详见 `paragraph-styles.md`。
+
+## 9. 段内行高覆盖与编辑器内改样式（2026-11-11）
+
+### 9.1 段内行高覆盖
+
+`TextRunStyle` 增加可选 `lineHeight?: number`（px）。语义：
+
+> 行盒高度 = max(节点级 lineHeight, 该行所有 run 的 lineHeight 覆盖, 该行最大字号)
+
+**行高不参与换行**——换行只看字号与可用宽度，所以「把一行撑高」不会让后面的行折返位置改变，
+只会把整段往下推。不做迭代求解（那需要「一行多高」的收敛），与「段内行高是行盒高度下限」
+这个定义一致。
+
+- **校验**：`rich-text.ts` 的 `TEXT_RUN_STYLE_FIELDS` / `isEmptyRunStyle` / `sameRunStyle` /
+  `validateRunStyle` 同步纳入该字段（值为正数）；zod 侧 `textRunSchema.style.lineHeight`。
+- **布局**：`design-layout/src/rich-text-layout.ts` 的 `lineHeightFor()` 改为四路取 max。
+  相邻 run 因行高不同会被 `sameStyle()` 切开，因此行高覆盖能精确落到所在行。
+- **导出**：HTML 的段内 `<span>` 输出 `line-height`；SVG **不换行**（每段一行），
+  所以段内行高只体现为**段与段之间的推进距离**（`paragraphLineHeight()`）。
+
+### 9.2 编辑器内直接改样式
+
+画布内联编辑层新增**浮动工具条**（加粗 / 颜色 / 字号）+ `Ctrl/Cmd+B`：
+
+- 选区用 `window.getSelection()` 的 Range 换算成 UTF-16 字符偏移
+  （`editorSelectionOffsets()`，口径与 `readEditorText()` 完全一致：块间 `\n`、`<br>` 算 1、标记跳过）；
+- 应用样式后**重建 DOM 并恢复选区**（`restoreEditorSelection()`）；
+- 提交时从 DOM **回读** `runs`（`readEditorRuns()`），不再只回读纯文本。
+
+原先编辑层是**只读文档 → DOM 的单向渲染**，样式永远来自文档；现在提交会带上从 DOM 反推的
+`runs`，所以编辑器里改的样式能落进文档。
+
+### 9.3 属性面板改样式实时反映到编辑器
+
+根因是编辑层 DOM **按节点 id 只构建一次**（`builtFor.current === node.id` 提前 return），
+面板改样式后文档变了、prop 变了，但 DOM 不重建 → run 级样式全部过期。
+
+现在区分两类变化（`syncEditorModel()`）：
+
+- **结构变化**（run 区间或段落结构改了）→ 重建 DOM；
+- **样式变化**（节点级字重/字号/颜色变了）→ `updateEditorRunStyles()` **只更新 span 的行内样式，
+  不动 DOM 结构**，光标与选区因此保住。
+
+偏移对齐：节点上的 run/段落样式是按「构建时文本」算的偏移，用户打过的字会让它漂移 →
+先用 `remapTextRuns()` / `remapParagraphStyles()` 对齐到当前 DOM 文本，再比较。
+
+顺带修掉的缺陷：编辑器基础字重原先用 `node.fontWeight`（可能 `undefined`）而不是
+`TEXT_DEFAULTS.fontWeight`，与画布（`?? 400`）不一致——现在两边同一套兜底。
+
+### 9.4 已知限制
+
+- 编辑态**不显示节点级效果**（混合模式、阴影、模糊）——编辑器只是个普通 DOM 容器，
+  这些效果只在画布上生效。
+- 应用样式走「重建 DOM + 恢复选区」，会丢失浏览器原生的撤销栈（`Ctrl+Z`）；
+  选区与光标位置由代码精确恢复。
 
 ## 8. 测试
 

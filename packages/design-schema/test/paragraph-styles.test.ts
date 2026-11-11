@@ -165,6 +165,31 @@ test("restarts the numbering after a non-ordered paragraph", () => {
   assert.deepEqual(resolved.map(paragraph => paragraph.marker), ["1.", "•", "1."]);
 });
 
+test("a bullet at a deeper level still breaks the numbering of the outer list", () => {
+  const text = "a\nb\nc";
+  const runs: ParagraphStyleRun[] = [
+    { from: 0, to: 1, style: { listType: "ordered", indent: 0 } },
+    { from: 2, to: 3, style: { listType: "bullet", indent: 1 } },
+    { from: 4, to: 5, style: { listType: "ordered", indent: 0 } },
+  ];
+  const resolved = resolveParagraphs(text, runs);
+  // bullet 打断的是整个有序序列，不只是它自己那一级：1. / • / 1.
+  assert.deepEqual(resolved.map(paragraph => paragraph.marker), ["1.", "•", "1."]);
+  assert.deepEqual(resolved.map(paragraph => paragraph.ordinal), [1, undefined, 1]);
+});
+
+test("a plain paragraph breaks the numbering of the surrounding list", () => {
+  const text = "a\nb\nc";
+  const runs: ParagraphStyleRun[] = [
+    { from: 0, to: 1, style: { listType: "ordered" } },
+    { from: 4, to: 5, style: { listType: "ordered" } },
+  ];
+  const resolved = resolveParagraphs(text, runs);
+  // 中间是普通段落 → 后面的列表块重新从 1 编号：1. / （无标记）/ 1.
+  assert.deepEqual(resolved.map(paragraph => paragraph.marker), ["1.", undefined, "1."]);
+  assert.deepEqual(resolved.map(paragraph => paragraph.ordinal), [1, undefined, 1]);
+});
+
 test("uses the same bullet at every level", () => {
   const text = "a\nb";
   const runs: ParagraphStyleRun[] = [

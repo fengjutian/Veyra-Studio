@@ -131,6 +131,19 @@ test("drops the paragraph style when the paragraph it covered is deleted", () =>
   assert.equal(paragraphStylesOf(runtime), undefined);
 });
 
+test("keeps the paragraph styles aligned when the runs are patched together with the text", () => {
+  const runtime = textRuntime("a\nb");
+  runtime.execute(envelope(1, [
+    { type: "text.paragraph.set", payload: { id: "label", from: 0, to: 1, style: { listType: "bullet" } } },
+  ]));
+  // 画布内联编辑提交时 text 与 runs 一起给：段落样式仍然要跟着文本走，
+  // 否则区间不再对齐段落边界，文档直接不合法。
+  runtime.execute(envelope(2, [
+    { type: "text.patch", payload: { id: "label", patch: { text: "x\na\nb", runs: [] } } },
+  ]));
+  assert.deepEqual(paragraphStylesOf(runtime), [{ from: 2, to: 3, style: { listType: "bullet" } }]);
+});
+
 test("rejects an invalid list type", () => {
   const runtime = textRuntime("a");
   assert.throws(() => runtime.execute(envelope(1, [

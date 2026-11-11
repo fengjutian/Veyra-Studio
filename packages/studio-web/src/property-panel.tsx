@@ -13,7 +13,7 @@ export interface PropertyPanelProps {
   /** 父节点：约束只在绝对布局的容器里才有意义，所以面板需要知道父级。 */
   parent?: DesignNode;
   disabled?: boolean;
-  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "constraints" | "overflow" | "position">>): void;
+  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "maskFeather" | "constraints" | "overflow" | "position">>): void;
   onPatchText(patch: TextPatch): void;
   /** 改段落样式（列表类型 / 缩进 / 段落缩进 / 悬挂 / 列表间距）；走独立命令，不经过 TextPatch。 */
   onSetParagraphStyle?(payload: { from: number; to: number; style: { listType?: ListType | "none"; indentDelta?: number; paragraphIndent?: number; hanging?: boolean; listSpacing?: number } }): void;
@@ -411,16 +411,38 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
         <NumberField label="背景模糊" value={node.appearance.backgroundBlur ?? 0} min={0} disabled={disabled} onCommit={value => onPatch({ appearance: { ...node.appearance, backgroundBlur: value > 0 ? value : undefined } })} />
         <p className="field-hint">背景模糊只影响节点后面的内容；导出到 HTML/SVG 与画布一致。</p>
         {MASKABLE_TYPES.has(node.type) && (
-          <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ mask: node.mask ? undefined : true })}>
-            {node.mask ? "取消蒙版" : "用作蒙版（裁剪上方兄弟层）"}
-          </button>
+          <>
+            <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ mask: node.mask ? undefined : true })}>
+              {node.mask ? "取消蒙版" : "用作蒙版（裁剪上方兄弟层）"}
+            </button>
+            {node.mask && (
+              <NumberField
+                label="蒙版羽化"
+                value={node.maskFeather ?? 0}
+                min={0}
+                disabled={disabled}
+                onCommit={value => onPatch({ maskFeather: value > 0 ? value : undefined })}
+              />
+            )}
+          </>
         )}
         {node.appearance.shadow ? (
           <>
+            <Segmented
+              label="阴影类型"
+              value={node.appearance.shadow.type ?? "drop"}
+              disabled={disabled}
+              options={[
+                { value: "drop", label: "投影" },
+                { value: "inner", label: "内阴影" },
+              ]}
+              onChange={value => patchShadow({ type: value as ShadowSpec["type"] })}
+            />
             <div className="field-grid field-grid-4">
               <NumberField label="X" value={node.appearance.shadow.x} disabled={disabled} onCommit={x => patchShadow({ x })} />
               <NumberField label="Y" value={node.appearance.shadow.y} disabled={disabled} onCommit={y => patchShadow({ y })} />
               <NumberField label="模糊" value={node.appearance.shadow.blur} min={0} disabled={disabled} onCommit={blur => patchShadow({ blur })} />
+              <NumberField label="扩散" value={node.appearance.shadow.spread ?? 0} disabled={disabled} onCommit={spread => patchShadow({ spread })} />
             </div>
             <TextField label="阴影色" value={node.appearance.shadow.color} disabled={disabled} onCommit={color => patchShadow({ color })} />
             <button type="button" className="link-button" disabled={disabled} onClick={() => onPatch({ appearance: { ...node.appearance, shadow: undefined } })}>

@@ -1,4 +1,4 @@
-import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, effectiveComponentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, validatePropertyValue, withPropertyBinding, BINDING_REQUIREMENTS, COMPONENT_PROPERTY_FIELDS, type BooleanNode, type BooleanOperation, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint, type TokenGroupMeta } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, rotatedBoxBounds, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, effectiveComponentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, validatePropertyValue, withPropertyBinding, BINDING_REQUIREMENTS, COMPONENT_PROPERTY_FIELDS, type BooleanNode, type BooleanOperation, type ComponentDefinition, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint, type TokenGroupMeta } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -207,8 +207,10 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
         if (remapped.length) node.runs = remapped;
         else delete node.runs;
       }
-      if (patch.runs === undefined && textChanged && node.paragraphStyles?.length) {
+      if (textChanged && node.paragraphStyles?.length) {
         // 段落样式同样要跟着文本走：区间必须对齐新文本的段落边界，否则文档直接不合法。
+        // 这条与 runs 是**两条独立的轴**：调用方给了显式的 runs，不代表段落样式
+        // 就不用跟着走（画布内联编辑提交时会同时给 text 与 runs）。
         const remapped = remapParagraphStyles(previousText, node.text, node.paragraphStyles);
         if (remapped.length) node.paragraphStyles = remapped;
         else delete node.paragraphStyles;
@@ -626,6 +628,31 @@ function createComponentSet(document: DesignDocument, set: ComponentSetDefinitio
 }
 
 /**
+ * 组件自己的属性声明是不是**从共享声明继承来的拷贝**。
+ *
+ * 拷贝与共享声明在名字、类型、默认值上完全一致 —— 它没有表达任何特化意图，
+ * 共享声明改了它就该跟着改。
+ *
+ * 任何一项不同（改了名字、改了默认值、换了类型）都算**显式特化**，必须保留。
+ * 共享声明不存在时谈不上继承，一律按特化处理。
+ */
+function isInheritedCopy(own: ComponentProperty, shared: ComponentProperty | undefined): boolean {
+  if (!shared) return false;
+  return own.type === shared.type && own.name === shared.name && own.defaultValue === shared.defaultValue;
+}
+
+/**
+ * 从组件的属性声明里删掉一条；删空时把整个字段去掉（不留空数组）。
+ *
+ * 少了这个字段，组件就变成「不自己声明这条属性」，直接继承变体集的共享声明。
+ */
+function dropComponentPropertyDeclaration(component: ComponentDefinition, propertyId: string): void {
+  const next = (component.properties ?? []).filter(property => property.id !== propertyId);
+  if (next.length) component.properties = next;
+  else delete component.properties;
+}
+
+/**
  * 给变体集声明一个**共享**的组件属性。
  *
  * 共享声明的语义：集内所有变体都拿到这一组属性，不必各自重复声明。
@@ -648,11 +675,22 @@ function setComponentSetProperty(document: DesignDocument, payload: { setId: str
   }
   const shared = [...(set.componentProperties ?? [])];
   const index = shared.findIndex(candidate => candidate.id === property.id);
+  // 改之前的共享声明：用来分辨成员组件那条声明是「继承来的拷贝」还是「显式特化」。
+  const previous = index >= 0 ? shared[index] : undefined;
   if (index >= 0) shared[index] = property;
   else shared.push(property);
   set.componentProperties = shared;
+  // 集合默认值变了，成员组件里那条**继承来的拷贝**必须跟着变：
+  // 否则变体面板显示的还是旧默认值（own 优先于 shared）。
+  // 做法是把拷贝删掉——变体直接继承新的共享声明，以后集合再改也会自动跟上。
+  // 显式特化（改了名字/类型/默认值）的拷贝保留不动。
+  const inheritedFrom = previous ?? property;
   for (const component of Object.values(document.components)) {
     if (component.variantSetId !== set.id) continue;
+    const own = (component.properties ?? []).find(candidate => candidate.id === property.id);
+    if (own && isInheritedCopy(own, inheritedFrom)) {
+      dropComponentPropertyDeclaration(component, property.id);
+    }
     applyComponentProperties(document, component.id);
   }
 }
@@ -667,14 +705,20 @@ function removeComponentSetProperty(document: DesignDocument, payload: { setId: 
   const set = document.componentSets?.[payload.setId];
   if (!set) throw new CommandError(`Component set ${payload.setId} does not exist`);
   const shared = set.componentProperties ?? [];
-  if (!shared.some(property => property.id === payload.propertyId)) {
+  const removed = shared.find(property => property.id === payload.propertyId);
+  if (!removed) {
     throw new CommandError(`Property ${payload.propertyId} is not shared by component set ${set.id}`);
   }
   set.componentProperties = shared.filter(property => property.id !== payload.propertyId);
   for (const component of Object.values(document.components)) {
     if (component.variantSetId !== set.id) continue;
-    const own = (component.properties ?? []).some(property => property.id === payload.propertyId);
-    if (own) continue;
+    const own = (component.properties ?? []).find(property => property.id === payload.propertyId);
+    if (own) {
+      // 显式特化保留：它已经是这个组件自己的属性，与共享声明无关。
+      if (!isInheritedCopy(own, removed)) continue;
+      // 与被删掉的共享声明一模一样的拷贝是继承来的：共享声明没了，它也不该留下。
+      dropComponentPropertyDeclaration(component, payload.propertyId);
+    }
     detachProperty(document, component.id, payload.propertyId);
     applyComponentProperties(document, component.id);
   }
@@ -778,15 +822,21 @@ function createComponentVariant(document: DesignDocument, payload: { sourceCompo
   const rootId = clone(source.rootNodeId, sourceRoot.parentId);
   const index = owner.childIds.indexOf(source.rootNodeId);
   insertAt(owner.childIds, rootId, index >= 0 ? index + 1 : undefined);
+  // 属性声明复制到新变体（属性 id 保持一致），节点上的绑定随节点一起被复制，
+  // 于是切换变体时实例的属性值能按 id 继续对上。
+  //
+  // 但**从共享声明继承来的拷贝不复制**：那份拷贝只会让变体显示共享声明的旧默认值
+  // （own 优先于 shared），集合默认值一变就对不上。删掉它，变体直接继承共享声明。
+  // 组件自己声明的属性（不在共享声明里，或与共享声明不同——显式特化）照常复制。
+  const sharedById = new Map((set.componentProperties ?? []).map(property => [property.id, property]));
+  const ownProperties = (source.properties ?? []).filter(property => !isInheritedCopy(property, sharedById.get(property.id)));
   document.components[payload.componentId] = {
     id: payload.componentId,
     name: payload.name.trim(),
     rootNodeId: rootId,
     variantSetId: set.id,
     variant: { ...payload.values },
-    // 属性声明复制到新变体（属性 id 保持一致），节点上的绑定随节点一起被复制，
-    // 于是切换变体时实例的属性值能按 id 继续对上。
-    ...(source.properties?.length ? { properties: structuredClone(source.properties) } : {}),
+    ...(ownProperties.length ? { properties: structuredClone(ownProperties) } : {}),
   };
 }
 
@@ -1008,10 +1058,19 @@ function applyPropertyToCopy(document: DesignDocument, copy: DesignNode, field: 
   switch (field) {
     case "text": {
       if (copy.type !== "text") return;
-      copy.text = String(value);
-      delete copy.runs;
-      // 段落样式区间必须对齐段落边界，纯文本替换后旧区间必然失效——与段内样式一起清掉。
-      delete copy.paragraphStyles;
+      const previous = copy.text;
+      const next = String(value);
+      copy.text = next;
+      // 段内样式按「最长公共前缀 + 后缀」对齐到新文本，而不是一律清空：
+      // - 完全不同的文本 → 旧区间失效，样式自然消失（不报错）；
+      // - 子串替换 → 前后缀对应区间的样式保留下来。
+      const runs = remapTextRuns(previous, next, copy.runs);
+      if (runs.length) copy.runs = runs;
+      else delete copy.runs;
+      // 段落样式同理：按段落边界重新吸附，列表项不会因为改了文字就丢掉缩进。
+      const paragraphStyles = remapParagraphStyles(previous, next, copy.paragraphStyles);
+      if (paragraphStyles.length) copy.paragraphStyles = paragraphStyles;
+      else delete copy.paragraphStyles;
       return;
     }
     case "visible": {
@@ -1462,7 +1521,7 @@ function createNode(document: DesignDocument, node: DesignNode, index?: number):
 }
 
 /** node.patch 允许出现的字段（与命令类型定义一致）。 */
-const NODE_PATCH_FIELDS = ["name", "visible", "locked", "layout", "appearance", "bindings", "slot", "mask", "constraints", "overflow", "position"] as const;
+const NODE_PATCH_FIELDS = ["name", "visible", "locked", "layout", "appearance", "bindings", "slot", "mask", "maskFeather", "constraints", "overflow", "position"] as const;
 
 /** text.patch 允许出现的字段。 */
 const TEXT_PATCH_FIELDS = ["text", "fontFamily", "fontSize", "lineHeight", "fontWeight", "fontStyle", "textAlign", "letterSpacing", "runs"] as const;
@@ -1657,15 +1716,16 @@ function createBoolean(document: DesignDocument, payload: { id: string; name?: s
   if (new Set(operands.map(node => node.id)).size !== operands.length) throw new CommandError("Boolean operands must be unique");
   if (!operands.every(supportsBooleanOperand)) throw new CommandError("Only shapes can be boolean operands");
   if (operands.some(node => node.locked)) throw new CommandError("Locked nodes cannot be boolean operands");
-  if (operands.some(node => node.layout.rotation)) throw new CommandError("Rotated nodes cannot be boolean operands yet");
   const parentId = operands[0]!.parentId;
   if (operands.some(node => node.parentId !== parentId)) throw new CommandError("Boolean operands must share the same parent");
   const parent = requireContainer(document, parentId);
 
-  const minX = Math.min(...operands.map(node => node.layout.x));
-  const minY = Math.min(...operands.map(node => node.layout.y));
-  const maxX = Math.max(...operands.map(node => node.layout.x + node.layout.width));
-  const maxY = Math.max(...operands.map(node => node.layout.y + node.layout.height));
+  // 操作数带旋转时，转出去的部分也要算进布尔组的盒子：形状得画在它真正在的地方。
+  const bounds = operands.map(node => rotatedBoxBounds(node.layout, node.layout.rotation ?? 0));
+  const minX = Math.min(...bounds.map(bound => bound.x));
+  const minY = Math.min(...bounds.map(bound => bound.y));
+  const maxX = Math.max(...bounds.map(bound => bound.x + bound.width));
+  const maxY = Math.max(...bounds.map(bound => bound.y + bound.height));
   const width = Math.max(1, maxX - minX);
   const height = Math.max(1, maxY - minY);
 
@@ -1731,16 +1791,28 @@ function refreshBoolean(document: DesignDocument, node: DesignNode): void {
   if (node.type !== "boolean") return;
   const children = node.childIds.map(id => document.nodes[id]).filter((child): child is DesignNode => Boolean(child));
   if (children.length < 2) return;
-  const minX = Math.min(...children.map(child => child.layout.x));
-  const minY = Math.min(...children.map(child => child.layout.y));
-  const maxX = Math.max(...children.map(child => child.layout.x + child.layout.width));
-  const maxY = Math.max(...children.map(child => child.layout.y + child.layout.height));
-  if (minX) for (const child of children) child.layout = { ...child.layout, x: child.layout.x - minX };
-  if (minY) for (const child of children) child.layout = { ...child.layout, y: child.layout.y - minY };
+  // 操作数带旋转时，转出去的部分也要算进布尔组的盒子。
+  const bounds = children.map(child => rotatedBoxBounds({
+    x: node.layout.x + child.layout.x,
+    y: node.layout.y + child.layout.y,
+    width: child.layout.width,
+    height: child.layout.height,
+  }, child.layout.rotation ?? 0));
+  const minX = Math.min(...bounds.map(bound => bound.x));
+  const minY = Math.min(...bounds.map(bound => bound.y));
+  const maxX = Math.max(...bounds.map(bound => bound.x + bound.width));
+  const maxY = Math.max(...bounds.map(bound => bound.y + bound.height));
+  const originX = node.layout.x;
+  const originY = node.layout.y;
+  // 先把原点移到包围盒左上角（子节点坐标相应回退），再更新宽高，
+  // 内容的世界坐标因此不变。
+  for (const child of children) {
+    child.layout = { ...child.layout, x: child.layout.x + originX - minX, y: child.layout.y + originY - minY };
+  }
   node.layout = {
     ...node.layout,
-    x: node.layout.x + minX,
-    y: node.layout.y + minY,
+    x: minX,
+    y: minY,
     width: Math.max(1, maxX - minX),
     height: Math.max(1, maxY - minY),
   };

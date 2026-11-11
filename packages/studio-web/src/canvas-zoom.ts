@@ -70,6 +70,47 @@ export function zoomPercent(zoom: number): number {
 }
 
 /**
+ * 缩放工具拖动时，拖过多少屏幕像素对应放大一倍。
+ *
+ * 用指数而不是线性：放大到 4 倍再想缩回来，线性会让手感忽快忽慢。
+ */
+export const ZOOM_DRAG_RANGE = 400;
+
+/**
+ * Computes the zoom factor of a zoom-tool drag.
+ *
+ * Dragging up enlarges, dragging down shrinks. The factor is relative to the
+ * zoom the drag started with, so a drag can be continued past several steps.
+ */
+export function zoomFromDrag(startClientY: number, currentClientY: number, startZoom: number): number {
+  const ratio = Math.pow(2, (startClientY - currentClientY) / ZOOM_DRAG_RANGE);
+  return clampZoom(startZoom * ratio);
+}
+
+/**
+ * Computes the scroll offset that keeps a point under the pointer while zooming.
+ *
+ * The canvas is scaled with a CSS `zoom` on the canvas element itself, so the
+ * element's offset inside the scroller does not depend on the zoom factor: the
+ * screen position of a scene point is `offset - scroll + point * zoom`. Keeping
+ * that position fixed while the zoom changes gives `scroll' = scroll + point *
+ * (zoom' - zoom)`.
+ */
+export function zoomAtPoint(
+  zoom: number,
+  nextZoom: number,
+  anchor: { x: number; y: number },
+  scroll: { scrollLeft: number; scrollTop: number },
+): { zoom: number; scrollLeft: number; scrollTop: number } {
+  const factor = nextZoom - zoom;
+  return {
+    zoom: nextZoom,
+    scrollLeft: scroll.scrollLeft + anchor.x * factor,
+    scrollTop: scroll.scrollTop + anchor.y * factor,
+  };
+}
+
+/**
  * Returns the bounding box of the laid out nodes.
  *
  * This is what "fit to content" frames: the page canvas is 960x680, but the

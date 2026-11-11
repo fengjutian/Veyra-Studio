@@ -19,8 +19,10 @@ export interface SelectionOverlayOptions {
   outlineOnly?: boolean;
   /** 节点的旋转角（弧度）；非零时轮廓与手柄都跟着转。 */
   rotation?: number;
-  /** 是否绘制框外的旋转手柄（单选时才有意义）。 */
+  /** 是否绘制框外的旋转手柄（单选与多选都有意义）。 */
   showRotateHandle?: boolean;
+  /** 旋转角度文案（画在旋转手柄旁边）；省略就不画。 */
+  angleLabel?: string;
 }
 
 export function paintSelectionOverlay(context: CanvasRenderingContext2D, bounds: Rect, options: SelectionOverlayOptions = {}): void {
@@ -71,6 +73,14 @@ export function paintSelectionOverlay(context: CanvasRenderingContext2D, bounds:
       context.arc(handle.x, handle.y, 4.5 / zoom, 0, Math.PI * 2);
       context.fill();
       context.stroke();
+      // 角度读数：多选旋转时整组一起转，光看图形看不出转了多少度。
+      if (options.angleLabel) {
+        context.font = `${11 / zoom}px sans-serif`;
+        context.textAlign = "center";
+        context.textBaseline = "bottom";
+        context.fillStyle = color;
+        context.fillText(options.angleLabel, handle.x, handle.y - 8 / zoom);
+      }
     }
   }
   context.restore();

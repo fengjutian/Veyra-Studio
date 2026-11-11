@@ -4,7 +4,9 @@ import {
   resolveFills,
   resolveRadius,
   resolveStroke,
+  computeBooleanBounds,
   computeBooleanGeometry,
+  textFillColor,
   vectorPathCommands,
   type CornerRadii,
   type BlendMode,
@@ -76,6 +78,8 @@ export interface SceneNode {
   path?: PathCommand[];
   /** 这个节点是蒙版：不绘制自身，只裁剪同父级里排在它上面的兄弟。 */
   mask?: boolean;
+  /** 蒙版边缘羽化半径（px）：蒙版轮廓被模糊，被裁剪的内容在边缘渐隐。 */
+  maskFeather?: number;
   /** 蒙版裁剪这个节点的蒙版（按兄弟顺序累积）。 */
   maskedBy?: SceneNode[];
   /** 旋转角（角度制，顺时针为正，绕节点中心）；省略表示不旋转。 */
@@ -123,7 +127,11 @@ function applySiblingMasks(children: SceneNode[]): SceneNode[] {
 
 export function buildNode(document: DesignDocument, node: DesignNode | undefined, boxes: Record<string, SceneBox | undefined>): SceneNode | undefined {
   if (!node || node.visible === false) return undefined;
-  const box = boxes[node.id] ?? { x: node.layout.x ?? 0, y: node.layout.y ?? 0, width: node.layout.width ?? 0, height: node.layout.height ?? 0 };
+  const layoutBox = boxes[node.id] ?? { x: node.layout.x ?? 0, y: node.layout.y ?? 0, width: node.layout.width ?? 0, height: node.layout.height ?? 0 };
+  // 布尔组的参考框取操作数并集（含旋转）：旋转过的操作数会转出原来的盒子，
+  // 按旧盒子归一化会把形状硬拉变形，画布与命中因此都以并集为准。
+  const booleanBounds = node.type === "boolean" ? computeBooleanBounds(document, node, boxes) : undefined;
+  const box = booleanBounds ?? layoutBox;
   const fills = resolveFills(document, node);
   // 主色：实色取自身、渐变取首个色标。文本颜色与对比度检查只认单一颜色。
   const fill = fills[0]?.type === "solid" ? fills[0].color : fills[0]?.stops[0]?.color;
@@ -153,6 +161,7 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
     ...(node.type === "vector" && node.geometry ? { path: vectorPathCommands(node.geometry.d) } : {}),
     ...(booleanPath ? { path: booleanPath } : {}),
     ...(node.mask ? { mask: true } : {}),
+    ...(node.maskFeather ? { maskFeather: node.maskFeather } : {}),
     ...(node.layout.rotation ? { rotation: node.layout.rotation } : {}),
     ...(node.appearance.shadow ? { shadow: node.appearance.shadow } : {}),
     ...(node.appearance.blur ? { blur: node.appearance.blur } : {}),
@@ -174,7 +183,8 @@ export function buildNode(document: DesignDocument, node: DesignNode | undefined
       fontStyle: text.fontStyle === "italic" ? "italic" : "normal",
       align: text.textAlign === "center" || text.textAlign === "right" ? text.textAlign : "left",
       letterSpacing: text.letterSpacing ?? 0,
-      color: fill ?? "#111111",
+      // 文字色：与 HTML/SVG 共用同一套规则（第一层填充 → 渐变取首个色标 → 默认色）。
+      color: textFillColor(document, node),
       ...(text.runs?.length ? { runs: text.runs } : {}),
       ...(text.paragraphStyles?.length ? { paragraphStyles: text.paragraphStyles } : {}),
     };

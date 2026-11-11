@@ -106,3 +106,18 @@ test("a larger run advances the next line by that line's height", () => {
   assert.deepEqual(draws.map(call => [call.args[0], call.args[2]]), [["ab", 20], ["cd", 20], ["ef", 60]]);
   assert.ok(context.calls.some(call => call.name === "font" && String(call.args[0]).includes("40px")), "large run should use its own font size");
 });
+
+test("a run line height raises that line's box without moving the text inside it", () => {
+  const context = fakeContext();
+  const canvas = { width: 0, height: 0, style: {}, getContext: () => context } as unknown as HTMLCanvasElement;
+  const renderer = createCanvas2DRenderer(canvas);
+  const node = textNode();
+  node.text!.runs = [{ from: 0, to: 2, style: { lineHeight: 40 } }];
+
+  renderer.paint([node], { width: 100, height: 100, zoom: 1, devicePixelRatio: 1, images: new Map() });
+
+  const draws = context.calls.filter(call => call.name === "fillText");
+  // 行盒高度 = max(节点行高 20, 行内行高 40, 行内最大字号 16) = 40：
+  // 第一行里的文字仍在 y=20，但下一行被推到 y=60。
+  assert.deepEqual(draws.map(call => [call.args[0], call.args[2]]), [["ab", 20], ["cd", 20], ["ef", 60]]);
+});

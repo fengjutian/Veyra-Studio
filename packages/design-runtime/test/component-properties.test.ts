@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDocument, defaultAppearance, defaultLayout, type DesignNode } from "@ufira/design-schema";
+import { createDocument, defaultAppearance, defaultLayout, effectiveComponentProperties, type DesignNode } from "@ufira/design-schema";
 import { DesignRuntime } from "../src/index";
 
 /**
@@ -457,4 +457,163 @@ test("removing a shared property clears the bindings and values of members", () 
   const snapshot = runtime.snapshot();
   assert.equal(snapshot.nodes["box"]!.componentPropertyBindings?.fill, undefined);
   assert.deepEqual((snapshot.nodes["instance:1"] as { propValues?: unknown }).propValues, {});
+});
+
+/**
+ * 集合共享属性 + 变体。
+ *
+ * 结构：set:1 → component:button（md）+ component:button-lg（lg）。
+ */
+function variantSetRuntime(): DesignRuntime {
+  const runtime = propertyRuntime();
+  runtime.execute(envelope(3, [
+    { type: "component.setCreate", payload: { set: { id: "set:1", name: "按钮", properties: ["size"] } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.setVariant", payload: { id: "component:button", variantSetId: "set:1", variant: { size: "md" } } },
+  ]));
+  runtime.execute(envelope(5, [
+    { type: "component.setProperty.set", payload: { setId: "set:1", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" } } },
+  ]));
+  runtime.execute(envelope(6, [
+    { type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:tint", nodeId: "box", field: "fill" } },
+  ]));
+  runtime.execute(envelope(7, [
+    { type: "component.createVariant", payload: { sourceComponentId: "component:button", componentId: "component:button-lg", name: "Button lg", values: { size: "lg" } } },
+  ]));
+  return runtime;
+}
+
+test("a new variant inherits the shared declaration instead of copying it", () => {
+  const runtime = variantSetRuntime();
+  const snapshot = runtime.snapshot();
+  // 从集继承来的拷贝不复制：复制了就会显示共享声明的旧默认值。
+  assert.equal(snapshot.components["component:button-lg"]!.properties, undefined);
+  assert.deepEqual(effectiveComponentProperties(snapshot, "component:button-lg"), [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" },
+  ]);
+});
+
+test("changing the shared default reaches the variants that only inherited it", () => {
+  const runtime = variantSetRuntime();
+  runtime.execute(envelope(8, [
+    { type: "component.instantiate", payload: { node: { ...frame("instance:1"), type: "instance", componentId: "component:button-lg", overrides: {} } } },
+  ]));
+  runtime.execute(envelope(9, [
+    { type: "component.setProperty.set", payload: { setId: "set:1", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#00ff00" } } },
+  ]));
+  const snapshot = runtime.snapshot();
+  assert.deepEqual(effectiveComponentProperties(snapshot, "component:button-lg"), [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#00ff00" },
+  ]);
+  // 实例副本跟着新的集合默认值走。
+  const copy = snapshot.nodes["instance:1--component:button-lg--box"];
+  assert.equal(copy?.appearance.fills?.[0]?.type === "solid" ? copy.appearance.fills[0].color : "", "#00ff00");
+});
+
+test("a variant holding an inherited copy follows the shared default", () => {
+  const runtime = variantSetRuntime();
+  // 历史文档的样子：变体自己存着一条与共享声明一模一样的拷贝。
+  runtime.execute(envelope(8, [
+    { type: "component.property.set", payload: { componentId: "component:button-lg", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" } } },
+  ]));
+  assert.deepEqual(runtime.snapshot().components["component:button-lg"]!.properties, [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#ff0000" },
+  ]);
+  runtime.execute(envelope(9, [
+    { type: "component.setProperty.set", payload: { setId: "set:1", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#00ff00" } } },
+  ]));
+  const snapshot = runtime.snapshot();
+  // 那条拷贝被丢掉，变体直接继承新的共享声明。
+  assert.equal(snapshot.components["component:button-lg"]!.properties, undefined);
+  assert.deepEqual(effectiveComponentProperties(snapshot, "component:button-lg"), [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#00ff00" },
+  ]);
+});
+
+test("a variant that specialized the default keeps it when the shared default changes", () => {
+  const runtime = variantSetRuntime();
+  runtime.execute(envelope(8, [
+    { type: "component.property.set", payload: { componentId: "component:button-lg", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#0000ff" } } },
+  ]));
+  runtime.execute(envelope(9, [
+    { type: "component.setProperty.set", payload: { setId: "set:1", property: { id: "prop:tint", name: "主色", type: "color", defaultValue: "#00ff00" } } },
+  ]));
+  const snapshot = runtime.snapshot();
+  // 显式特化保留：集合默认值不覆盖它。
+  assert.deepEqual(snapshot.components["component:button-lg"]!.properties, [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#0000ff" },
+  ]);
+  assert.deepEqual(effectiveComponentProperties(snapshot, "component:button-lg"), [
+    { id: "prop:tint", name: "主色", type: "color", defaultValue: "#0000ff" },
+  ]);
+});
+
+test("writing a text property keeps the in-paragraph styles of the untouched parts", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: frame("root") } },
+    {
+      type: "node.create",
+      payload: {
+        node: {
+          ...text("label", "root", "Hello World"),
+          runs: [{ from: 0, to: 5, style: { fontWeight: 700 } }],
+          paragraphStyles: [{ from: 0, to: 11, style: { listType: "bullet" } }],
+        },
+      },
+    },
+  ]));
+  runtime.execute(envelope(1, [
+    { type: "node.reparent", payload: { id: "label", parentId: "root", index: 0 } },
+  ]));
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [
+    { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:title", name: "标题", type: "text", defaultValue: "Hello World" } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:title", nodeId: "label", field: "text" } },
+  ]));
+  instantiate(runtime, 5);
+  runtime.execute(envelope(6, [
+    { type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:title", value: "Hello" } },
+  ]));
+  const copy = runtime.snapshot().nodes["instance:1--label"] as { text: string; runs?: unknown[]; paragraphStyles?: unknown[] };
+  assert.equal(copy.text, "Hello");
+  // 共有前缀里的加粗保留；段落样式按段落边界重新吸附到新文本。
+  assert.deepEqual(copy.runs, [{ from: 0, to: 5, style: { fontWeight: 700 } }]);
+  assert.deepEqual(copy.paragraphStyles, [{ from: 0, to: 5, style: { listType: "bullet" } }]);
+});
+
+test("writing a completely different text drops the in-paragraph styles", () => {
+  const runtime = new DesignRuntime(createDocument("doc:1", "Demo", "page:1"));
+  runtime.execute(envelope(0, [
+    { type: "node.create", payload: { node: frame("root") } },
+    {
+      type: "node.create",
+      payload: {
+        node: {
+          ...text("label", "root", "Hello World"),
+          runs: [{ from: 0, to: 5, style: { fontWeight: 700 } }],
+        },
+      },
+    },
+  ]));
+  runtime.execute(envelope(1, [
+    { type: "node.reparent", payload: { id: "label", parentId: "root", index: 0 } },
+  ]));
+  runtime.execute(envelope(2, [{ type: "component.create", payload: { id: "component:button", nodeId: "root", name: "Button" } }]));
+  runtime.execute(envelope(3, [
+    { type: "component.property.set", payload: { componentId: "component:button", property: { id: "prop:title", name: "标题", type: "text", defaultValue: "Hello World" } } },
+  ]));
+  runtime.execute(envelope(4, [
+    { type: "component.property.bind", payload: { componentId: "component:button", propertyId: "prop:title", nodeId: "label", field: "text" } },
+  ]));
+  instantiate(runtime, 5);
+  runtime.execute(envelope(6, [
+    { type: "instance.property.set", payload: { instanceId: "instance:1", propertyId: "prop:title", value: "完全不同" } },
+  ]));
+  const copy = runtime.snapshot().nodes["instance:1--label"] as { text: string; runs?: unknown[] };
+  assert.equal(copy.text, "完全不同");
+  assert.equal(copy.runs, undefined);
 });

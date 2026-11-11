@@ -10,6 +10,8 @@ test("every tool has a unique shortcut and the draw tools are exhaustive", () =>
   assert.deepEqual(TOOLS.filter(spec => isDrawTool(spec.id)).map(spec => spec.id), ["frame", "rectangle", "ellipse", "line", "polygon", "star", "text"]);
   assert.equal(isDrawTool("select"), false);
   assert.equal(isDrawTool("hand"), false);
+  // 缩放工具不创建节点。
+  assert.equal(isDrawTool("zoom"), false);
 });
 
 test("maps single keys to tools and ignores everything else", () => {
@@ -19,7 +21,7 @@ test("maps single keys to tools and ignores everything else", () => {
   assert.equal(shortcutTool("t"), "text");
   assert.equal(shortcutTool("h"), "hand");
   assert.equal(shortcutTool("f"), "frame");
-  assert.equal(shortcutTool("z"), undefined);
+  assert.equal(shortcutTool("z"), "zoom");
   assert.equal(shortcutTool("Shift"), undefined);
 });
 
@@ -70,9 +72,19 @@ test("a click draws the default size at the pointer", () => {
 test("returns to the select tool after drawing", () => {
   assert.equal(nextToolAfterDraw("rectangle"), "select");
   assert.equal(nextToolAfterDraw("text"), "select");
-  // 选择与抓手本来就不创建节点，保持不变。
+  // 选择、抓手与缩放本来就不创建节点，保持不变。
   assert.equal(nextToolAfterDraw("select"), "select");
   assert.equal(nextToolAfterDraw("hand"), "hand");
+  assert.equal(nextToolAfterDraw("zoom"), "zoom");
+});
+
+test("the zoom tool is a plain tool: it has a label, an icon and a cursor", () => {
+  const spec = toolSpec("zoom");
+  assert.equal(spec.label, "缩放");
+  assert.equal(spec.shortcut, "z");
+  assert.equal(spec.icon, "zoomIn");
+  assert.equal(spec.cursor, "zoom-in");
+  assert.equal(spec.creates, undefined);
 });
 
 test("exposes a label for every tool, used by the status message", () => {

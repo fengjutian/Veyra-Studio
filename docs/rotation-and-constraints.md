@@ -68,9 +68,9 @@ export interface LayoutSpec {
 
 ## 5. 非目标（P5.1）
 
-- 多选整体旋转（组变换需要新的「组坐标系」概念）；
-- 旋转后的**自动布局**重排（旋转不参与布局，这一点与 Figma 一致）；
-- 旋转手柄（Figma 的框外旋转把手）——本相位通过属性面板输入角度；
+- ~~多选整体旋转（组变换需要新的「组坐标系」概念）~~ —— **已实现**（2026-11-11，见 §13）；
+- 旋转后的**自动布局**重排（旋转不参与布局，这一点与 Figma 一致）—— 旋转**不参与**布局这一点
+  仍然成立，但已加**如实提示**（见 §13.3）；
 - 约束（P5.2）：父容器尺寸变化时子节点如何贴边，和旋转是两套机制。
 
 ## 6. 验收
@@ -225,7 +225,7 @@ P5.1 只做了属性面板输入角度，鼠标转不了图形——这是旋转
   `studio-web` 380 条通过。
 
 已知边界：节点处在**被旋转的父容器**里时，手柄按父容器坐标系计算（视觉上会差一个父级角度）。
-多选整体旋转仍未实现——那需要新的「组坐标系」，属于另一个量级的工作。
+多选整体旋转已于 2026-11-11 实现（见 §13）。
 ## 12. 约束预览（2026-11-08）
 
 拖动父级手柄时，受约束的子节点**实时跟着动**——不是画几条提示线，而是直接按约束移动。
@@ -263,3 +263,61 @@ P5.1 只做了属性面板输入角度，鼠标转不了图形——这是旋转
 `constraint-preview.test.ts` 6 条：右固定保持右边距、拉伸跟随、父级原点移动时子节点平移、
 尺寸不变时不预览、stack 与无约束跳过、子节点被拉伸时孙节点也预览。
 `design-runtime` 59、`studio-web` 410 全部通过。
+
+## 13. 多选整体旋转与实例约束覆盖（2026-11-11）
+
+### 13.1 多选整体旋转
+
+多选时旋转手柄绕**选区旋转后包围盒的中心**刚性旋转所有选中节点。
+
+新增纯函数模块 `packages/studio-web/src/renderer/multi-rotate.ts`：
+
+| 函数 | 作用 |
+| --- | --- |
+| `groupPivot(boxes)` | 组枢轴 = 旋转后包围盒的中心。用**视觉包围盒**而不是轴对齐盒：节点本身已转过 30° 时轴对齐盒会偏，绕它转会让整组轻微漂移 |
+| `rotateTargets(targets, pivot, delta)` | 刚性变换：每个节点的中心绕枢轴公转、尺寸不变、角度加同一增量 |
+| `planRotation(request)` | 合成一次手势的完整结果（预览用） |
+| `rotationRelayoutNotice(...)` | 自动布局父级下的提示文案 |
+
+**吸附规则不同**：单选按**绝对角度**吸附（15° 的整数倍，保持既有单节点手感）；多选按**增量**
+吸附——整组必须转同一个角度，否则相对位置会被拉歪，刚性就没了。
+
+其它落点：`use-canvas-drag.ts` 的 rotate 手势由单节点扩展为多节点（一次手势 = 一条事务 =
+一次撤销）；`rotation.ts` 新增 `findSceneNode`/`rotatedAabbBoxes`（从 canvas-surface 提取，
+两处共用）；`selection-overlay.ts` 新增角度读数（拖动中显示组增量，静止单选显示节点角度）。
+
+### 13.2 顺带修掉的坐标缺陷
+
+旋转提交原来传的是**相对坐标**（`options.layoutOf(id)` 返回存储的 layout），而
+`commitCanvasMove` 会把它当绝对坐标**再减一次父级内容盒原点** → 嵌套节点的 x/y 被减两次。
+顶层节点因原点为 (0,0) 看不出来，所以这个缺陷一直藏着。
+
+现在旋转与移动/缩放**统一用绝对坐标**，换算收敛到唯一入口 `toParentLocalLayout()`。
+回归测试走真实布局引擎 + 运行时：转 30° 后子节点绝对盒仍为 (120, 90)。
+
+### 13.3 旋转后的自动布局重排（只做提示）
+
+布局引擎（`packages/design-layout`）**不参与旋转**——`layout.ts` 全文无 rotation 概念，
+stack 里旋转的节点仍占原来的格子。这与 Figma 一致，但用户容易误解，因此加了**如实提示**：
+旋转提交后若父级是 stack/grid，状态栏说明「父容器是自动布局（stack/grid）：布局引擎不按旋转
+重排兄弟节点（需要 design-layout 支持）」。
+
+**真正让旋转参与布局重排需要改 `design-layout`**，本轮未做。
+
+### 13.4 组件实例内的约束覆盖（studio-web 侧接口）
+
+现状：实例物化时 `constraints` 会被**整节点深拷贝**带过去，所以实例内部节点的约束 = 组件定义里
+的约束；改实例副本不影响组件定义（这是正确的）。但**没有任何覆盖机制**——`OverrideField` 只有
+`text`/`name`/`visible`/`appearance`，`component.override` 的 payload 同理。
+
+已实现的部分（`packages/studio-web/src/instance-constraint-override.ts`）：
+
+- `findInstanceCopy()`：从副本 id（`instanceId--sourceNodeId`）解析回源节点 id（排除插槽）；
+- `collectInstanceConstraintTargets()`：收集可覆盖的实例内部节点；
+- `planInstanceConstraintOverride()`：返回补丁形状**与不支持原因**；
+- 属性面板新增「实例约束覆盖」分段（水平/垂直 + 状态说明）；运行时未放行时**只把原因说清楚**，
+  不发会被拒绝的命令。
+
+**尚未生效**：底层还需要三处放行——`OverrideField` 加 `"constraints"`、`component.override`
+payload 加 `constraints` 字段、运行时白名单放行并写入 `instance.overrides[sourceNodeId]`。
+`constraints` 已是 `BaseNode` 的可选字段，**文档格式版本不变**。

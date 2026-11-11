@@ -558,8 +558,13 @@ export interface ResolvedParagraph {
  * 解析全文的段落样式与几何。
  *
  * 编号在这里**现算**，不存进文档：计数器按缩进级别维护，编号段落递增本级计数，
- * 更深级别的计数在遇到上级编号段落时清零；非编号段落（bullet 或普通段落）
- * 会清零本级及更深级别的计数——这样两段独立的列表各自从 1 开始。
+ * 更深级别的计数在遇到上级编号段落时清零（`ordered(0)→ordered(1)→ordered(0)`
+ * 得到 `1./a./2.`）。
+ *
+ * **bullet 或普通段落会清零所有级别的计数**（不只是本级及更深级别），
+ * 所以每个列表块各自从 1 重新编号：`ordered(0)→bullet(1)→ordered(0)`
+ * 得到 `1./•/1.`，而不是把 bullet 之前那个列表的计数带过来。
+ * 这是 Figma 的行为：一个节点里混排多种列表类型时，列表块是彼此独立的。
  */
 export function resolveParagraphs(
   text: string,
@@ -576,11 +581,14 @@ export function resolveParagraphs(
     if (listType === "ordered") {
       const next = (counters.get(level) ?? 0) + 1;
       counters.set(level, next);
+      // 回到更浅的级别：更深级别的计数作废（下一次回到该级别时从 1 重新开始）。
       for (const key of [...counters.keys()]) if (key > level) counters.delete(key);
       marker = formatOrderedMarker(next, level);
       ordinal = next;
     } else {
-      for (const key of [...counters.keys()]) if (key >= level) counters.delete(key);
+      // bullet 与普通段落打断有序序列：清空**所有**级别的计数，
+      // 让下一个列表块从 1 重新编号。
+      counters.clear();
       if (listType === "bullet") marker = BULLET_MARKER;
     }
     const listIndent = level * LIST_INDENT_STEP;

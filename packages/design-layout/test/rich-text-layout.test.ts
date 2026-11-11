@@ -123,3 +123,46 @@ test("segments split when a run changes the font size", () => {
   const same = layoutRichText({ ...base, text: "abcd", runs: [{ from: 0, to: 2, style: { fontSize: 20 } }, { from: 2, to: 4, style: { fontSize: 20 } }] });
   assert.deepEqual(same[0]!.segments.map(segment => segment.text), ["abcd"]);
 });
+
+test("a run line height raises the line it sits on and nothing else", () => {
+  const lines = layoutRichText({
+    ...base,
+    text: "ab\ncd",
+    runs: [{ from: 0, to: 2, style: { lineHeight: 40 } }],
+  });
+  // 行盒高度 = max(节点行高 20, 行内行高覆盖 40, 行内最大字号 10)。
+  assert.equal(lines[0]!.height, 40);
+  assert.equal(lines[1]!.height, 20);
+});
+
+test("a run line height wins over the node line height but not over the font size", () => {
+  const raised = layoutRichText({ ...base, text: "ab", runs: [{ from: 0, to: 2, style: { lineHeight: 40 } }] });
+  assert.equal(raised[0]!.height, 40);
+  const huge = layoutRichText({ ...base, text: "ab", runs: [{ from: 0, to: 2, style: { lineHeight: 12, fontSize: 30 } }] });
+  assert.equal(huge[0]!.height, 30);
+});
+
+test("a run line height does not move the line breaks", () => {
+  const plain = layoutRichText({ ...base, text: "abcdefgh", availableWidth: 50 });
+  const raised = layoutRichText({
+    ...base,
+    text: "abcdefgh",
+    runs: [{ from: 0, to: 2, style: { lineHeight: 40 } }],
+    availableWidth: 50,
+  });
+  assert.deepEqual(
+    raised.map(line => line.segments.map(segment => segment.text).join("")),
+    plain.map(line => line.segments.map(segment => segment.text).join("")),
+  );
+  assert.equal(raised[0]!.height, 40);
+  assert.equal(raised[1]!.height, 20);
+});
+
+test("measureRichText sums the raised line heights", () => {
+  const measured = measureRichText({
+    ...base,
+    text: "ab\ncd",
+    runs: [{ from: 0, to: 2, style: { lineHeight: 40 } }],
+  });
+  assert.equal(measured.height, 60);
+});

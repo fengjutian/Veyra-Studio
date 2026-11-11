@@ -1,4 +1,5 @@
 import { HANDLE_IDS, handleCenters, resizeRect, type HandleId, type Rect } from "./selection";
+import type { SceneNode } from "./scene";
 
 /**
  * 旋转的几何计算。
@@ -151,4 +152,37 @@ export function normalizeAngle(degrees: number): number {
 /** 按 `step` 度吸附（Shift 时用 15 度）。 */
 export function snapAngle(degrees: number, step = 15): number {
   return normalizeAngle(Math.round(degrees / step) * step);
+}
+
+/**
+ * 在场景树里找某个节点。
+ *
+ * 命中测试与旋转都要按 id 回到节点本身：场景是树，id 只是标签。
+ */
+export function findSceneNode(nodes: SceneNode[], id: string): SceneNode | undefined {
+  for (const node of nodes) {
+    if (node.id === id) return node;
+    const found = findSceneNode(node.children, id);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/**
+ * 选中节点各自的旋转 AABB。
+ *
+ * 多选包围盒必须包住「转出去」的那部分：直接用轴对齐盒合并，旋转过的节点会有一角
+ * 落在合并盒外面，选择框就画不准了。
+ */
+export function rotatedAabbBoxes(scene: SceneNode[], ids: readonly string[]): Rect[] {
+  const wanted = new Set(ids);
+  const boxes: Rect[] = [];
+  const walk = (nodes: SceneNode[]) => {
+    for (const node of nodes) {
+      if (wanted.has(node.id)) boxes.push(node.rotation ? rotatedBounds(node.box, toRadians(node.rotation)) : node.box);
+      if (node.children.length) walk(node.children);
+    }
+  };
+  walk(scene);
+  return boxes;
 }

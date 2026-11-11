@@ -8,17 +8,17 @@
   }
   </style>
   <g data-node-id="frame:card" style="opacity:1;fill:var(--color-surface);stroke:#e2e8f0;stroke-width:1;">  <rect x="40" y="40" width="320" height="152" rx="16" />
-    <text data-node-id="text:title" style="opacity:1;fill:none;font-family:Inter;font-size:20;font-weight:600;letter-spacing:1;stroke:none;" x="56" y="56" dominant-baseline="hanging">设计系统卡片</text>
-    <text data-node-id="text:body" style="opacity:1;fill:none;font-family:Inter;font-size:13;stroke:none;" x="56" y="96" dominant-baseline="hanging">这段文字用来验证换行、字重、对齐和字间距在导出里保持一致。</text>
+    <text data-node-id="text:title" style="opacity:1;fill:#111111;font-family:Inter;font-size:20;font-weight:600;letter-spacing:1;stroke:none;" x="56" y="56" dominant-baseline="hanging">设计系统卡片</text>
+    <text data-node-id="text:body" style="opacity:1;fill:#111111;font-family:Inter;font-size:13;stroke:none;" x="56" y="96" dominant-baseline="hanging">这段文字用来验证换行、字重、对齐和字间距在导出里保持一致。</text>
     <g data-node-id="rect:accent" style="opacity:1;fill:var(--color-primary);">  <rect x="56" y="128" width="288" height="48" rx="8" /></g>
   </g>
   <image data-node-id="image:hero" style="opacity:1;fill:none;" x="400" y="40" width="240" height="160" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" preserveAspectRatio="xMidYMid slice" />
   <ellipse data-node-id="ellipse:dot" style="opacity:1;fill:#8b5cf6;stroke:none;" cx="432" cy="272" rx="32" ry="32" />
   <g data-node-id="node:badge" style="opacity:1;fill:#eef2ff;">  <rect x="680" y="40" width="120" height="32" rx="999" />
-    <text data-node-id="text:badge-label" style="opacity:1;fill:none;font-family:Inter;font-size:12;stroke:none;" x="740" y="40" dominant-baseline="hanging" text-anchor="middle">Beta</text>
+    <text data-node-id="text:badge-label" style="opacity:1;fill:#111111;font-family:Inter;font-size:12;stroke:none;" x="740" y="40" dominant-baseline="hanging" text-anchor="middle">Beta</text>
   </g>
   <g data-node-id="instance:badge" style="opacity:1;fill:#eef2ff;">  <rect x="680" y="90" width="120" height="32" rx="999" />
-    <text data-node-id="instance:badge--text:badge-label" style="opacity:1;fill:none;font-family:Inter;font-size:12;stroke:none;" x="740" y="90" dominant-baseline="hanging" text-anchor="middle">v0.2</text>
+    <text data-node-id="instance:badge--text:badge-label" style="opacity:1;fill:#111111;font-family:Inter;font-size:12;stroke:none;" x="740" y="90" dominant-baseline="hanging" text-anchor="middle">v0.2</text>
   </g>
   <g data-node-id="vector:logo" style="opacity:1;fill:none;">  <rect x="400" y="340" width="80" height="80" /></g>
 </svg>

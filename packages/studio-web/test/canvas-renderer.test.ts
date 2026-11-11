@@ -202,11 +202,26 @@ test("resets the shadow before drawing a child so effects are not inherited", ()
   assert.equal(context.shadowBlur, 0);
 });
 
-test("applies layer blur as a canvas filter", () => {
+test("applies layer blur to the whole layer, not just the node itself", () => {
+  const context = fakeContext();
+  const layer = fakeContext();
+  const renderer = createCanvas2DRenderer(fakeCanvas(context));
+  const child = sceneNode({ id: "child", box: { x: 0, y: 0, width: 10, height: 10 }, fill: "#f00", clip: false });
+  renderer.paint([sceneNode({ fill: "#000000", blur: 6, children: [child] })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), surface: fakeSurface(layer) });
+  const blurIndex = layer.calls.findIndex(call => call.name === "filter" && call.args[0] === "blur(6px)");
+  assert.ok(blurIndex >= 0, "期望应用图层模糊");
+  // 模糊发生在整棵子树画完之后——图层模糊模糊的是「整个图层」。
+  const lastFill = layer.calls.map(call => call.name).lastIndexOf("fill");
+  assert.ok(blurIndex > lastFill, "模糊应在子树画完之后进行");
+});
+
+test("没有离屏画布时图层模糊会明确降级，而不是悄悄不生效", () => {
   const context = fakeContext();
   const renderer = createCanvas2DRenderer(fakeCanvas(context));
-  renderer.paint([sceneNode({ fill: "#000000", blur: 6 })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map() });
-  assert.equal(context.filter, "blur(6px)");
+  const warnings: string[] = [];
+  // 不给 surface 工厂：Node 环境里既没有 OffscreenCanvas 也没有 document。
+  renderer.paint([sceneNode({ fill: "#000000", blur: 6 })], { width: 100, height: 50, zoom: 1, devicePixelRatio: 1, images: new Map(), onWarning: message => warnings.push(message) });
+  assert.ok(warnings.some(message => message.includes("离屏画布")), `应给出降级提示，实际 ${warnings.join(" | ")}`);
 });
 test("paints a linear gradient from the shared gradient line", () => {
   const context = fakeContext();

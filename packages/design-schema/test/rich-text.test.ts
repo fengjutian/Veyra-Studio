@@ -145,3 +145,22 @@ test("font size is validated and merges only when identical", () => {
     { from: 2, to: 4, style: { fontSize: 12 } },
   ]);
 });
+
+test("line height is validated and merges only when identical", () => {
+  assert.equal(validateTextRuns("abcdef", [{ from: 0, to: 2, style: { lineHeight: 40 } }]), undefined);
+  assert.match(validateTextRuns("abcdef", [{ from: 0, to: 2, style: { lineHeight: 0 } }]) ?? "", /positive/);
+  assert.match(validateTextRuns("abcdef", [{ from: 0, to: 2, style: { lineHeight: Number.NaN } }]) ?? "", /positive/);
+  // 段内行高是独立字段：字号相同但行高不同 → 保持两段。
+  assert.deepEqual(applyTextRunStyle("abcdef", [{ from: 0, to: 2, style: { lineHeight: 40 } }], 2, 4, { lineHeight: 40 }), [
+    { from: 0, to: 4, style: { lineHeight: 40 } },
+  ]);
+  assert.deepEqual(applyTextRunStyle("abcdef", [{ from: 0, to: 2, style: { lineHeight: 40 } }], 2, 4, { lineHeight: 30 }), [
+    { from: 0, to: 2, style: { lineHeight: 40 } },
+    { from: 2, to: 4, style: { lineHeight: 30 } },
+  ]);
+});
+
+test("document validation accepts a run with a line height override", () => {
+  const valid = documentWithText({ runs: [{ from: 0, to: 3, style: { lineHeight: 40 } }] });
+  assert.deepEqual(validateDocument(valid), valid);
+});

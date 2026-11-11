@@ -8,8 +8,8 @@
   }
   </style>
   <g data-node-id="frame:card" style="opacity:1;fill:var(--color-surface);stroke:#e2e8f0;stroke-width:1;">  <rect x="0" y="0" width="320" height="152" rx="16" />
-    <text data-node-id="text:title" style="opacity:1;fill:none;font-family:Inter;font-size:20;font-weight:600;letter-spacing:1;stroke:none;" x="16" y="16" dominant-baseline="hanging">设计系统卡片</text>
-    <text data-node-id="text:body" style="opacity:1;fill:none;font-family:Inter;font-size:13;stroke:none;" x="16" y="56" dominant-baseline="hanging">这段文字用来验证换行、字重、对齐和字间距在导出里保持一致。</text>
+    <text data-node-id="text:title" style="opacity:1;fill:#111111;font-family:Inter;font-size:20;font-weight:600;letter-spacing:1;stroke:none;" x="16" y="16" dominant-baseline="hanging">设计系统卡片</text>
+    <text data-node-id="text:body" style="opacity:1;fill:#111111;font-family:Inter;font-size:13;stroke:none;" x="16" y="56" dominant-baseline="hanging">这段文字用来验证换行、字重、对齐和字间距在导出里保持一致。</text>
     <g data-node-id="rect:accent" style="opacity:1;fill:var(--color-primary);">  <rect x="16" y="88" width="288" height="48" rx="8" /></g>
   </g>
 </svg>

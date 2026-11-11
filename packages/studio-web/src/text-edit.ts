@@ -31,3 +31,14 @@ export function textEditAction(key: string, shiftKey: boolean): TextEditAction |
 export function commitText(original: string, draft: string): string | undefined {
   return draft === original ? undefined : draft;
 }
+
+/**
+ * Decides whether a keystroke is the "bold the selection" shortcut.
+ *
+ * Ctrl+B (Cmd+B on macOS) toggles bold on the selected text, matching Figma.
+ * The modifier is passed in rather than read from the event so this stays a
+ * pure function that can be tested without a DOM.
+ */
+export function textEditBoldShortcut(key: string, modifier: boolean): boolean {
+  return modifier && (key === "b" || key === "B");
+}

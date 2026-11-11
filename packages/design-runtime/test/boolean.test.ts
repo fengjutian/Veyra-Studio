@@ -92,15 +92,23 @@ test("releasing a boolean group restores the operands in place", () => {
 
 test("rejects operands that cannot form a boolean group", () => {
   const runtime = runtimeWithShapes();
-  const boom = (payload: any) => assert.throws(() => runtime.execute(envelope(runtime.snapshot().revision, [{ type: "boolean.create", payload }])), /operand|Boolean|shape|Locked|Rotated|same parent|does not exist|Unknown boolean/i);
+  const boom = (payload: any) => assert.throws(() => runtime.execute(envelope(runtime.snapshot().revision, [{ type: "boolean.create", payload }])), /operand|Boolean|shape|Locked|same parent|does not exist|Unknown boolean/i);
 
   boom({ id: "bool:x", operation: "union", nodeIds: ["a"] });
   boom({ id: "bool:x", operation: "union", nodeIds: ["a", "label"] });
   boom({ id: "bool:x", operation: "union", nodeIds: ["a", "missing"] });
   boom({ id: "bool:x", operation: "nope", nodeIds: ["a", "b"] });
+});
 
-  runtime.execute(envelope(1, [{ type: "node.patch", payload: { id: "b", patch: { layout: { ...runtime.snapshot().nodes["b"]!.layout, rotation: 15 } } } }]));
-  boom({ id: "bool:x", operation: "union", nodeIds: ["a", "b"] });
+test("a rotated operand is accepted and the group hugs its rotated bounds", () => {
+  const runtime = runtimeWithShapes();
+  // 旋转过的操作数会转出原来的盒子，布尔组的盒子必须跟着长出去。
+  runtime.execute(envelope(1, [{ type: "node.patch", payload: { id: "b", patch: { layout: { ...runtime.snapshot().nodes["b"]!.layout, rotation: 45 } } } }]));
+  runtime.execute(envelope(2, [{ type: "boolean.create", payload: { id: "bool:x", operation: "union", nodeIds: ["a", "b"] } }]));
+  const bool = runtime.snapshot().nodes["bool:x"]!;
+  // 未旋转的操作数是 100×100；转 45° 后的外接盒是 √2×100 ≈ 141.4。
+  assert.ok(bool.layout.width > 130, `宽度应包含旋转后的外接盒，实际 ${bool.layout.width}`);
+  assert.ok(bool.layout.height > 130, `高度应包含旋转后的外接盒，实际 ${bool.layout.height}`);
 });
 
 test("a boolean child cannot be deleted down to one operand", () => {

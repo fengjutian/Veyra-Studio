@@ -1,5 +1,5 @@
 import { computePageLayout, type ComputedBox } from "@ufira/design-layout";
-import { LIST_MARKER_GAP, TEXT_DEFAULTS, absolutePath, applyThemeForPage, applyTypographyToken, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveParagraphs, resolveRadius, resolveStroke, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type TextNode } from "@ufira/design-schema";
+import { LIST_MARKER_GAP, TEXT_DEFAULTS, absolutePath, applyThemeForPage, applyTypographyToken, computeBooleanBounds, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, maskOpacity, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveParagraphs, resolveRadius, resolveStroke, textFillColor, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type CornerRadii, type DesignDocument, type DesignNode, type Paint, type ShadowSpec, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, SvgExportOptions, SvgExportResult } from "./types";
 
@@ -124,7 +124,10 @@ function renderNode(
   // 填充层：多层时样式里的 fill 置空，改由下面逐层输出的图元自己带 fill。
   const fillValues = paintValues(document, node, box, tokenVariables, state);
   const multiFill = fillValues.length > 1;
-  const style = nodeStyle(document, node, tokenVariables, multiFill ? "none" : fillValues[0] ?? "none");
+  // 文本节点的上色不走「多层置空」：文字只有一种颜色，多层填充时按第一层上色。
+  const style = nodeStyle(document, node, tokenVariables, node.type === "text"
+    ? textFillValue(document, node, fillValues, multiFill)
+    : multiFill ? "none" : fillValues[0] ?? "none");
   // 旋转绕盒子中心，与画布/HTML 一致；导出坐标已经平移到视口，中心也一起平移。
   const rotation = node.layout.rotation ?? 0;
   const transform = rotation
@@ -135,6 +138,10 @@ function renderNode(
   const common = `data-node-id="${escapeXml(node.id)}" style="${escapeXml(style)}"${transform}${effect ? ` filter="url(#${effect})"` : ""}`;
 
   if (node.type === "text") {
+    // 多层填充的文本只按第一层上色：后面的层不参与文字颜色，这里如实记一条诊断。
+    if (multiFill) {
+      diagnostics.push({ nodeId, feature: "text-fill-multi", support: "approximated", message: "多层填充的文本只按第一层上色" });
+    }
     // SVG 没有 text-align，用 text-anchor + x 表达盒内对齐。
     const textAlign = node.textAlign ?? TEXT_DEFAULTS.textAlign;
     // 有段落样式时：每个段落单独一组 <text>（标记与正文分开），并按缩进右移。
@@ -157,13 +164,17 @@ function renderNode(
   }
 
   if (node.type === "boolean") {
-    const commands = computeBooleanGeometry(document, node, boxes, box);
+    // 参考框取操作数并集（含旋转）：旋转过的操作数会转出布尔组自己的盒子，
+    // 按旧盒子归一化会把形状硬拉变形。
+    const bounds = computeBooleanBounds(document, node, boxes);
+    const frame = bounds ? shiftBox(bounds, options.origin) : box;
+    const commands = computeBooleanGeometry(document, node, boxes, frame);
     if (!commands?.length) {
       // 空结果也不能把操作数当普通子节点导出：它们只是运算输入。
       diagnostics.push({ nodeId, feature: "boolean", support: "unsupported", message: "Boolean group produced an empty shape" });
       return `<g ${common}></g>`;
     } else {
-      const d = pathDataFromCommands(absolutePath(commands, box));
+      const d = pathDataFromCommands(absolutePath(commands, frame));
       const booleanPaths = fillValues.length ? fillValues.map(fill => `<path d="${escapeXml(d)}" fill="${escapeXml(fill)}" />`).join("") : `<path d="${escapeXml(d)}" />`;
       return `<g ${common}>${multiFill ? booleanPaths : `<path d="${escapeXml(d)}" />`}</g>`;
     }
@@ -295,8 +306,8 @@ function renderSiblingList(
     // 多层蒙版：每层包一个 <g>，嵌套即叠加。
     let wrapped = rendered;
     for (const mask of masks) {
-      const id = registerMaskClip(document, mask, boxes, options, state);
-      wrapped = `<g clip-path="url(#${id})">\n${indent(wrapped, 2)}\n</g>`;
+      const registration = registerMask(document, mask, boxes, options, state);
+      wrapped = `<g ${registration.attribute}>\n${indent(wrapped, 2)}\n</g>`;
     }
     parts.push(wrapped);
   }
@@ -308,23 +319,50 @@ interface MaskState {
   nextId: number;
 }
 
-/** 把蒙版几何写成 <clipPath> 并返回 id；同一个蒙版只登记一次。 */
-function registerMaskClip(document: DesignDocument, mask: DesignNode, boxes: Record<string, ComputedBox>, options: SvgExportOptions, state: MaskState): string {
-  const id = `mask-${state.nextId++}`;
+/**
+ * 蒙版登记：硬蒙版用 `<clipPath>`，软蒙版（半透明 / 羽化）用 `<mask>`。
+ *
+ * `<clipPath>` 只能按形状硬裁剪；「半透明裁剪」与「边缘渐隐」要靠 `<mask>`：
+ * 蒙版形状画成白色（亮度 = 1），不透明度由 `fill-opacity` 给出——
+ * SVG 的 mask 取「亮度 × alpha」，白色正好等于「按 alpha 裁剪」。
+ */
+function registerMask(
+  document: DesignDocument,
+  mask: DesignNode,
+  boxes: Record<string, ComputedBox>,
+  options: SvgExportOptions,
+  state: MaskState,
+): { id: string; attribute: string } {
   const raw = boxes[mask.id] ?? { x: mask.layout.x, y: mask.layout.y, width: mask.layout.width, height: mask.layout.height };
   const box = shiftBox(raw, options.origin);
-  const shape = maskShape(document, mask, box);
-  state.defs.push(`<clipPath id="${id}" clipPathUnits="userSpaceOnUse">${shape}</clipPath>`);
-  return id;
+  const alpha = maskOpacity(document, mask);
+  const feather = mask.maskFeather ?? 0;
+  if (alpha >= 1 && feather <= 0) {
+    const id = `mask-${state.nextId++}`;
+    state.defs.push(`<clipPath id="${id}" clipPathUnits="userSpaceOnUse">${maskShape(document, mask, box)}</clipPath>`);
+    return { id, attribute: `clip-path="url(#${id})"` };
+  }
+  const id = `mask-${state.nextId++}`;
+  const filterId = `${id}-blur`;
+  if (feather > 0) {
+    state.defs.push(`<filter id="${filterId}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${num(feather / 2)}" /></filter>`);
+  }
+  const shape = maskShape(document, mask, box, { fill: "#ffffff", opacity: alpha });
+  const content = feather > 0 ? `<g filter="url(#${filterId})">${shape}</g>` : shape;
+  // 遮罩区域放大：羽化后的边缘要落在区域之外，否则会被裁掉。
+  state.defs.push(`<mask id="${id}" maskUnits="userSpaceOnUse" x="-100%" y="-100%" width="300%" height="300%">${content}</mask>`);
+  return { id, attribute: `mask="url(#${id})"` };
 }
 
 /** 蒙版几何：只取轮廓，不带填充/描边样式。 */
-function maskShape(document: DesignDocument, mask: DesignNode, box: ComputedBox): string {
+function maskShape(document: DesignDocument, mask: DesignNode, box: ComputedBox, paint?: { fill: string; opacity: number }): string {
+  // 软蒙版要给形状上色（白色 + 不透明度）；硬蒙版只用轮廓。
+  const attrs = paint ? ` fill="${escapeXml(paint.fill)}" fill-opacity="${num(paint.opacity)}"` : "";
   if (mask.type === "ellipse") {
-    return `<ellipse cx="${num(box.x + box.width / 2)}" cy="${num(box.y + box.height / 2)}" rx="${num(box.width / 2)}" ry="${num(box.height / 2)}" />`;
+    return `<ellipse cx="${num(box.x + box.width / 2)}" cy="${num(box.y + box.height / 2)}" rx="${num(box.width / 2)}" ry="${num(box.height / 2)}"${attrs} />`;
   }
   if (mask.type === "vector" && mask.geometry) {
-    return `<path d="${escapeXml(pathDataFromCommands(absolutePath(vectorPathCommands(mask.geometry.d), box)))}" />`;
+    return `<path d="${escapeXml(pathDataFromCommands(absolutePath(vectorPathCommands(mask.geometry.d), box)))}"${attrs} />`;
   }
   if (mask.type === "vector") {
     // 没有几何的旧 vector 当蒙版：按空容器处理，裁剪掉全部内容，与画布一致。
@@ -332,9 +370,9 @@ function maskShape(document: DesignDocument, mask: DesignNode, box: ComputedBox)
   }
   const radii = resolveCornerRadii(document, mask);
   const perCorner = radii && radii.some(value => value !== radii[0]);
-  if (perCorner) return `<path d="${escapeXml(roundedRectPathData(box, radii))}" />`;
+  if (perCorner) return `<path d="${escapeXml(roundedRectPathData(box, radii))}"${attrs} />`;
   const radius = radii ? radii[0]! : 0;
-  return `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""} />`;
+  return `<rect x="${num(box.x)}" y="${num(box.y)}" width="${num(box.width)}" height="${num(box.height)}"${radius > 0 ? ` rx="${num(radius)}"` : ""}${attrs} />`;
 }
 
 /**
@@ -520,10 +558,13 @@ function textTspans(node: TextNode): string {
  */
 function paragraphTextsSvg(node: TextNode, box: ComputedBox, textAlign: string, common: string): string {
   const paragraphs = resolveParagraphs(node.text, node.paragraphStyles);
-  const lineHeight = node.lineHeight;
   const parts: string[] = [];
-  paragraphs.forEach((paragraph, index) => {
-    const y = box.y + index * lineHeight;
+  // SVG 没有「行盒」概念，所以段内行高覆盖只能体现为**段与段之间的推进距离**：
+  // 一段的行高取该段内所有 run 覆盖值的最大者与节点级行高的较大者。
+  // SVG 侧不做换行（每段一行，与升级前一致），因此段内行高不会改变段内的行距。
+  let y = box.y;
+  paragraphs.forEach(paragraph => {
+    const lineHeight = paragraphLineHeight(node, paragraph.start, paragraph.end);
     const left = box.x + paragraph.left;
     if (paragraph.marker) {
       const markerX = left - LIST_MARKER_GAP;
@@ -541,8 +582,24 @@ function paragraphTextsSvg(node: TextNode, box: ComputedBox, textAlign: string, 
       return attributes.length ? `<tspan ${attributes.join(" ")}>${content}</tspan>` : content;
     }).join("");
     parts.push(`<text x="${num(x)}" y="${num(y)}" dominant-baseline="hanging"${anchor}>${body}</text>`);
+    y += lineHeight;
   });
   return `<g ${common}>${parts.join("\n")}</g>`;
+}
+
+/**
+ * 一段的行高：max(节点行高, 该段内 run 的行高覆盖, 该段内 run 的最大字号)。
+ *
+ * 与布局层 `lineHeightFor()` 的取法一致——SVG 不换行，所以这里按段算而不是按行算。
+ */
+function paragraphLineHeight(node: TextNode, from: number, to: number): number {
+  let maxFontSize = 0;
+  let maxLineHeight = 0;
+  for (const segment of textRunSegmentsInRange(node.text, node.runs, from, to)) {
+    if (segment.style.fontSize !== undefined) maxFontSize = Math.max(maxFontSize, segment.style.fontSize);
+    if (segment.style.lineHeight !== undefined) maxLineHeight = Math.max(maxLineHeight, segment.style.lineHeight);
+  }
+  return Math.max(1, node.lineHeight, maxLineHeight, maxFontSize);
 }
 
 function escapeXml(value: string): string {
@@ -580,20 +637,82 @@ function dedupeDiagnostics(diagnostics: ExportDiagnostic[]): ExportDiagnostic[] 
  *
  * `feDropShadow` 的 `stdDeviation` 与 CSS/Canvas 的模糊半径不是同一量纲：CSS 的模糊半径
  * 约等于 `2 × stdDeviation`，所以这里除以 2。别把它「修正」成直接用 blur。
+ *
+ * 三种阴影各有一套滤镜写法，语义与 CSS `box-shadow` 对齐：
+ * - 普通投影 → `feDropShadow`（与升级前逐字一致）；
+ * - 带扩散半径的投影 → `feMorphology` 膨胀后再模糊、偏移、着色、合并；
+ * - 内阴影 → SourceAlpha 与「模糊并偏移后的自己」求差，剩下的区域就是内阴影。
  */
 function registerEffect(node: DesignNode, state: MaskState): string {
   const id = `effect-${state.nextId++}`;
   const primitives: string[] = [];
+  // 图层模糊先做：它模糊的是「图层本身」（含子节点），投影再叠在模糊结果上。
+  const shadow = node.appearance.shadow;
+  // 只有后面的滤镜链需要引用模糊结果时才给 `result`——普通投影沿用「上一个原语的结果」
+  // 这条默认规则，产物因此与升级前逐字一致。
+  const needsResult = Boolean(shadow && (shadow.type === "inner" || shadow.spread));
+  let source = "SourceGraphic";
   if (node.appearance.blur) {
-    primitives.push(`<feGaussianBlur stdDeviation="${num(node.appearance.blur / 2)}" />`);
+    primitives.push(needsResult
+      ? `<feGaussianBlur stdDeviation="${num(node.appearance.blur / 2)}" result="layer-blur" />`
+      : `<feGaussianBlur stdDeviation="${num(node.appearance.blur / 2)}" />`);
+    if (needsResult) source = "layer-blur";
   }
-  if (node.appearance.shadow) {
-    const shadow = node.appearance.shadow;
-    primitives.push(`<feDropShadow dx="${num(shadow.x)}" dy="${num(shadow.y)}" stdDeviation="${num(shadow.blur / 2)}" flood-color="${escapeXml(shadow.color)}" />`);
+  if (shadow) {
+    if (shadow.type === "inner") {
+      primitives.push(...innerShadowPrimitives(shadow, source));
+    } else if (shadow.spread) {
+      primitives.push(...spreadShadowPrimitives(shadow, source));
+    } else {
+      primitives.push(`<feDropShadow dx="${num(shadow.x)}" dy="${num(shadow.y)}" stdDeviation="${num(shadow.blur / 2)}" flood-color="${escapeXml(shadow.color)}" />`);
+    }
   }
   // 滤镜区域放大到 200%，否则偏移/模糊到元素外的部分会被裁掉。
   state.defs.push(`<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">${primitives.join("")}</filter>`);
   return id;
+}
+
+/**
+ * 带扩散半径的投影：`feDropShadow` 没有 spread 参数，只能自己拼一条链。
+ *
+ * 膨胀 → 模糊 → 偏移 → 着色 → 合并。合并时阴影在**下面**（与 `feDropShadow` 同一层序）。
+ */
+function spreadShadowPrimitives(shadow: ShadowSpec, source: string): string[] {
+  return [
+    `<feMorphology in="${source}" operator="dilate" radius="${num(shadow.spread ?? 0)}" result="shadow-dilated" />`,
+    `<feGaussianBlur in="shadow-dilated" stdDeviation="${num(shadow.blur / 2)}" result="shadow-blurred" />`,
+    `<feOffset in="shadow-blurred" dx="${num(shadow.x)}" dy="${num(shadow.y)}" result="shadow-offset" />`,
+    `<feFlood flood-color="${escapeXml(shadow.color)}" result="shadow-flood" />`,
+    `<feComposite in="shadow-flood" in2="shadow-offset" operator="in" result="shadow-paint" />`,
+    `<feMerge><feMergeNode in="shadow-paint" /><feMergeNode in="${source}" /></feMerge>`,
+  ];
+}
+
+/**
+ * 内阴影：SourceAlpha 减去「模糊并偏移后的自己」，剩下的区域就是内阴影。
+ *
+ * 与 CSS `box-shadow: inset` 同一套语义——偏移方向因此与投影相反。
+ */
+function innerShadowPrimitives(shadow: ShadowSpec, source: string): string[] {
+  return [
+    `<feGaussianBlur in="${source}" stdDeviation="${num(shadow.blur / 2)}" result="inner-blur" />`,
+    `<feOffset in="inner-blur" dx="${num(shadow.x)}" dy="${num(shadow.y)}" result="inner-offset" />`,
+    `<feComposite in="${source}" in2="inner-offset" operator="out" result="inner-hole" />`,
+    `<feFlood flood-color="${escapeXml(shadow.color)}" result="inner-flood" />`,
+    `<feComposite in="inner-flood" in2="inner-hole" operator="in" result="inner-paint" />`,
+    `<feMerge><feMergeNode in="${source}" /><feMergeNode in="inner-paint" /></feMerge>`,
+  ];
+}
+
+/**
+ * 文本节点的上色值。
+ *
+ * 单层渐变 → 直接用渐变（SVG 能精确画渐变文字）；其余情况用统一规则算出的单一颜色：
+ * 多层只看第一层、渐变取首个色标、没有填充用默认文字色。
+ */
+function textFillValue(document: DesignDocument, node: DesignNode, fillValues: string[], multiFill: boolean): string {
+  if (!multiFill && fillValues.length === 1) return fillValues[0]!;
+  return textFillColor(document, node);
 }
 /**
  * 填充层的 SVG 值：实色 → 颜色（可带 CSS 变量），渐变 → 登记一条 `<linearGradient>`

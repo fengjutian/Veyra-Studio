@@ -3,7 +3,8 @@ import type { DesignNode } from "@ufira/design-schema";
 import { isClickDraw, isDrawTool, rectFromDrag, type DrawToolId, type ToolId } from "../tools";
 import { findDropContainerInScene, previewCenter } from "../canvas-reparent";
 import { hitTest, type HitPoint } from "./hit-test";
-import { angleDegrees, boxCenter, hitTestHandleRotated, hitTestRotationHandle, normalizeAngle, resizeRotatedBox, ROTATE_HANDLE_GAP, ROTATE_HANDLE_RADIUS, snapAngle, toLocalPoint, toRadians } from "./rotation";
+import { angleDegrees, boxCenter, findSceneNode, hitTestHandleRotated, hitTestRotationHandle, resizeRotatedBox, rotatedBounds, ROTATE_HANDLE_GAP, ROTATE_HANDLE_RADIUS, toLocalPoint, toRadians } from "./rotation";
+import { planRotation, type RotateTarget, type RotationPreview } from "./multi-rotate";
 import { selectedBoxes, selectionBounds, type HandleId } from "./selection";
 import { offsetSubtreeBoxes, resizeBox } from "./selection-drag";
 import { nodesInRect, rectFromPoints } from "./marquee";
@@ -46,7 +47,7 @@ type Gesture =
   | { kind: "resize"; id: string; handle: HandleId; start: HitPoint; box: SceneBox; radians: number }
   | { kind: "marquee"; start: HitPoint }
   | { kind: "draw"; tool: DrawToolId; start: HitPoint }
-  | { kind: "rotate"; id: string; center: HitPoint; start: HitPoint; startPointerAngle: number; startRotation: number };
+  | { kind: "rotate"; ids: string[]; pivot: HitPoint; start: HitPoint; startPointerAngle: number; targets: RotateTarget[] };
 
 export interface CanvasDragHandlers {
   onPointerDownCapture(event: React.PointerEvent<HTMLDivElement>): void;
@@ -66,10 +67,38 @@ function previewCenterOf(ids: string[], boxes: Record<string, SceneBox>): { x: n
   return previewCenter(list);
 }
 
+/** 选中节点里能在场景中找到的那些（旋转用）。 */
+function rotateTargetsOf(scene: SceneNode[], ids: readonly string[]): RotateTarget[] {
+  const targets: RotateTarget[] = [];
+  for (const id of ids) {
+    const node = findSceneNode(scene, id);
+    if (!node) continue;
+    targets.push({ id, box: node.box, rotation: node.rotation ?? 0 });
+  }
+  return targets;
+}
+
+/**
+ * 旋转手柄所在的盒子。
+ *
+ * 单选是节点自己的盒子；多选是整组的**旋转包围盒**——必须与画布上画出来的一致，
+ * 否则手柄画在一个位置、命中却判在另一个位置。
+ */
+function rotateHandleBounds(targets: readonly RotateTarget[]): Rect | undefined {
+  if (!targets.length) return undefined;
+  if (targets.length === 1) return targets[0]!.box;
+  return selectionBounds(targets.map(target => (target.rotation ? rotatedBounds(target.box, toRadians(target.rotation)) : target.box)));
+}
+
+/** 旋转手柄跟随的旋转角：单选跟节点，多选是轴对齐的（组手柄不跟着转）。 */
+function rotateHandleRadians(targets: readonly RotateTarget[]): number {
+  return targets.length === 1 ? toRadians(targets[0]!.rotation) : 0;
+}
+
 export function useCanvasDrag(options: CanvasDragOptions): {
   previewBoxes: Record<string, SceneBox>;
-  /** 旋转预览：拖动手柄时节点的临时角度。 */
-  previewRotation?: { id: string; rotation: number };
+  /** 旋转预览：拖动手柄时各节点的临时角度与新位置。 */
+  rotationPreview?: RotationPreview;
   /** 指针是否停在旋转手柄上（用于换光标）。 */
   hoverRotate: boolean;
   /** 正在被缩放的节点 id（用于算约束预览）。 */
@@ -87,7 +116,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   const [previewBoxes, setPreviewBoxes] = useState<Record<string, SceneBox>>({});
   const [marquee, setMarquee] = useState<Rect | undefined>(undefined);
   const [drawRect, setDrawRect] = useState<Rect | undefined>(undefined);
-  const [previewRotation, setPreviewRotation] = useState<{ id: string; rotation: number } | undefined>(undefined);
+  const [rotationPreview, setRotationPreview] = useState<RotationPreview | undefined>(undefined);
   const [hoverRotate, setHoverRotate] = useState(false);
   const [resizingId, setResizingId] = useState<string | undefined>(undefined);
   const [guides, setGuides] = useState<SnapGuide[]>([]);
@@ -95,7 +124,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   const drawRectRef = useRef<Rect | undefined>(undefined);
   const drawEndRef = useRef<HitPoint | undefined>(undefined);
   const previewRef = useRef<Record<string, SceneBox>>({});
-  const previewRotationRef = useRef<{ id: string; rotation: number } | undefined>(undefined);
+  const rotationPreviewRef = useRef<RotationPreview | undefined>(undefined);
   const gestureRef = useRef<Gesture | null>(null);
   const movedRef = useRef(false);
   const consumedRef = useRef(false);
@@ -105,12 +134,11 @@ export function useCanvasDrag(options: CanvasDragOptions): {
 
   /** 指针是否落在当前选中节点的旋转手柄上（屏幕像素阈值）。 */
   function isOverRotateHandle(event: React.PointerEvent<HTMLDivElement>): boolean {
-    const id = options.selectedIds[0];
-    if (id === undefined) return false;
-    const bounds = selectionBounds(selectedBoxes(options.scene, [id]));
+    const targets = rotateTargetsOf(options.scene, options.selectedIds);
+    const bounds = rotateHandleBounds(targets);
     if (!bounds) return false;
     const scale = Math.max(options.zoom, 0.01);
-    return hitTestRotationHandle(bounds, toRadians(options.rotationOf?.(id) ?? 0), options.pointOf(event), ROTATE_HANDLE_GAP / scale, ROTATE_HANDLE_RADIUS / scale);
+    return hitTestRotationHandle(bounds, rotateHandleRadians(targets), options.pointOf(event), ROTATE_HANDLE_GAP / scale, ROTATE_HANDLE_RADIUS / scale);
   }
 
   const updatePreview = (boxes: Record<string, SceneBox>) => {
@@ -145,15 +173,19 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     const radians = options.selectedIds.length === 1 ? toRadians(options.rotationOf?.(options.selectedIds[0]!) ?? 0) : 0;
     const scale = Math.max(options.zoom, 0.01);
     // 旋转手柄优先于缩放手柄：它挂在盒子外面，但极小节点上两者可能重叠。
-    if (bounds && options.selectedIds.length === 1 && hitTestRotationHandle(bounds, radians, point, ROTATE_HANDLE_GAP / scale, ROTATE_HANDLE_RADIUS / scale)) {
-      const center = boxCenter(bounds);
+    // 多选也能转：手柄挂在整组的包围盒上，绕组中心做刚性旋转。
+    const targets = rotateTargetsOf(options.scene, options.selectedIds);
+    const handleBounds = rotateHandleBounds(targets);
+    if (handleBounds && targets.length && hitTestRotationHandle(handleBounds, rotateHandleRadians(targets), point, ROTATE_HANDLE_GAP / scale, ROTATE_HANDLE_RADIUS / scale)) {
+      // 枢轴 = 旋转手柄所在盒子的中心：单选是节点中心，多选是整组包围盒中心。
+      const pivot = boxCenter(handleBounds);
       gestureRef.current = {
         kind: "rotate",
-        id: options.selectedIds[0]!,
-        center,
+        ids: targets.map(target => target.id),
+        pivot,
         start: point,
-        startPointerAngle: angleDegrees(center, point),
-        startRotation: options.rotationOf?.(options.selectedIds[0]!) ?? 0,
+        startPointerAngle: angleDegrees(pivot, point),
+        targets,
       };
       event.stopPropagation();
       event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -187,7 +219,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
     const gesture = gestureRef.current;
     if (!gesture) {
       // 没有拖拽时也跟踪一下指针，用于把光标换成「可旋转」。
-      const over = options.selectedIds.length === 1 && !options.busy
+      const over = options.selectedIds.length >= 1 && !options.busy
         ? isOverRotateHandle(event)
         : false;
       setHoverRotate(current => current === over ? current : over);
@@ -207,12 +239,16 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       return;
     }
     if (gesture.kind === "rotate") {
-      // 角度差在「指针相对盒子中心」的极角上算，与手柄挂在哪无关。
-      const current = angleDegrees(gesture.center, point);
-      const raw = normalizeAngle(gesture.startRotation + (current - gesture.startPointerAngle));
-      const rotation = event.shiftKey ? snapAngle(raw, 15) : raw;
-      previewRotationRef.current = { id: gesture.id, rotation };
-      setPreviewRotation(previewRotationRef.current);
+      // 角度差在「指针相对枢轴」的极角上算，与手柄挂在哪无关。
+      const preview = planRotation({
+        targets: gesture.targets,
+        pivot: gesture.pivot,
+        pointerAngle: angleDegrees(gesture.pivot, point),
+        startPointerAngle: gesture.startPointerAngle,
+        snap: event.shiftKey,
+      });
+      rotationPreviewRef.current = preview;
+      setRotationPreview(preview);
       event.stopPropagation();
       return;
     }
@@ -267,15 +303,26 @@ export function useCanvasDrag(options: CanvasDragOptions): {
       return;
     }
     if (gesture.kind === "rotate") {
-      const preview = previewRotationRef.current;
+      const preview = rotationPreviewRef.current;
       // 旋转是「松手才提交」：拖动过程只更新预览，一次拖动 = 一条 node.patch。
       if (commit && movedRef.current && preview) {
-        const layout = options.layoutOf(gesture.id);
-        if (layout) options.onCommit([{ id: gesture.id, layout: { ...layout, rotation: preview.rotation === 0 ? undefined : preview.rotation } }]);
+        const changes: Array<{ id: string; layout: DesignNode["layout"] }> = [];
+        for (const item of preview.items) {
+          const layout = options.layoutOf(item.id);
+          if (!layout) continue;
+          // 提交的是**绝对坐标**，与移动、缩放同一套语义：提交层再换算成父级局部坐标。
+          // 早先这里传的是存储里的相对坐标，提交层又减了一次父级原点——嵌套节点的
+          // x/y 会被写错（顶层节点因为原点是 (0,0) 才看不出来）。
+          changes.push({
+            id: item.id,
+            layout: { ...layout, x: item.box.x, y: item.box.y, rotation: item.rotation === 0 ? undefined : item.rotation },
+          });
+        }
+        if (changes.length) options.onCommit(changes);
       }
       consumedRef.current = movedRef.current;
-      previewRotationRef.current = undefined;
-      setPreviewRotation(undefined);
+      rotationPreviewRef.current = undefined;
+      setRotationPreview(undefined);
       return;
     }
     const finalBoxes = previewRef.current;
@@ -306,7 +353,7 @@ export function useCanvasDrag(options: CanvasDragOptions): {
   };
 
   return {
-    previewRotation,
+    rotationPreview,
     hoverRotate,
     resizingId,
     previewBoxes,

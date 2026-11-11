@@ -12,7 +12,7 @@ import type { Rect } from "./renderer/selection";
  * 这个模块是纯函数层：没有 React、没有 DOM，图标只以名字引用（type-only import），
  * 因此可以在 node 环境里直接跑单测。
  */
-export type ToolId = "select" | "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "pen" | "text" | "hand";
+export type ToolId = "select" | "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "pen" | "text" | "hand" | "zoom";
 
 /** 能用拖拽「画出来」的工具，也就是会创建节点的工具。 */
 export type DrawToolId = Extract<ToolId, "frame" | "rectangle" | "ellipse" | "line" | "polygon" | "star" | "text">;
@@ -44,13 +44,14 @@ export const TOOLS: readonly ToolSpec[] = [
   { id: "pen", label: "钢笔", shortcut: "p", icon: "addPen", cursor: "crosshair" },
   { id: "text", label: "文本", shortcut: "t", icon: "addText", cursor: "text", creates: "text" },
   { id: "hand", label: "抓手", shortcut: "h", icon: "pan", cursor: "grab" },
+  { id: "zoom", label: "缩放", shortcut: "z", icon: "zoomIn", cursor: "zoom-in" },
 ];
 
 export function toolSpec(id: ToolId): ToolSpec {
   return TOOLS.find(spec => spec.id === id) ?? TOOLS[0]!;
 }
 
-/** 是否为「拖拽绘制」工具（选择与抓手不是）。 */
+/** 是否为「拖拽绘制」工具（选择、抓手与缩放不是）。 */
 export function isDrawTool(tool: ToolId): tool is DrawToolId {
   return tool === "frame" || tool === "rectangle" || tool === "ellipse" || tool === "line" || tool === "polygon" || tool === "star" || tool === "text";
 }

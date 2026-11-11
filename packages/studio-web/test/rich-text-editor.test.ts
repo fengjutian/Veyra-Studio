@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { after, before } from "node:test";
 import { JSDOM } from "jsdom";
-import { defaultAppearance, defaultLayout, type DesignNode } from "@ufira/design-schema";
+import { defaultAppearance, defaultLayout, type DesignNode, type ParagraphStyleRun, type TextRun } from "@ufira/design-schema";
 
 /**
  * 画布内联文本编辑器的回归测试。
@@ -85,6 +85,7 @@ function mountOverlay(props: {
   node: DesignNode;
   onCommit(value: string): void;
   onCancel(): void;
+  onCommitRich?(value: string, runs: TextRun[], paragraphStyles: ParagraphStyleRun[]): void;
 }): HTMLElement {
   paint(null);
   paint(react.createElement(overlay.TextEditOverlay, {
@@ -92,6 +93,26 @@ function mountOverlay(props: {
     box: { x: 0, y: 0, width: 200, height: 40 },
   }));
   return dom.window.document.querySelector(".rich-text-editor") as HTMLElement;
+}
+
+/**
+ * 在编辑器里选中一段字符。
+ *
+ * 先 mousedown 再 mouseup：工具条只在用户**自己**拉出选区后才出现
+ * （进入编辑时的全选不算）。
+ */
+function selectRange(editor: HTMLElement, from: number, to: number): void {
+  const run = editor.querySelector("[data-editor-run]") as HTMLElement;
+  const range = dom.window.document.createRange();
+  range.setStart(run.firstChild!, from);
+  range.setEnd(run.firstChild!, to);
+  const selection = dom.window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  react.act(() => {
+    editor.dispatchEvent(new dom.window.MouseEvent("mousedown", { bubbles: true }));
+    editor.dispatchEvent(new dom.window.MouseEvent("mouseup", { bubbles: true }));
+  });
 }
 
 test("splits the text into paragraphs", () => {
@@ -218,4 +239,110 @@ test("rebuilds the content when the edited node changes", () => {
   }));
   const next = dom.window.document.querySelector(".rich-text-editor") as HTMLElement;
   assert.equal(next.textContent, "world");
+});
+
+test("reads the selection as character offsets", () => {
+  const root = dom.window.document.createElement("div");
+  // 选区必须落在文档里（浏览器的选区不会挂在游离节点上）。
+  dom.window.document.body.appendChild(root);
+  model.renderEditorParagraphs(root, model.editorParagraphs("hello", undefined, undefined), BASE);
+  const run = root.querySelector("[data-editor-run]") as HTMLElement;
+  const range = dom.window.document.createRange();
+  range.setStart(run.firstChild!, 1);
+  range.setEnd(run.firstChild!, 3);
+  const selection = dom.window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  assert.deepEqual(model.editorSelectionOffsets(root, selection), { from: 1, to: 3 });
+  root.remove();
+});
+
+test("reads the run styles back from the editor DOM", () => {
+  const root = dom.window.document.createElement("div");
+  const paragraphs = model.editorParagraphs("hello", [{ from: 1, to: 3, style: { fontWeight: 700 } }], undefined);
+  model.renderEditorParagraphs(root, paragraphs, BASE);
+  assert.deepEqual(model.readEditorRuns(root, BASE), [{ from: 1, to: 3, style: { fontWeight: 700 } }]);
+  // 没有覆盖的段落不产生区间。
+  const plain = dom.window.document.createElement("div");
+  model.renderEditorParagraphs(plain, model.editorParagraphs("hello", undefined, undefined), BASE);
+  assert.deepEqual(model.readEditorRuns(plain, BASE), []);
+});
+
+test("merges a style into the selection instead of replacing it", () => {
+  const runs = [{ from: 0, to: 5, style: { color: "#ef4444" } }];
+  // 加粗不清掉颜色。
+  assert.deepEqual(model.mergeEditorRunStyle("hello", runs, 0, 5, { fontWeight: 700 }), [
+    { from: 0, to: 5, style: { color: "#ef4444", fontWeight: 700 } },
+  ]);
+  // 取消加粗：只移除字重，颜色留着。
+  assert.deepEqual(model.mergeEditorRunStyle("hello", runs, 0, 5, {}, ["fontWeight"]), [
+    { from: 0, to: 5, style: { color: "#ef4444" } },
+  ]);
+});
+
+test("updates the run styles in place without rebuilding the DOM", () => {
+  const root = dom.window.document.createElement("div");
+  model.renderEditorParagraphs(root, model.editorParagraphs("hello", undefined, undefined), BASE);
+  const run = root.querySelector("[data-editor-run]") as HTMLElement;
+  // 节点级字重变了：只改行内样式，元素本身不换（光标因此保住）。
+  assert.equal(model.updateEditorRunStyles(root, [], { ...BASE, fontWeight: 700 }), true);
+  assert.equal(run.style.fontWeight, "700");
+  assert.equal(root.querySelector("[data-editor-run]"), run);
+});
+
+test("bolds the selected text from the canvas toolbar", () => {
+  const editor = mountOverlay({
+    node: textNode("hello"),
+    onCommit: () => {},
+    onCancel: () => {},
+  });
+  selectRange(editor, 1, 3);
+  const toolbar = dom.window.document.querySelector(".rte-toolbar") as HTMLElement;
+  assert.ok(toolbar, "选中文字后应该出现工具条");
+  const bold = toolbar.querySelector(".rte-tool") as HTMLElement;
+  react.act(() => { bold.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  // 应用样式会重建 DOM，元素是新的。
+  // 选区 [1,3) 加粗 → 切成「h / el / lo」三段，中间那段加粗。
+  const runs = Array.from(editor.querySelectorAll("[data-editor-run]"));
+  assert.deepEqual(runs.map(run => [run.textContent, run.style.fontWeight]), [
+    ["h", "400"],
+    ["el", "700"],
+    ["lo", "400"],
+  ]);
+  assert.equal(runs[1]!.getAttribute("data-editor-style"), JSON.stringify({ fontWeight: 700 }));
+});
+
+test("commits the rich text with the runs read back from the DOM", () => {
+  const committed: { text: string; runs: TextRun[] }[] = [];
+  const editor = mountOverlay({
+    node: textNode("hello"),
+    onCommit: () => {},
+    onCancel: () => {},
+    onCommitRich: (value, runs) => { committed.push({ text: value, runs }); },
+  });
+  selectRange(editor, 1, 3);
+  const bold = (dom.window.document.querySelector(".rte-tool") as HTMLElement);
+  react.act(() => { bold.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })); });
+  const event = new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+  react.act(() => { editor.dispatchEvent(event); });
+  assert.deepEqual(committed, [{ text: "hello", runs: [{ from: 1, to: 3, style: { fontWeight: 700 } }] }]);
+});
+
+test("reflects a node style change in the editor without rebuilding the DOM", () => {
+  const editor = mountOverlay({
+    node: textNode("hello"),
+    onCommit: () => {},
+    onCancel: () => {},
+  });
+  const run = editor.querySelector("[data-editor-run]") as HTMLElement;
+  // 同一个节点，只是节点级字重变了。
+  paint(react.createElement(overlay.TextEditOverlay, {
+    node: textNode("hello", { fontWeight: 700 }),
+    box: { x: 0, y: 0, width: 200, height: 40 },
+    onCommit: () => {},
+    onCancel: () => {},
+  }));
+  const next = dom.window.document.querySelector(".rich-text-editor") as HTMLElement;
+  assert.equal(next.querySelector("[data-editor-run]"), run, "样式变化不该重建 DOM");
+  assert.equal((next.querySelector("[data-editor-run]") as HTMLElement).style.fontWeight, "700");
 });

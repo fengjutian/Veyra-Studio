@@ -1,4 +1,4 @@
-import { LIST_INDENT_STEP, LIST_MARKER_WIDTH, MAX_LIST_INDENT, TEXT_DEFAULTS, absolutePath, applyThemeForPage, applyTypographyToken, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, resolveParagraphs, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
+import { LIST_INDENT_STEP, LIST_MARKER_WIDTH, MAX_LIST_INDENT, TEXT_DEFAULTS, absolutePath, applyThemeForPage, applyTypographyToken, computeBooleanBounds, computeBooleanGeometry, cssBlendMode, ellipticalGeometry, ellipticalGradientMatrix, gradientLine, maskOpacity, radialGeometry, pathDataFromCommands, resolveCornerRadii, resolveFills, resolveGap, resolveRadius, resolveStroke, resolveParagraphs, roundedRectPath, textFillColor, textRunSegments, textRunSegmentsInRange, validateDocument, vectorPathCommands, type DesignDocument, type DesignNode, type GridTrack, type Paint, type TextNode } from "@ufira/design-schema";
 import { exportNodeSet, exportRootIds } from "./selection";
 import type { ExportDiagnostic, HtmlExportOptions, HtmlExportResult } from "./types";
 
@@ -59,9 +59,11 @@ function renderNode(
     diagnostics.push({ nodeId, feature: "gradient-rotation", support: "approximated", message: "CSS 的 radial-gradient 不支持旋转，椭圆渐变的旋转角在 HTML 导出里丢失" });
   }
   const style = nodeStyle(document, node, parent, tokenVariables, options.origin);
-  const common = `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
+  const common = nodeAttributes(node, style);
 
   if (node.type === "text") {
+    // 文字色的近似（多层 / 渐变）在这里如实记一条诊断。
+    textFillDiagnostics(document, node, diagnostics, nodeId);
     // 有段落样式时按段落拆块：列表段落用真正的 <ul>/<ol>（浏览器负责画标记），
     // 普通段落用 <p>。没有段落样式的旧文档仍然输出单个 <p>，产物逐字不变。
     if (!node.paragraphStyles?.length) return `<p ${common}>${textHtml(node)}</p>`;
@@ -78,13 +80,18 @@ function renderNode(
     return `<img ${common} src="${escapeAttribute(url)}" alt="${escapeAttribute(node.name)}">`;
   }
   if (node.type === "boolean") {
-    const commands = computeBooleanGeometry(document, node, {}, node.layout);
+    // 参考框取操作数并集（含旋转）：布尔组的内容画在自己的局部坐标里，
+    // 并集框就是那个局部坐标系。旋转过的操作数会转出原来的盒子，
+    // div 的尺寸也跟着并集走，形状才不会被拉变形。
+    const bounds = computeBooleanBounds(document, node, {}) ?? node.layout;
+    const commands = computeBooleanGeometry(document, node, {}, bounds);
     if (!commands?.length) {
       // 空结果也不能把操作数当普通子节点导出：它们只是运算输入。
       diagnostics.push({ nodeId, feature: "boolean", support: "unsupported", message: "Boolean group produced an empty shape" });
       return `<div ${common}></div>`;
     } else {
-      return renderVectorPath(document, node as unknown as DesignNode & { type: "vector" }, common, commands, tokenVariables);
+      const booleanCommon = nodeAttributes(node, `${style}width:${px(bounds.width)};height:${px(bounds.height)};`);
+      return renderVectorPath(document, node as unknown as DesignNode & { type: "vector" }, booleanCommon, commands, tokenVariables, bounds);
     }
   }
   if (node.type === "vector") {
@@ -146,6 +153,12 @@ function renderSiblingList(
     if (!rendered) continue;
     let wrapped = rendered;
     for (const mask of masks) {
+      // 软蒙版（半透明 / 羽化）：CSS 的 clip-path 只能硬裁剪，用 mask-image 走 alpha 遮罩。
+      const image = maskImageUrl(document, mask, parent);
+      if (image) {
+        wrapped = `<div style="position:absolute;inset:0;mask-image:url(${image});-webkit-mask-image:url(${image});mask-size:100% 100%;mask-repeat:no-repeat;">\n${indent(wrapped, 2)}\n</div>`;
+        continue;
+      }
       const clip = maskClipPath(document, mask);
       if (!clip) continue;
       wrapped = `<div style="position:absolute;inset:0;clip-path:path('${escapeAttribute(clip)}')">\n${indent(wrapped, 2)}\n</div>`;
@@ -156,10 +169,66 @@ function renderSiblingList(
 }
 
 /**
+ * 文本节点的文字色（CSS 值）。
+ *
+ * 单层实色走 token 变量（绑定生效时与画布一致）；多层填充与渐变退化成单一颜色
+ * （第一层 / 首个色标），导出侧会记一条诊断说明这是近似。
+ */
+export function textFillCss(document: DesignDocument, node: DesignNode, fills: Paint[], tokenVariables: Record<string, string>): string {
+  if (fills.length === 1 && fills[0]!.type === "solid") return boundValue(node.bindings?.fill, fills[0]!.color, tokenVariables);
+  return safeCssValue(textFillColor(document, node));
+}
+
+/**
+ * 文本上色的近似诊断。
+ *
+ * 多层填充只按第一层上色、渐变文字退化成首个色标——这两件事 HTML 都表达不了，
+ * 必须如实记下来，而不是装作做了。
+ */
+export function textFillDiagnostics(document: DesignDocument, node: DesignNode, diagnostics: ExportDiagnostic[], nodeId: string): void {
+  if (node.type !== "text") return;
+  const fills = resolveFills(document, node);
+  if (fills.length > 1) {
+    diagnostics.push({ nodeId, feature: "text-fill-multi", support: "approximated", message: "多层填充的文本只按第一层上色" });
+    return;
+  }
+  if (fills.length === 1 && fills[0]!.type !== "solid") {
+    diagnostics.push({ nodeId, feature: "text-fill-gradient", support: "approximated", message: "HTML 没有渐变文字，文字色按渐变的首个色标近似" });
+  }
+}
+
+/**
+ * 软蒙版的遮罩图（内联 SVG 的 data URL）。
+ *
+ * CSS 的 `clip-path: path()` 只能硬裁剪；半透明裁剪与羽化要用 `mask-image`：
+ * 遮罩图是一张内联 SVG，白色形状 + `fill-opacity` 给出蒙版的不透明度，
+ * 羽化由图内的 `feGaussianBlur` 完成。
+ *
+ * 硬蒙版返回 `undefined`——继续走 `clip-path` 那条路，导出产物逐字不变。
+ */
+export function maskImageUrl(document: DesignDocument, mask: DesignNode, parent: DesignNode | undefined): string | undefined {
+  const alpha = maskOpacity(document, mask);
+  const feather = mask.maskFeather ?? 0;
+  if (alpha >= 1 && feather <= 0) return undefined;
+  const path = maskClipPath(document, mask);
+  if (!path) return undefined;
+  // 遮罩图铺满父级：路径坐标是父级坐标系，viewBox 因此就是父级盒子。
+  const width = Math.max(1, parent?.layout.width ?? mask.layout.x + mask.layout.width);
+  const height = Math.max(1, parent?.layout.height ?? mask.layout.y + mask.layout.height);
+  const defs = feather > 0
+    ? `<defs><filter id="feather" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${num(feather / 2)}" /></filter></defs>`
+    : "";
+  const shape = `<path d="${escapeAttribute(path)}" fill="#ffffff" fill-opacity="${num(alpha)}"/>`;
+  const content = feather > 0 ? `<g filter="url(#feather)">${shape}</g>` : shape;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${num(width)} ${num(height)}">${defs}${content}</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
+/**
  * 蒙版轮廓（父级坐标系），供 CSS `clip-path: path()` 使用。
  *
- * 只取几何轮廓：圆角矩形的 `cornerRadius` 在这里被忽略（CSS path 里补圆弧会让表达式
- * 明显变长，而蒙版用圆角矩形并不常见），椭圆用 32 段折线近似。
+ * 只取几何轮廓：椭圆用 32 段折线近似，圆角矩形按 `border-radius` 的同一套规则
+ * 补上圆弧（画布与 SVG 都尊重圆角，这里以前是唯一不尊重的一端）。
  */
 export function maskClipPath(document: DesignDocument, mask: DesignNode): string | undefined {
   const { x, y, width, height } = mask.layout;
@@ -176,7 +245,16 @@ export function maskClipPath(document: DesignDocument, mask: DesignNode): string
     if (!mask.geometry) return undefined;
     return pathDataFromCommands(absolutePath(vectorPathCommands(mask.geometry.d), { x, y, width, height }));
   }
+  const radii = resolveCornerRadii(document, mask);
+  if (radii && radii.some(radius => radius > 0)) {
+    return pathDataFromCommands(roundedRectPath({ x, y, width, height }, radii));
+  }
   return `M ${num(x)} ${num(y)} L ${num(x + width)} ${num(y)} L ${num(x + width)} ${num(y + height)} L ${num(x)} ${num(y + height)} Z`;
+}
+
+/** 节点的公共属性（class / data-node-id / style）。 */
+function nodeAttributes(node: DesignNode, style: string): string {
+  return `class="design-node design-${node.type}" data-node-id="${escapeAttribute(node.id)}" style="${escapeAttribute(style)}"`;
 }
 
 /**
@@ -192,9 +270,10 @@ function renderVectorPath(
   common: string,
   commands: ReturnType<typeof vectorPathCommands>,
   tokenVariables: Record<string, string>,
+  box?: { width: number; height: number },
 ): string {
-  const width = Math.max(node.layout.width, 1);
-  const height = Math.max(node.layout.height, 1);
+  const width = Math.max(box?.width ?? node.layout.width, 1);
+  const height = Math.max(box?.height ?? node.layout.height, 1);
   const d = pathDataFromCommands(absolutePath(commands, { x: 0, y: 0, width, height }));
   // 填充层：实色走 CSS 变量，渐变走 linear-gradient（角度与画布/SVG 同一套约定）。
   const fills = resolveFills(document, node);
@@ -279,7 +358,11 @@ export function nodeStyle(document: DesignDocument, node: DesignNode, parent: De
   if (node.appearance.backgroundBlur) declarations.push(`backdrop-filter:blur(${num(node.appearance.backgroundBlur)}px)`);
   if (!node.visible) declarations.push("display:none");
   const fills = resolveFills(document, node);
-  if (fills[0] && !pathVector) {
+  if (node.type === "text") {
+    // 文本节点的填充就是**文字色**（画布也这么用），不是背景色——
+    // 写成 `background` 会把「文字颜色」变成「文字背后的色块」。
+    declarations.push(`color:${textFillCss(document, node, fills, tokenVariables)}`);
+  } else if (fills[0] && !pathVector) {
     if (fills.length === 1) {
       // 单层（实色或渐变）保持 `background:` 简写：输出与引入多层之前逐字一致。
       declarations.push(`background:${cssPaint(node, fills[0]!, tokenVariables)}`);
@@ -298,7 +381,10 @@ export function nodeStyle(document: DesignDocument, node: DesignNode, parent: De
   if (node.appearance.shadow) {
     const shadow = node.appearance.shadow;
     // 颜色来自文档，仍然走一次 safeCssValue，避免有人把 `;}` 塞进颜色里。
-    declarations.push(`box-shadow:${num(shadow.x)}px ${num(shadow.y)}px ${num(shadow.blur)}px ${safeCssValue(shadow.color)}`);
+    // 扩散半径是 `box-shadow` 的第 4 个值；内阴影加 `inset` 前缀（偏移方向因此与投影相反）。
+    const spread = shadow.spread ? ` ${num(shadow.spread)}px` : "";
+    const inset = shadow.type === "inner" ? "inset " : "";
+    declarations.push(`box-shadow:${inset}${num(shadow.x)}px ${num(shadow.y)}px ${num(shadow.blur)}px${spread} ${safeCssValue(shadow.color)}`);
   }
   if (node.appearance.blur) declarations.push(`filter:blur(${num(node.appearance.blur)}px)`);
   // 描边和圆角都可以由 token 驱动；绑定存在但节点没写 fallback 时同样要输出。
@@ -486,6 +572,7 @@ function textHtml(node: TextNode): string {
     if (segment.style.fontWeight !== undefined) declarations.push(`font-weight:${segment.style.fontWeight}`);
     if (segment.style.fontStyle !== undefined) declarations.push(`font-style:${segment.style.fontStyle}`);
     if (segment.style.fontSize !== undefined) declarations.push(`font-size:${px(segment.style.fontSize)}`);
+    if (segment.style.lineHeight !== undefined) declarations.push(`line-height:${px(segment.style.lineHeight)}`);
     if (segment.style.color !== undefined) declarations.push(`color:${safeCssValue(segment.style.color)}`);
     const body = escapeHtml(segment.text);
     return declarations.length ? `<span style="${escapeAttribute(declarations.join(";"))}">${body}</span>` : body;
@@ -505,6 +592,7 @@ function textRangeHtml(node: TextNode, from: number, to: number): string {
     if (segment.style.fontWeight !== undefined) declarations.push(`font-weight:${segment.style.fontWeight}`);
     if (segment.style.fontStyle !== undefined) declarations.push(`font-style:${segment.style.fontStyle}`);
     if (segment.style.fontSize !== undefined) declarations.push(`font-size:${px(segment.style.fontSize)}`);
+    if (segment.style.lineHeight !== undefined) declarations.push(`line-height:${px(segment.style.lineHeight)}`);
     if (segment.style.color !== undefined) declarations.push(`color:${safeCssValue(segment.style.color)}`);
     const body = escapeHtml(segment.text);
     return declarations.length ? `<span style="${escapeAttribute(declarations.join(";"))}">${body}</span>` : body;

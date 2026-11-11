@@ -183,6 +183,10 @@ const shadowSchema = z.object({
   y: z.number().finite(),
   blur: nonNegative,
   color: z.string().min(1),
+  // 扩散半径：向外扩散阴影轮廓，对应 CSS `box-shadow` 的第 4 个值（负值向内收）。
+  spread: z.number().finite().optional(),
+  // 缺省 `drop`（投影）；`inner` 是内阴影。
+  type: z.enum(["drop", "inner"]).optional(),
 });
 
 const paintSchema = z.discriminatedUnion("type", [
@@ -296,6 +300,8 @@ const baseNodeShape = {
   overflow: z.enum(["visible", "hidden", "scroll"]).optional(),
   position: z.enum(["fixed", "sticky"]).optional(),
   mask: z.boolean().optional(),
+  // 蒙版边缘羽化半径（px）；缺省 0 = 硬边。
+  maskFeather: nonNegative.optional(),
   componentPropertyBindings: componentPropertyBindingsSchema.optional(),
   interactions: z.array(interactionSchema).optional(),
 };
@@ -321,7 +327,13 @@ const textRunSchema = z.object({
     fontStyle: z.enum(["normal", "italic"]).optional(),
     fontSize: z.number().positive().optional(),
     color: z.string().min(1).optional(),
-  }).refine(style => style.fontWeight !== undefined || style.fontStyle !== undefined || style.fontSize !== undefined || style.color !== undefined, {
+    // 段内行高：只抬高所在行的行盒，不影响换行位置。
+    lineHeight: z.number().positive().optional(),
+  }).refine(style => style.fontWeight !== undefined
+    || style.fontStyle !== undefined
+    || style.fontSize !== undefined
+    || style.color !== undefined
+    || style.lineHeight !== undefined, {
     message: "Text run style must set at least one field",
   }),
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CANVAS_BOUNDS, CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomPercent, zoomStep } from "../src/canvas-zoom";
+import { CANVAS_BOUNDS, CANVAS_HEIGHT, CANVAS_WIDTH, clampZoom, contentBounds, fitZoom, selectionBounds, zoomAtPoint, zoomFromDrag, zoomPercent, zoomStep } from "../src/canvas-zoom";
 
 test("keeps the canvas bounds in coordinate semantics", () => {
   // Regression guard: `position: "css"` makes Moveable read right/bottom as CSS
@@ -78,4 +78,29 @@ test("computes the bounding box of a selection", () => {
 test("a selection without resolvable boxes has no bounds", () => {
   assert.equal(selectionBounds({}, ["a"]), undefined);
   assert.equal(selectionBounds({ a: { x: 0, y: 0, width: 0, height: 0 } }, ["a"]), undefined);
+});
+
+test("以某点为锚点缩放时滚动位置同步变化，锚点停在原地", () => {
+  // 场景点 (200, 100) 是锚点：从 1 倍放大到 2 倍，滚动要多出 200 * (2 - 1)。
+  const next = zoomAtPoint(1, 2, { x: 200, y: 100 }, { scrollLeft: 50, scrollTop: 20 });
+  assert.equal(next.zoom, 2);
+  assert.equal(next.scrollLeft, 250);
+  assert.equal(next.scrollTop, 120);
+});
+
+test("缩小时滚动位置往回退，锚点同样不动", () => {
+  const next = zoomAtPoint(2, 1, { x: 200, y: 100 }, { scrollLeft: 250, scrollTop: 120 });
+  assert.equal(next.scrollLeft, 50);
+  assert.equal(next.scrollTop, 20);
+});
+
+test("缩放工具拖动：向上拖放大，向下拖缩小", () => {
+  // 向上拖 400 屏幕像素 = 放大一倍。
+  assert.equal(zoomFromDrag(400, 0, 1), 2);
+  assert.equal(zoomFromDrag(400, 800, 1), 0.5);
+  // 没拖动就保持原样。
+  assert.equal(zoomFromDrag(400, 400, 1), 1);
+  // 结果仍然被钳在可用区间里。
+  assert.equal(zoomFromDrag(400, 0, 4), 4);
+  assert.equal(zoomFromDrag(400, 800, 0.1), 0.1);
 });

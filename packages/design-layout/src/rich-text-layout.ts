@@ -7,6 +7,13 @@ export interface RichTextStyle {
   /** 字号（px）。段内字号会同时改变宽度与行高。 */
   fontSize: number;
   color?: string;
+  /**
+   * 段内行高覆盖（px）。
+   *
+   * 只作为**行盒高度下限**参与该行的高度计算，不改变换行位置——
+   * 换行只看字号与宽度，行高只把行撑高。
+   */
+  lineHeight?: number;
 }
 
 export interface RichTextSegment {
@@ -20,7 +27,7 @@ export interface RichTextLine {
   segments: RichTextSegment[];
   /** 文字本身的宽度（不含左侧缩进）。 */
   width: number;
-  /** 这一行的高度：节点行高与该行最大字号的较大者——大字号不会被上一行压住。 */
+  /** 这一行的高度：max(节点行高, 行内行高覆盖, 行内最大字号)——大字号不会被上一行压住。 */
   height: number;
   /** 所属段落序号（与 schema 的段落序号一致）。 */
   paragraphIndex: number;
@@ -68,7 +75,11 @@ interface StyledChar {
 }
 
 function sameStyle(a: RichTextStyle, b: RichTextStyle): boolean {
-  return a.fontWeight === b.fontWeight && a.fontStyle === b.fontStyle && a.fontSize === b.fontSize && a.color === b.color;
+  return a.fontWeight === b.fontWeight
+    && a.fontStyle === b.fontStyle
+    && a.fontSize === b.fontSize
+    && a.color === b.color
+    && a.lineHeight === b.lineHeight;
 }
 
 /**
@@ -89,6 +100,7 @@ function toParagraphs(input: RichTextLayoutInput): StyledChar[][] {
       fontStyle: segment.style.fontStyle ?? input.fontStyle,
       fontSize: segment.style.fontSize ?? input.fontSize,
       ...(segment.style.color ? { color: segment.style.color } : {}),
+      ...(segment.style.lineHeight !== undefined ? { lineHeight: segment.style.lineHeight } : {}),
     };
     for (const value of Array.from(segment.text)) {
       if (value === "\n") paragraphs.push([]);
@@ -127,11 +139,24 @@ function buildLine(input: RichTextLayoutInput, chars: StyledChar[], from: number
   return { segments, width: x, height: lineHeightFor(input, chars, from, to) };
 }
 
-/** 行高 = max(节点行高, 该行最大字号)；字号变大时行盒跟着变高，不会被相邻行压住。 */
+/**
+ * 行高 = max(节点行高, 该行所有 run 的行高覆盖, 该行最大字号)。
+ *
+ * 三者取最大而不是迭代求解：字号变大时行盒跟着变高，不会被相邻行压住；
+ * 段内行高覆盖只是把所在行的行盒抬到指定高度下限。
+ *
+ * 段内行高**不参与换行**：换行只看字号与宽度，所以「把一行撑高」不会让后面的行
+ * 折返位置改变，只会让整段往下推。
+ */
 function lineHeightFor(input: RichTextLayoutInput, chars: StyledChar[], from: number, to: number): number {
   let maxFontSize = 0;
-  for (let index = from; index < to; index += 1) maxFontSize = Math.max(maxFontSize, chars[index]!.style.fontSize);
-  return Math.max(1, input.lineHeight, maxFontSize);
+  let maxLineHeight = 0;
+  for (let index = from; index < to; index += 1) {
+    const style = chars[index]!.style;
+    maxFontSize = Math.max(maxFontSize, style.fontSize);
+    if (style.lineHeight !== undefined) maxLineHeight = Math.max(maxLineHeight, style.lineHeight);
+  }
+  return Math.max(1, input.lineHeight, maxLineHeight, maxFontSize);
 }
 
 /**

@@ -1,4 +1,5 @@
 import type { CornerRadii, DesignDocument, DesignNode, Paint, PropertyOverride, Theme, TokenValue, TypographyValue } from "./types";
+import { colorAlpha } from "./paint";
 
 /**
  * Token 解析。
@@ -285,6 +286,41 @@ export function primaryFillColor(document: DesignDocument, node: DesignNode): st
   const first = resolveFills(document, node)[0];
   if (!first) return undefined;
   return first.type === "solid" ? first.color : first.stops[0]?.color;
+}
+
+/**
+ * 文本节点没有填充时的默认文字色。
+ *
+ * 画布一直用这个值兜底（`scene.ts` 里的 `#111111`）；导出端也用它，
+ * 三端才不会各给一个默认色。
+ */
+export const TEXT_DEFAULT_COLOR = "#111111";
+
+/**
+ * 文本节点的上色规则（画布 / HTML / SVG 共用这一份）。
+ *
+ * - **单层**填充 → 用该层的颜色（渐变取第一个色标）；
+ * - **多层**填充 → 只按第一层上色（后面的层是形状的装饰，不参与文字颜色）；
+ * - 完全没有填充 → 用 {@link TEXT_DEFAULT_COLOR}。
+ *
+ * 文本节点没有独立的「文字色」字段：颜色来自 `appearance.fills`，
+ * 所以这条规则就是「填充怎么用」在文字上的那一面。
+ */
+export function textFillColor(document: DesignDocument, node: DesignNode): string {
+  return primaryFillColor(document, node) ?? TEXT_DEFAULT_COLOR;
+}
+
+/**
+ * 蒙版的不透明度：节点自身透明度 × 第一层实色填充的 alpha。
+ *
+ * 蒙版的**填充色**不影响裁剪形状（形状由节点类型决定），只有透明度参与裁剪——
+ * 半透明的蒙版因此是「半透明裁剪」，而不是硬裁剪。
+ */
+export function maskOpacity(document: DesignDocument, node: DesignNode): number {
+  const opacity = node.appearance.opacity ?? 1;
+  const fill = resolveFills(document, node)[0];
+  const color = fill?.type === "solid" ? fill.color : undefined;
+  return opacity * (color ? colorAlpha(color) : 1);
 }
 
 /** 圆角：`radius` 绑定优先，否则用节点自身的值。 */
