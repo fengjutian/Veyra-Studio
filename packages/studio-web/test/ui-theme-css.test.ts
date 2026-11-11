@@ -16,6 +16,7 @@ test("light theme covers every workbench page and overlay", () => {
     ".settings-page > .inspector-section",
     ".settings-theme-option",
     ".topbar-ai-entry",
+    ".toolbar-menu-content",
     ".dialog-content",
     ".context-menu",
     ".export-preview-body",

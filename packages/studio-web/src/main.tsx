@@ -112,6 +112,7 @@ import { Icon } from "./icons";
 import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/dialogs";
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
+import { ToolbarMenu } from "./ui/toolbar-menu";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
 import { describePropertyOverride, parsePropertyOverride } from "./theme-properties";
 import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "./ai-vision";
@@ -2665,22 +2666,24 @@ function App() {
       <div className="toolbar-group" role="group" aria-label="原型">
         <Tooltip label="预览原型（从选中的 Frame 开始）"><button className="icon-only" aria-label="预览原型" disabled={busy} onClick={startPrototypePreview}><Icon name="prototypePlay" /></button></Tooltip>
       </div>
-      <div className="toolbar-group" role="group" aria-label="项目">
-        <Tooltip label="新建项目"><button className="icon-only" aria-label="新建项目" disabled={busy} onClick={createProject}><Icon name="newProject" /></button></Tooltip>
-        <Tooltip label="重命名项目"><button className="icon-only" aria-label="重命名项目" disabled={busy} onClick={renameProject}><Icon name="rename" /></button></Tooltip>
-        <Tooltip label="设置"><button className="icon-only" aria-label="设置" onClick={() => { setRightPanelOpen(true); setInspectorTab("settings"); }}><Icon name="settings" /></button></Tooltip>
-      </div>
+      <ToolbarMenu label="项目菜单" items={[
+        { label: "新建项目", icon: "newProject", disabled: busy, onSelect: createProject },
+        { label: "重命名项目", icon: "rename", disabled: busy, onSelect: renameProject },
+        { label: "删除当前项目", icon: "trash", danger: true, disabled: busy, onSelect: deleteCurrentProject },
+      ]}>项目</ToolbarMenu>
       <div className="toolbar-group" role="group" aria-label="导出">
         <select className="export-scope" aria-label="导出范围" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select>
-        <Tooltip label="导出 HTML"><button className="icon-only" aria-label="导出 HTML" disabled={busy} onClick={exportHtml}><Icon name="exportHtml" /></button></Tooltip>
-        <Tooltip label="导出 SVG"><button className="icon-only" aria-label="导出 SVG" disabled={busy} onClick={exportSvg}><Icon name="exportSvg" /></button></Tooltip>
-        <Tooltip label="导出 PNG"><button className="icon-only" aria-label="导出 PNG" disabled={busy} onClick={exportPng}><Icon name="exportPng" /></button></Tooltip>
-        <Tooltip label="导出 JSON"><button className="icon-only" aria-label="导出 JSON" disabled={busy} onClick={exportJson}><Icon name="exportJson" /></button></Tooltip>
-        <Tooltip label="导入 JSON（可多选）"><button className="icon-only" aria-label="导入 JSON" disabled={busy} onClick={() => importInput.current?.click()}><Icon name="import" /></button></Tooltip>
+        <ToolbarMenu label="导出与导入" icon="exportHtml" items={[
+          { label: "导出 HTML", icon: "exportHtml", disabled: busy, onSelect: exportHtml },
+          { label: "导出 SVG", icon: "exportSvg", disabled: busy, onSelect: exportSvg },
+          { label: "导出 PNG", icon: "exportPng", disabled: busy, onSelect: exportPng },
+          { label: "导出 JSON", icon: "exportJson", disabled: busy, onSelect: exportJson },
+          { label: "导入 JSON", icon: "import", disabled: busy, onSelect: () => importInput.current?.click() },
+        ]}>导出</ToolbarMenu>
       </div>
       <input ref={importInput} className="hidden-input" type="file" accept="application/json,.json" multiple onChange={event => { const files = [...(event.target.files ?? [])]; event.target.value = ""; if (files.length) importJsonFiles(files); }} />
       <span className="toolbar-separator" aria-hidden="true" />
-      <Tooltip label="删除当前项目"><button className="icon-only header-danger" aria-label="删除当前项目" disabled={busy} onClick={deleteCurrentProject}><Icon name="trash" /></button></Tooltip>
+      <Tooltip label="设置"><button className="icon-only" aria-label="设置" onClick={() => { setRightPanelOpen(true); setInspectorTab("settings"); }}><Icon name="settings" /></button></Tooltip>
       <span className={`autosave-status autosave-${autosave.state}`} title={autosaveTitle(autosave)}>{autosaveLabel(autosave)}</span>
       <span className="status" title={message}>{message}</span>
       </div>
@@ -2848,7 +2851,7 @@ function App() {
         <Tooltip label="放大"><button className="icon-only" aria-label="放大" onClick={() => setZoom(current => zoomStep(current, 1))}><Icon name="zoomIn" /></button></Tooltip>
         <Tooltip label="适应内容"><button className="icon-only zoom-fit" aria-label="适应内容" onClick={fitCanvas}><Icon name="zoomFit" /></button></Tooltip>
       </div>
-      <div className={`ai-command-dock${planning ? " is-planning" : ""}`}>
+      {!(rightPanelOpen && inspectorTab === "ai") && <div className={`ai-command-dock${planning ? " is-planning" : ""}`}>
         <button
           className="ai-command-brand"
           aria-label="打开 AI 工作区"
@@ -2901,19 +2904,23 @@ function App() {
             <span>{!aiReady ? "配置模型" : preview ? "查看预览" : planning ? "生成中" : "生成"}</span>
           </button>
         </Tooltip>
-      </div>
+      </div>}
     </section>
     <aside className="inspector">
       <InspectorResizeHandle width={rightPanelWidth} onResize={setRightPanelWidth} />
       <div className="inspector-head">
         <h2>{activeInspectorTab.label}</h2>
-        <span className="inspector-head-meta" title={activeInspectorTab.meta}>{activeInspectorTab.meta}</span>
+        <div className="inspector-head-context">
+          <span className="inspector-head-meta" title={activeInspectorTab.meta}>{activeInspectorTab.meta}</span>
+          <Tooltip label="导出"><button className="icon-only" aria-label="打开导出面板" aria-pressed={inspectorTab === "export"} onClick={() => setInspectorTab("export")}><Icon name="exportHtml" /></button></Tooltip>
+          <Tooltip label="设置"><button className="icon-only" aria-label="打开设置面板" aria-pressed={inspectorTab === "settings"} onClick={() => setInspectorTab("settings")}><Icon name="settings" /></button></Tooltip>
+        </div>
       </div>
       <Tabs.Root className="inspector-tabs-root" value={inspectorTab} onValueChange={value => setInspectorTab(value as InspectorTabId)}>
         <Tabs.List className="inspector-tabs" aria-label="右侧面板分段">
           {/* Radix 的 roving focus 只在值变化后才把选中项设成 tabIndex=0，
               首次挂载时整排都是 -1，键盘 Tab 进不了分段栏；这里按当前值显式补上。 */}
-          {inspectorTabRows.map(tab => (
+          {inspectorTabRows.filter(tab => tab.id !== "export" && tab.id !== "settings").map(tab => (
             <Tabs.Trigger key={tab.id} value={tab.id} className="inspector-tab" tabIndex={inspectorTab === tab.id ? 0 : -1}>
               {tab.label}
               {tab.badge ? <span className="inspector-tab-badge">{tab.badge}</span> : null}
