@@ -4,9 +4,9 @@ export const UI_THEME_STORAGE_KEY = "veyra:ui-theme";
 
 export function readUiTheme(storage: Pick<Storage, "getItem"> = localStorage): UiTheme {
   try {
-    return storage.getItem(UI_THEME_STORAGE_KEY) === "light" ? "light" : "dark";
+    return storage.getItem(UI_THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
   } catch {
-    return "dark";
+    return "light";
   }
 }
 

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { applyUiTheme, readUiTheme, UI_THEME_STORAGE_KEY, writeUiTheme } from "../src/ui-theme";
 
-test("reads light and falls back to dark for missing or invalid values", () => {
+test("reads an explicit theme and defaults to light", () => {
   assert.equal(readUiTheme({ getItem: () => "light" }), "light");
   assert.equal(readUiTheme({ getItem: () => "dark" }), "dark");
-  assert.equal(readUiTheme({ getItem: () => "system" }), "dark");
-  assert.equal(readUiTheme({ getItem: () => null }), "dark");
+  assert.equal(readUiTheme({ getItem: () => "system" }), "light");
+  assert.equal(readUiTheme({ getItem: () => null }), "light");
 });
 
 test("persists and applies the selected UI theme", () => {
@@ -21,6 +21,6 @@ test("persists and applies the selected UI theme", () => {
 });
 
 test("storage failures do not prevent startup or switching", () => {
-  assert.equal(readUiTheme({ getItem: () => { throw new Error("blocked"); } }), "dark");
+  assert.equal(readUiTheme({ getItem: () => { throw new Error("blocked"); } }), "light");
   assert.doesNotThrow(() => writeUiTheme("light", { setItem: () => { throw new Error("blocked"); } }));
 });
