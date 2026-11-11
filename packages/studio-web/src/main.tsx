@@ -175,6 +175,16 @@ function App() {
     zoomRef.current = value;
     setZoom(value);
   }, []);
+  /**
+   * 缩放工具的手势状态。
+   *
+   * 锚点记的是**场景坐标**：缩放之后要把这个点挪回鼠标下面，所以要的是画布里的位置，
+   * 而不是屏幕像素。
+   *
+   * 这个 ref 必须留在「项目加载完成」的早退**之前**：App 首帧还没有文档，走的是加载分支，
+   * 一旦两次渲染的 hook 数量对不上，React 会直接抛 #310 把整棵树卸载掉，表现为白屏。
+   */
+  const zoomGesture = useRef<{ pointerId: number; anchor: { x: number; y: number }; startClientY: number; startZoom: number; moved: boolean } | null>(null);
   // 当前画布工具。和缩放一样只是视图状态：切工具不改文档，也不进快照。
   const [tool, setTool] = useState<ToolId>("select");
   const panMode = tool === "hand";
@@ -1312,13 +1322,6 @@ function App() {
   const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask" | "overflow" | "position">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
-  /**
-   * 缩放工具的手势状态。
-   *
-   * 锚点记的是**场景坐标**：缩放之后要把这个点挪回鼠标下面，所以要的是画布里的位置，
-   * 而不是屏幕像素。
-   */
-  const zoomGesture = useRef<{ pointerId: number; anchor: { x: number; y: number }; startClientY: number; startZoom: number; moved: boolean } | null>(null);
   /** 以某个场景点为锚点缩放，并同步滚动位置，保证锚点停在鼠标下面。 */
   const zoomAtAnchor = (nextZoom: number, anchor: { x: number; y: number }) => {
     const current = zoomRef.current;

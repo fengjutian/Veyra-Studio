@@ -125,7 +125,11 @@ async function switchPanel(page: CdpPage, label: string): Promise<void> {
   const point = await page.evaluate<{ x: number; y: number } | null>(
     `(() => {
        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-       const target = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
+       const byTab = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
+       // 「导出」「设置」被挪到了检查器头部的图标按钮上，不再是分段标签。
+       const byButton = Array.from(document.querySelectorAll('button[aria-label]'))
+         .find(button => { const name = button.getAttribute('aria-label') || ''; return name.startsWith('打开') && name.includes(${JSON.stringify(label)}); });
+       const target = byTab || byButton;
        if (!target) return null;
        const rect = target.getBoundingClientRect();
        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
@@ -139,11 +143,18 @@ async function switchPanel(page: CdpPage, label: string): Promise<void> {
   await sleep(500);
 }
 
-/** 确认分段真的切过去了：选中项的文字要跟目标分段一致。 */
+/**
+ * 确认分段真的切过去了：当前分段的标题要跟目标分段一致。
+ *
+ * 读的是检查器头部的标题（`.inspector-head h2`）——左侧面板也有 `role="tab"`，
+ * 按「文档里第一个选中的 tab」去读会读到左侧的「图层」，不是检查器分段。
+ */
 async function readActivePanel(page: CdpPage): Promise<string> {
   return page.evaluate<string>(
     `(() => {
-       const tab = document.querySelector('[role="tab"][aria-selected="true"]');
+       const head = document.querySelector(".inspector-head h2");
+       if (head) return (head.textContent || "").trim();
+       const tab = document.querySelector('.inspector-tabs [role="tab"][aria-selected="true"]');
        return tab ? (tab.textContent || "").trim() : "";
      })()`,
   );

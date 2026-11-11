@@ -137,7 +137,11 @@ async function switchPanel(page: CdpPage, label: string): Promise<void> {
   const ok = await page.evaluate<boolean>(
     `(() => {
        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-       const target = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
+       const byTab = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
+       // 「导出」「设置」被挪到了检查器头部的图标按钮上，不再是分段标签。
+       const byButton = Array.from(document.querySelectorAll('button[aria-label]'))
+         .find(button => { const name = button.getAttribute('aria-label') || ''; return name.startsWith('打开') && name.includes(${JSON.stringify(label)}); });
+       const target = byTab || byButton;
        if (!target) return false;
        target.setAttribute("data-probe-tab", "1");
        return true;
@@ -247,8 +251,30 @@ async function closeDialog(page: CdpPage): Promise<void> {
   if (stillOpen) throw new Error("对比弹窗关不掉，后续点击会被遮罩挡住");
 }
 
+/**
+ * 切到左侧面板的「页面」标签。
+ *
+ * 页面列表和「新增页面」按钮被收进了这个标签页（默认停在「图层」），不先切过去，
+ * 就既找不到按钮也读不到页面列表。
+ */
+async function switchLeftTab(page: CdpPage, label: string): Promise<void> {
+  const ok = await page.evaluate<boolean>(
+    `(() => {
+       const tabs = Array.from(document.querySelectorAll('.left-panel-tabs [role="tab"]'));
+       const target = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
+       if (!target) return false;
+       target.setAttribute("data-probe-tab", "1");
+       return true;
+     })()`,
+  );
+  if (!ok) throw new Error(`左侧面板里找不到「${label}」标签`);
+  await clickSelector(page, '[data-probe-tab="1"]');
+  await sleep(400);
+}
+
 /** 新建一页（走应用自己的「新增页面」对话框）。 */
 async function createPage(page: CdpPage, name: string): Promise<boolean> {
+  await switchLeftTab(page, "页面");
   if (!(await clickSelector(page, 'button[aria-label="新增页面"]'))) return false;
   await sleep(600);
   const filled = await page.evaluate<boolean>(
@@ -343,7 +369,7 @@ async function main(): Promise<void> {
     // ── 场景 B：历史版本里没有当前这一页 → 说清楚没法比 ────────────
     await closeDialog(page);
     await switchPanel(page, "历史");
-    await createPage(page, "对比测试页");
+    expect(await createPage(page, "对比测试页"), "没能通过「新增页面」对话框新建页面");
     const pageNames = await page.evaluate<string[]>(
       `Array.from(document.querySelectorAll(".page-row-name")).map(el => (el.textContent || "").trim())`,
     );

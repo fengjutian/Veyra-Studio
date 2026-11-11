@@ -903,6 +903,16 @@
   color: #858b9a;
 }
 
+/* 指令输入框自己也要有焦点环。
+   `.ai-command-main input` 的特异度压过了全局的 `:focus-visible{outline:...}`，
+   焦点指示只剩外层 dock 的 `:focus-within`——那圈画在 dock 上，不跟着输入框走，
+   键盘用户按完 Tab 看不到焦点具体落在输入框里（WCAG 2.4.7 Focus Visible）。 */
+.ai-command-main input:focus-visible {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .ai-command-model {
   flex: none;
   max-width: 112px;

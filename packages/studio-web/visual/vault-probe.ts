@@ -81,19 +81,23 @@ async function clickSelector(page: CdpPage, selector: string): Promise<boolean> 
   return true;
 }
 
-/** 切到检查器的「AI」分段（必须用真实鼠标：Radix 的 Tabs 在 mousedown 上激活）。 */
-async function switchToAi(page: CdpPage): Promise<void> {
+/**
+ * 切到检查器的「设置」分段。
+ *
+ * 模型与密钥面板（保管库、口令、密钥环）现在在「设置」分段里，不再在「AI」分段；
+ * 「设置」也不是分段标签了，是检查器头部的一个图标按钮，所以点按钮而不是找 tab。
+ */
+async function switchToSettings(page: CdpPage): Promise<void> {
   const ok = await page.evaluate<boolean>(
     `(() => {
-       const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-       const target = tabs.find(tab => (tab.textContent || "").trim().startsWith("AI"));
-       if (!target) return false;
-       target.setAttribute("data-probe-ai", "1");
+       const button = document.querySelector('button[aria-label="打开设置面板"]');
+       if (!button) return false;
+       button.setAttribute("data-probe-settings", "1");
        return true;
      })()`,
   );
-  if (!ok) throw new Error("找不到检查器的「AI」分段");
-  await clickSelector(page, '[data-probe-ai="1"]');
+  if (!ok) throw new Error("找不到「打开设置面板」按钮");
+  await clickSelector(page, '[data-probe-settings="1"]');
   await sleep(500);
 }
 
@@ -169,14 +173,14 @@ async function main(): Promise<void> {
   try {
     const page = await browser.newPage(server.url);
     await waitForApp(page);
-    await switchToAi(page);
+    await switchToSettings(page);
 
     // ── 配一把密钥并加密落盘 ─────────────────────────────────────────
     await fillInput(page, 'input[placeholder="粘贴新的 API Key"]', SECRET);
-    expect(await clickButton(page, "添加"), "AI 分段里没有「添加」按钮");
+    expect(await clickButton(page, "添加"), "设置分段里没有「添加」按钮");
     await sleep(300);
     await fillInput(page, 'input[aria-label="落盘口令"]', "探针口令");
-    expect(await clickButton(page, "加密保存"), "AI 分段里没有「加密保存」按钮");
+    expect(await clickButton(page, "加密保存"), "设置分段里没有「加密保存」按钮");
     await sleep(1200);
 
     const stored = await page.evaluate<string>(`localStorage.getItem(${JSON.stringify(VAULT_KEY)}) ?? ""`);
@@ -190,14 +194,14 @@ async function main(): Promise<void> {
     await page.evaluate(`sessionStorage.clear(); true`);
     await page.navigate(server.url);
     await waitForApp(page);
-    await switchToAi(page);
+    await switchToSettings(page);
     expect((await maskedKeys(page)).length === 0, "新会话里不该还有密钥");
     expect(await page.evaluate<string>(`localStorage.getItem(${JSON.stringify(VAULT_KEY)}) ?? ""`) === stored,
       "刷新后磁盘上的密文不见了");
 
     // ── 口令错了：要说清楚，不能静默失败 ────────────────────────────
     await fillInput(page, 'input[aria-label="落盘口令"]', "错的");
-    expect(await clickButton(page, "解锁载入"), "AI 分段里没有「解锁载入」按钮");
+    expect(await clickButton(page, "解锁载入"), "设置分段里没有「解锁载入」按钮");
     await sleep(1200);
     const wrongNote = await notes(page);
     expect(wrongNote.includes("口令不对"), `口令错了应该明说，实际提示：${wrongNote}`);

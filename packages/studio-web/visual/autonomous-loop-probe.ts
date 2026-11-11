@@ -12,10 +12,14 @@
  * 这个探针补的是**接线**：按钮 → 循环 → 提交 → 轮次日志 → 停止原因。
  * 纯逻辑测得再对，界面上按钮没接上、轮次日志没渲染，一样是废的。
  *
- * 这里没有真实模型，所以用的是**演示规划器**——它每次都新建一张蓝卡片，
- * 完全不看体检清单。这正合适：演示规划器修不好任何问题，循环就该一路跑到
- * 轮次上限，然后**如实**报出停止原因，而不是假装收敛。所以断言是
- * 「跑了很多轮、每轮都落地了命令、画布上的节点真的变多了、最后说了为什么停」。
+ * 这里没有真实模型，所以探针自己**接管 fetch**，拦下模型请求、回一份固定的计划：
+ * 每轮在当前页面新建一张蓝卡片，完全不看体检清单。这正合适：这份计划修不好任何问题，
+ * 循环就该一路跑到停止条件，然后**如实**报出停止原因，而不是假装收敛。所以断言是
+ * 「跑了几轮、每轮都落地了命令、画布上的节点真的变多了、最后说了为什么停」。
+ *
+ * 为什么不用演示规划器：产品已经改成「AI 功能必须配真实模型」（提交 089c63a），
+ * 没配模型时「自主运行」按钮是禁用的，演示规划器在界面上已经点不到。
+ * 自己接管 fetch 反而更接近真实——走的是完整的 OpenAI 兼容协议（SSE 流式）。
  */
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -68,6 +72,101 @@ async function waitForApp(page: CdpPage, timeoutMs = 30_000): Promise<void> {
     await sleep(100);
   }
   throw new Error("工作台没有渲染出来（.topbar / .canvas / .status 都没出现）");
+}
+
+/**
+ * 装一个假的模型端点。
+ *
+ * 两件事一起做：
+ * 1. 把 AI 设置写进 localStorage（`enabled: true` + 一个本地地址）——产品要求配了
+ *    真实模型才让用 AI 功能，不写这段「自主运行」按钮是禁用的。
+ * 2. 接管 `window.fetch`：拦下 `/chat/completions`，按 OpenAI 兼容协议回一份 SSE 流，
+ *    正文是一份「在当前页面新建一张蓝卡片」的计划。
+ *
+ * 用 `Page.addScriptToEvaluateOnNewDocument` 注入：它在页面任何脚本之前跑，
+ * 刷新页面也不会丢——设置和补丁都不用等到应用加载后再补。
+ */
+async function installMockModel(page: CdpPage): Promise<void> {
+  await page.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `(() => {
+  try {
+    localStorage.setItem("studio:ai-settings", JSON.stringify({
+      enabled: true,
+      baseUrl: "http://localhost:11434/v1",
+      model: "mock-planner",
+      timeoutMs: 30000,
+      maxTokens: 8192,
+      thinkingMode: "off"
+    }));
+  } catch (error) {
+    // about:blank 上没有 localStorage，忽略。
+  }
+  const original = window.fetch.bind(window);
+  window.__veyraMock = { requests: 0 };
+  window.fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    if (!url.includes("/chat/completions")) return original(input, init);
+    window.__veyraMock.requests += 1;
+    const plan = buildMockPlan(init && init.body);
+    const sse = "data: " + JSON.stringify({ choices: [{ delta: { content: JSON.stringify(plan) } }] }) + "\\n\\ndata: [DONE]\\n\\n";
+    return new Response(sse, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+  };
+  function buildMockPlan(body) {
+    let prompt = "";
+    try {
+      const parsed = JSON.parse(String(body || ""));
+      const user = (parsed.messages || []).find(message => message.role === "user");
+      const content = user && user.content;
+      prompt = typeof content === "string" ? content : (content || []).map(part => part.text || "").join("\\n");
+    } catch (error) {
+      // 请求体读不出来：下面的节点就没有父级，dry-run 会拦下来。
+    }
+    // 页面 id 从提示词里的「可用页面」段取——模型就是这么知道该往哪放节点的。
+    const section = (prompt.split("可用页面：")[1] || "").split("节点树：")[0];
+    const match = /- (\\S+) 名称="/.exec(section);
+    const pageId = match ? match[1] : "";
+    return {
+      summary: "探针模型：在当前页面新建一张蓝色卡片",
+      assumptions: ["卡片放在当前页面下"],
+      commands: [{
+        type: "node.create",
+        payload: {
+          node: {
+            id: "frame:mock-card-" + window.__veyraMock.requests,
+            type: "frame",
+            name: "AI 卡片",
+            parentId: pageId,
+            childIds: [],
+            visible: true,
+            locked: false,
+            layout: { mode: "absolute", x: 340, y: 120, width: 280, height: 180, widthMode: "fixed", heightMode: "fixed" },
+            appearance: { opacity: 1, fills: [{ type: "solid", color: "#2563eb" }], cornerRadius: 20 }
+          }
+        }
+      }]
+    };
+  }
+})();`,
+  });
+}
+
+/** 展开「高级：自主运行」折叠区。按钮默认收在折叠区里，不展开就点不到。 */
+async function openAdvancedSection(page: CdpPage): Promise<void> {
+  const state = await page.evaluate<{ found: boolean; open: boolean }>(
+    `(() => {
+       const details = document.querySelector("details.ai-advanced");
+       if (!details) return { found: false, open: false };
+       if (!details.open) {
+         const summary = details.querySelector("summary");
+         if (summary) summary.setAttribute("data-probe-summary", "1");
+       }
+       return { found: true, open: details.open };
+     })()`,
+  );
+  if (!state.found) throw new Error("AI 分段里没有「高级：自主运行」折叠区");
+  if (state.open) return;
+  await clickSelector(page, '[data-probe-summary="1"]');
+  await sleep(300);
 }
 
 /** 用真实的「导入 JSON」入口灌一份 fixture 文档。 */
@@ -197,7 +296,10 @@ async function main(): Promise<void> {
   const server = await serveDirectory(DIST);
   const browser = await launchHeadlessBrowser(browserPath);
   try {
-    const page = await browser.newPage(server.url);
+    const page = await browser.newPage("");
+    // 先装假的模型端点再导航：设置和 fetch 补丁都要在应用脚本之前就位。
+    await installMockModel(page);
+    await page.navigate(server.url);
     await waitForApp(page);
     await seedDocument(page);
 
@@ -206,6 +308,7 @@ async function main(): Promise<void> {
 
     await switchPanel(page, "AI");
     await setInputValue(page, 'textarea[aria-label="AI 指令"]', "把这份设计的可访问性问题修掉");
+    await openAdvancedSection(page);
 
     const clicked = await page.evaluate<boolean>(
       `(() => {
@@ -220,6 +323,9 @@ async function main(): Promise<void> {
     await clickSelector(page, '[data-probe-loop="1"]');
 
     const summary = await waitForLoopSummary(page);
+    const modelCalls = await page.evaluate<number>(`Number((window.__veyraMock && window.__veyraMock.requests) || 0)`);
+    expect(modelCalls >= 1, `模型端点一次都没被调用（${modelCalls} 次）——循环没真的走模型`);
+    if (args.verbose) console.log(`模型端点被调用 ${modelCalls} 次`);
     const rounds = await page.evaluate<string[]>(
       `Array.from(document.querySelectorAll(".loop-round")).map(el => (el.textContent || "").trim())`,
     );
@@ -236,7 +342,9 @@ async function main(): Promise<void> {
     }
 
     // ③ 收尾说清楚了为什么停，而不是默默消失。
-    expect(/(收敛|轮次上限|震荡|阻断|审批|取消|没有给出|失败)/.test(summary), `收尾结论没有说明停止原因：${summary}`);
+    // 停止原因有好几种：收敛 / 轮次上限 / 震荡 / 修不动（待修项没减少）/ 结构审查阻断 /
+    // 审批未通过 / 用户取消 / 模型没给命令 / 调用失败。
+    expect(/(收敛|轮次上限|震荡|阻断|审批|取消|没有给出|失败|没有进展|没有减少|修不动)/.test(summary), `收尾结论没有说明停止原因：${summary}`);
 
     // ④ 画布上的节点真的变多了——命令落到了文档里，不只是日志好看。
     expect(after > before, `画布节点数没有变（开跑前 ${before}，跑完 ${after}）`);

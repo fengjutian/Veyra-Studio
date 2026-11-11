@@ -90,7 +90,11 @@ async function switchPanel(page: CdpPage, label: string): Promise<void> {
   const ok = await page.evaluate<boolean>(
     `(() => {
        const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-       const target = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
+       const byTab = tabs.find(tab => (tab.textContent || "").trim().startsWith(${JSON.stringify(label)}));
+       // 「导出」「设置」被挪到了检查器头部的图标按钮上，不再是分段标签。
+       const byButton = Array.from(document.querySelectorAll('button[aria-label]'))
+         .find(button => { const name = button.getAttribute('aria-label') || ''; return name.startsWith('打开') && name.includes(${JSON.stringify(label)}); });
+       const target = byTab || byButton;
        if (!target) return false;
        target.setAttribute("data-probe-tab", "1");
        return true;
