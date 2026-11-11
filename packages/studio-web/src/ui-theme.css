@@ -132,6 +132,98 @@
 :root[data-ui-theme="light"] .preview.stale { background: #fffaeb; }
 :root[data-ui-theme="light"] .warning-row { background: #fffaeb; color: #7a2e0e; }
 
+/* Pages and layer panel. */
+:root[data-ui-theme="light"] .pages-block { border-bottom-color: #d7dce6; }
+:root[data-ui-theme="light"] .page-actions button,
+:root[data-ui-theme="light"] .layers .layer-search {
+  border-color: #d7dce6;
+  background: #f7f8fb;
+  color: #667085;
+}
+:root[data-ui-theme="light"] .page-row:hover:not(:disabled),
+:root[data-ui-theme="light"] .layers .layer-row:hover { background: #f3f5f8; color: #172033; }
+
+/* Properties page controls. */
+:root[data-ui-theme="light"] .inspector input:not([type="checkbox"]),
+:root[data-ui-theme="light"] .inspector textarea,
+:root[data-ui-theme="light"] .inspector .field-inline input,
+:root[data-ui-theme="light"] .inspector .field textarea,
+:root[data-ui-theme="light"] .inspector .field select,
+:root[data-ui-theme="light"] .component-create input,
+:root[data-ui-theme="light"] .rich-text-selection button,
+:root[data-ui-theme="light"] .paragraph-indent-step,
+:root[data-ui-theme="light"] .grid-track select,
+:root[data-ui-theme="light"] .grid-track input,
+:root[data-ui-theme="light"] .grid-track-remove {
+  border-color: #cbd2df;
+  background: #ffffff;
+  color: #172033;
+}
+:root[data-ui-theme="light"] .segmented { border-color: #d7dce6; background: #eef1f6; }
+:root[data-ui-theme="light"] .inspector-section + .inspector-section { border-top-color: #e4e7ec; }
+:root[data-ui-theme="light"] .instance-override-appearance input[type="color"] { border-color: #cbd2df; background: #ffffff; }
+:root[data-ui-theme="light"] .studio .topbar button.header-danger:hover:not(:disabled) { background: #fff1f0; color: #b42318; }
+
+/* Export, history and data pages. */
+:root[data-ui-theme="light"] .external-provider-row,
+:root[data-ui-theme="light"] .loop-round,
+:root[data-ui-theme="light"] .export-preview-body {
+  border-color: #d7dce6;
+  background: #f7f8fb;
+  color: #344054;
+}
+:root[data-ui-theme="light"] .storage-bar { background: #e4e7ec; }
+:root[data-ui-theme="light"] .snapshot-label,
+:root[data-ui-theme="light"] .backup-time,
+:root[data-ui-theme="light"] .history-label,
+:root[data-ui-theme="light"] .loop-round-summary { color: #172033; }
+:root[data-ui-theme="light"] .recovery-row,
+:root[data-ui-theme="light"] .snapshot-row,
+:root[data-ui-theme="light"] .asset-row,
+:root[data-ui-theme="light"] .storage-row,
+:root[data-ui-theme="light"] .storage-cleanup-item,
+:root[data-ui-theme="light"] .backup-row,
+:root[data-ui-theme="light"] .history-row,
+:root[data-ui-theme="light"] .diagnostic-row,
+:root[data-ui-theme="light"] .loop-summary { color: #344054; }
+:root[data-ui-theme="light"] .snapshot-current,
+:root[data-ui-theme="light"] .history-current,
+:root[data-ui-theme="light"] .diagnostic-badge,
+:root[data-ui-theme="light"] .support-matrix th,
+:root[data-ui-theme="light"] .support-matrix td { border-color: #d7dce6; }
+
+/* Floating editor surfaces. */
+:root[data-ui-theme="light"] .canvas-controls,
+:root[data-ui-theme="light"] .selection-toolbar {
+  border-color: #cbd2df;
+  background: #fffffff0;
+  box-shadow: 0 8px 24px #34405424;
+}
+:root[data-ui-theme="light"] .selection-toolbar button:hover:not(:disabled) { background: #ede9fe; color: #5b21b6; }
+:root[data-ui-theme="light"] .ai-command-dock {
+  border-color: #c4b5fd;
+  background: #fffffff2;
+  box-shadow: 0 16px 48px #3440542b, 0 0 0 1px #8b5cf61a;
+}
+:root[data-ui-theme="light"] .ai-command-main input { color: #172033; }
+:root[data-ui-theme="light"] .ai-command-model { border-color: #d7dce6; color: #667085; }
+:root[data-ui-theme="light"] .ai-command-model.is-ready { border-color: #c4b5fd; background: #ede9fe; color: #6d28d9; }
+:root[data-ui-theme="light"] .ai-command-submit:disabled { background: #e4e7ec; color: #98a2b3; }
+
+/* Full-screen and modal pages: keep the document canvas untouched, theme the chrome. */
+:root[data-ui-theme="light"] .prototype-preview { background: #eef1f6; }
+:root[data-ui-theme="light"] .prototype-toolbar {
+  border-bottom-color: #d7dce6;
+  background: #ffffff;
+  color: #172033;
+}
+:root[data-ui-theme="light"] .prototype-toolbar button {
+  border-color: #cbd2df;
+  background: #f7f8fb;
+  color: #172033;
+}
+:root[data-ui-theme="light"] .export-preview-pane-title { color: #667085; }
+
 :root[data-ui-theme="light"] button,
 :root[data-ui-theme="light"] select,
 :root[data-ui-theme="light"] input,
