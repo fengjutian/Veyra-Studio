@@ -60,6 +60,7 @@
 :root[data-ui-theme="light"] .inspector-foot { border-top-color: #d7dce6; }
 
 /* Inspector pages use component-level dark colors in the base stylesheet. */
+:root[data-ui-theme="light"] .settings-page > .inspector-section,
 :root[data-ui-theme="light"] .ai-settings-section details,
 :root[data-ui-theme="light"] .storage-project,
 :root[data-ui-theme="light"] .ai-variant-card,
@@ -88,6 +89,30 @@
   color: #172033;
 }
 :root[data-ui-theme="light"] .ai-settings-section details[open] summary { border-bottom-color: #d7dce6; }
+:root[data-ui-theme="light"] .settings-theme-option {
+  border-color: #cbd2df;
+  background: #ffffff;
+  color: #475467;
+}
+:root[data-ui-theme="light"] .settings-theme-option:hover:not(:disabled) {
+  border-color: #8b5cf6;
+  background: #f5f3ff;
+}
+:root[data-ui-theme="light"] .settings-theme-option.is-active {
+  border-color: #8b5cf6;
+  background: #ede9fe;
+  color: #5b21b6;
+}
+:root[data-ui-theme="light"] .settings-state {
+  border-color: #cbd2df;
+  background: #f7f8fb;
+  color: #667085;
+}
+:root[data-ui-theme="light"] .settings-state.is-ready {
+  border-color: #86c8a0;
+  background: #ecfdf3;
+  color: #18794e;
+}
 :root[data-ui-theme="light"] .ai-settings .field input,
 :root[data-ui-theme="light"] .ai-settings select,
 :root[data-ui-theme="light"] .token-bind-select {

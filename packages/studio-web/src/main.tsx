@@ -2655,6 +2655,7 @@ function App() {
       <div className="toolbar-group" role="group" aria-label="项目">
         <Tooltip label="新建项目"><button className="icon-only" aria-label="新建项目" disabled={busy} onClick={createProject}><Icon name="newProject" /></button></Tooltip>
         <Tooltip label="重命名项目"><button className="icon-only" aria-label="重命名项目" disabled={busy} onClick={renameProject}><Icon name="rename" /></button></Tooltip>
+        <Tooltip label="设置"><button className="icon-only" aria-label="设置" onClick={() => { setRightPanelOpen(true); setInspectorTab("settings"); }}><Icon name="settings" /></button></Tooltip>
       </div>
       <div className="toolbar-group" role="group" aria-label="导出">
         <select className="export-scope" aria-label="导出范围" disabled={busy} value={exportScope} title="导出范围" onChange={event => setExportScope(event.target.value as "page" | "selection")}><option value="page">导出：整页</option><option value="selection" disabled={!selectedIds.length}>导出：选区</option></select>
@@ -3298,12 +3299,6 @@ function App() {
               setPreview(undefined); setAiVariants([]);
             }}
           />}
-          <section className="inspector-section ai-settings-section">
-            <details>
-              <summary>模型与密钥设置 <span>{aiReady ? "已连接" : "需要配置"}</span></summary>
-              <AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
-            </details>
-          </section>
           <section className="inspector-section">
             <h2>自主运行</h2>
             <p className="empty-hint">按体检结论（设计 lint、对比度、导出诊断）自动多轮修复：体检 → 计划 → 审查 → 提交 → 再体检，直到没有待修项或触发停止条件。每轮都可撤销。</p>
@@ -3311,6 +3306,23 @@ function App() {
             {loopRunning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消运行</button>}
             {loopRounds.length > 0 && <div className="loop-log" aria-live="polite">{loopRounds.map(round => <div className="loop-round" key={round.round}><span className="loop-round-index">第 {round.round} 轮</span><span className="loop-round-summary">{round.summary}</span><span className="loop-round-meta">落地 {round.appliedCommands} 条命令 · 待修 {round.report.counts.actionable} → {round.after?.counts.actionable ?? "—"}</span>{round.note && <span className="loop-round-note">{round.note}</span>}</div>)}</div>}
             {loopSummary && <p className="loop-summary">{loopSummary}</p>}
+          </section>
+        </Tabs.Content>
+        <Tabs.Content value="settings" className="inspector-body settings-page">
+          <section className="inspector-section">
+            <h2>外观</h2>
+            <p className="empty-hint">界面主题只影响工作台，不修改画布内容或导出结果。</p>
+            <div className="settings-theme-options" role="radiogroup" aria-label="界面主题">
+              <button role="radio" aria-checked={uiTheme === "light"} className={`settings-theme-option${uiTheme === "light" ? " is-active" : ""}`} onClick={() => setUiTheme("light")}><Icon name="themeLight" />浅色</button>
+              <button role="radio" aria-checked={uiTheme === "dark"} className={`settings-theme-option${uiTheme === "dark" ? " is-active" : ""}`} onClick={() => setUiTheme("dark")}><Icon name="themeDark" />深色</button>
+            </div>
+          </section>
+          <section className="inspector-section settings-ai-section">
+            <div className="section-heading">
+              <h2>模型与密钥</h2>
+              <span className={`settings-state${aiReady ? " is-ready" : ""}`}>{aiReady ? "已连接" : "需要配置"}</span>
+            </div>
+            <AiSettingsPanel settings={aiSettings} active={aiSettingsComplete(aiSettings)} disabled={busy} onSave={saveAiSettings} onClear={resetAiSettings} />
           </section>
         </Tabs.Content>
       </Tabs.Root>

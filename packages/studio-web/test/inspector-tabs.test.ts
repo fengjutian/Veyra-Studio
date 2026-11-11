@@ -16,13 +16,14 @@ function input(overrides: Partial<InspectorTabInput> = {}): InspectorTabInput {
   };
 }
 
-test("分段固定为属性、导出、历史、数据、AI 五页", () => {
+test("分段固定为属性、导出、历史、数据、AI、设置六页", () => {
   assert.deepEqual(inspectorTabs(input()).map(tab => [tab.id, tab.label]), [
     ["properties", "属性"],
     ["export", "导出"],
     ["history", "历史"],
     ["data", "数据"],
     ["ai", "AI"],
+    ["settings", "设置"],
   ]);
 });
 
@@ -47,7 +48,7 @@ test("数据分段汇总资源与组件，AI 分段显示模型名或演示规�
 });
 
 test("只有需要处理的条目才带角标，0 不显示", () => {
-  assert.deepEqual(inspectorTabs(input()).map(tab => tab.badge), [undefined, undefined, undefined, undefined, undefined]);
+  assert.deepEqual(inspectorTabs(input()).map(tab => tab.badge), [undefined, undefined, undefined, undefined, undefined, undefined]);
   const tabs = inspectorTabs(input({ warningCount: 2, diagnosticCount: 4, missingAssetCount: 1 }));
   assert.equal(tabs[0]?.badge, 2);
   assert.equal(tabs[1]?.badge, 4);

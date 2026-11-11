@@ -1,4 +1,4 @@
-export type InspectorTabId = "properties" | "export" | "history" | "data" | "ai";
+export type InspectorTabId = "properties" | "export" | "history" | "data" | "ai" | "settings";
 
 export interface InspectorTabDefinition {
   id: InspectorTabId;
@@ -39,6 +39,7 @@ export function inspectorTabs(input: InspectorTabInput): InspectorTabDefinition[
     { id: "history", label: "历史", meta: `当前 r${input.revision}` },
     { id: "data", label: "数据", meta: `${input.assetCount} 资源 · ${input.componentCount} 组件`, badge: badge(input.missingAssetCount) },
     { id: "ai", label: "AI", meta: input.aiModel || "演示规划器" },
+    { id: "settings", label: "设置", meta: "偏好与服务" },
   ];
 }
 

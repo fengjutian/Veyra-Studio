@@ -61,6 +61,7 @@ import {
   RotateCcw,
   Scan,
   Search,
+  Settings,
   Moon,
   Sun,
   Shapes,
@@ -144,6 +145,7 @@ export const ICONS = {
   panelRight: PanelRight,
   themeDark: Moon,
   themeLight: Sun,
+  settings: Settings,
   prototypePlay: Play,
 
   // 通用
