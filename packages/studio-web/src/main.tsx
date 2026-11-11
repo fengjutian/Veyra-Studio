@@ -1319,7 +1319,7 @@ function App() {
     await execute([{ type: "page.delete", payload: { id: page.id } }]);
     switchPage(nextPageId);
   });
-  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask" | "overflow" | "position">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
+  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask" | "overflow" | "position" | "role">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
   /** 以某个场景点为锚点缩放，并同步滚动位置，保证锚点停在鼠标下面。 */

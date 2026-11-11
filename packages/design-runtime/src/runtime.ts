@@ -164,6 +164,9 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
           throw new CommandError(`Node position must be fixed or sticky, got ${String(position)}`);
         }
       }
+      if (command.payload.patch.role !== undefined && typeof command.payload.patch.role !== "string") {
+        throw new CommandError("Node role must be a string");
+      }
       if (command.payload.patch.mask !== undefined) {
         if (typeof command.payload.patch.mask !== "boolean") throw new CommandError("Mask flag must be a boolean");
         // 只有形状能当蒙版：文本/图片/容器的「轮廓」没有明确语义，放进来只会让裁剪结果不可解释。
@@ -173,6 +176,10 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
       }
       const previousLayout = structuredClone(node.layout);
       Object.assign(node, structuredClone(command.payload.patch));
+      // 空字符串表示清掉角色：角色是可选字段，删掉比留一个空串干净。
+      if (command.payload.patch.role !== undefined && !command.payload.patch.role.trim()) {
+        delete node.role;
+      }
       // 父级尺寸变化时，子节点按约束重排——和父级 patch 落在同一条命令里，所以是一次撤销。
       if (command.payload.patch.layout) {
         for (const change of applyConstraints(document, node, previousLayout, node.layout)) {
@@ -879,11 +886,42 @@ function nodeAtPath(document: DesignDocument, rootId: NodeId, path: number[]): N
 }
 
 /**
+ * 在一棵变体树里按**角色**找节点。
+ *
+ * 角色是「同一个东西」的稳定标识，所以两个变体结构不一样时也能对上。
+ * 同一个变体里出现**重复角色**时返回 undefined：这时候按角色映射会指错节点，
+ * 不如退回结构路径去迁移。
+ */
+function nodeByRole(document: DesignDocument, rootId: NodeId, role: string): NodeId | undefined {
+  let found: NodeId | undefined;
+  let ambiguous = false;
+  const walk = (id: NodeId): void => {
+    if (ambiguous) return;
+    const node = document.nodes[id];
+    if (!node) return;
+    if (node.role === role) {
+      if (found) {
+        ambiguous = true;
+        return;
+      }
+      found = id;
+    }
+    for (const childId of node.childIds) walk(childId);
+  };
+  walk(rootId);
+  return ambiguous ? undefined : found;
+}
+
+/**
  * 把实例切换到同一变体集里的另一个成员。
  *
- * 旧物化子树整体删除、按新组件重新物化；覆盖按**结构路径**迁移到新变体上——
- * 同一角色（例如按钮里的文字）即使节点 id 不同也能保留用户改过的内容。
- * 新变体结构不同、路径对不上时，那条覆盖会被丢弃。
+ * 旧物化子树整体删除、按新组件重新物化；覆盖迁移到新变体上，**角色优先、路径兜底**：
+ *
+ * - 设了角色的节点按角色找——两个变体结构不一样（多一层包裹、少一个兄弟节点）也能
+ *   把覆盖落到同一个角色上；同一个变体里角色重复时不按角色映射（会指错节点）。
+ * - 没设角色的节点按结构路径找——同一位置上的节点即使 id 不同也能保留用户改过的内容。
+ *
+ * 两条都对不上时，那条覆盖会被丢弃。
  */
 function switchComponentVariant(document: DesignDocument, payload: { id: NodeId; componentId: string }): void {
   const node = requireNode(document, payload.id);
@@ -930,8 +968,17 @@ function switchComponentVariant(document: DesignDocument, payload: { id: NodeId;
       keptOverrides[sourceId] = value;
       continue;
     }
-    // 变体是「复制」，节点 id 必然不同；但同一角色在子树里的结构路径相同，
-    // 因此覆盖按路径迁移，而不是整批丢掉。
+    // **角色优先**：同一个角色在两个变体里指的是「同一个东西」——哪怕结构不一样
+    // （多了一层包裹、少了某个兄弟节点），覆盖也应当落到同一个角色上。
+    const role = document.nodes[sourceId]?.role;
+    if (role) {
+      const byRole = nodeByRole(document, next.rootNodeId, role);
+      if (byRole && copies.has(byRole)) {
+        keptOverrides[byRole] = value;
+        continue;
+      }
+    }
+    // **路径兜底**：没设角色的节点照旧按结构路径迁移，而不是整批丢掉。
     const path = structuralPath(document, currentRootId, sourceId);
     if (!path) continue;
     const mapped = nodeAtPath(document, next.rootNodeId, path);
@@ -1554,7 +1601,7 @@ function createNode(document: DesignDocument, node: DesignNode, index?: number):
 }
 
 /** node.patch 允许出现的字段（与命令类型定义一致）。 */
-const NODE_PATCH_FIELDS = ["name", "visible", "locked", "layout", "appearance", "bindings", "slot", "mask", "maskFeather", "constraints", "overflow", "position"] as const;
+const NODE_PATCH_FIELDS = ["name", "visible", "locked", "layout", "appearance", "bindings", "slot", "mask", "maskFeather", "constraints", "overflow", "position", "role"] as const;
 
 /** text.patch 允许出现的字段。 */
 const TEXT_PATCH_FIELDS = ["text", "fontFamily", "fontSize", "lineHeight", "fontWeight", "fontStyle", "textAlign", "letterSpacing", "runs"] as const;

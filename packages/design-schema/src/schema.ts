@@ -287,6 +287,8 @@ const baseNodeShape = {
   locked: z.boolean(),
   layout: layoutSchema,
   appearance: appearanceSchema,
+  /** 角色：变体之间「同一个东西」的稳定标识；可选，旧文档没有它。 */
+  role: z.string().optional(),
   constraints: z.object({ horizontal: constraintAxisSchema, vertical: constraintAxisSchema }).optional(),
   bindings: z.object({
     fill: z.string().optional(),

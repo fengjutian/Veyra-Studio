@@ -357,6 +357,16 @@ export interface BaseNode {
   appearance: AppearanceSpec;
   bindings?: PropertyBindings;
   externalRefs?: ExternalReference[];
+  /**
+   * 角色：同一个组件集里，「这是同一个东西」的稳定标识。
+   *
+   * 变体之间本来是各自深拷贝的树，节点 id 必然不同，结构一动路径就对不上。
+   * 给了角色之后，切换变体时覆盖按**角色优先、路径兜底**迁移——两个变体结构不一样
+   * （多了一层包裹、少了某个子节点）也能把覆盖落到同一个角色上。
+   *
+   * 可选字段：没设角色的节点照旧按结构路径迁移，旧文档逐字不变。
+   */
+  role?: string;
   /** 父级尺寸变化时的行为；只在父级是绝对布局容器时生效。 */
   constraints?: Constraints;
   /** 作为组件插槽的 frame：实例可以往这里填充自己的内容。 */

@@ -13,7 +13,7 @@ export interface PropertyPanelProps {
   /** 父节点：约束只在绝对布局的容器里才有意义，所以面板需要知道父级。 */
   parent?: DesignNode;
   disabled?: boolean;
-  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "maskFeather" | "constraints" | "overflow" | "position">>): void;
+  onPatch(patch: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "mask" | "maskFeather" | "constraints" | "overflow" | "position" | "role">>): void;
   onPatchText(patch: TextPatch): void;
   /** 改段落样式（列表类型 / 缩进 / 段落缩进 / 悬挂 / 列表间距）；走独立命令，不经过 TextPatch。 */
   onSetParagraphStyle?(payload: { from: number; to: number; style: { listType?: ListType | "none"; indentDelta?: number; paragraphIndent?: number; hanging?: boolean; listSpacing?: number } }): void;
@@ -279,6 +279,22 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
           onChange={value => onPatch({ position: value === "scroll" ? undefined : (value as NodePosition) })}
         />
         <p className="field-hint">「固定」在原型预览里钉在视口上；「粘性」在滚动容器里滚到边缘就停住。</p>
+      </Section>
+
+      {/* 角色：同一组件集里「这是同一个东西」的稳定标识。切换变体时覆盖按角色迁移，
+          两个变体结构不一样也能对上。没设角色的节点照旧按结构路径迁移。 */}
+      <Section id="role" title="角色" defaultOpen={false}>
+        <label className="field">
+          <span className="field-label">角色</span>
+          <input
+            type="text"
+            value={node.role ?? ""}
+            disabled={disabled}
+            placeholder="例如 title / body"
+            onChange={event => onPatch({ role: event.target.value.trim() || undefined })}
+          />
+        </label>
+        <p className="field-hint">同一个组件集里给「同一个东西」起同一个角色名：切换变体时，覆盖按角色迁移，结构不一样也能对上。</p>
       </Section>
 
       {/* 约束只对绝对布局容器里的子节点有意义；在页面根或 stack 容器里显示只会误导。 */}

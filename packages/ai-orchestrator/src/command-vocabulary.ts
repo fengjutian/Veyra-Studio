@@ -49,7 +49,8 @@ export function isCommandType(value: unknown): value is CommandType {
 export function describeCommandVocabulary(): string {
   return [
     '- node.create: { node: <完整节点对象>, index?: number } —— 新节点的 childIds 必须为空',
-    '- node.patch: { id: "<节点 id>", patch: { name?, visible?, locked?, layout?, appearance?, overflow?, position? } } —— 整块替换，patch 里要写全被替换的字段；appearance 里颜色写在 fills（数组），没有 fill 字段',
+    '- node.patch: { id: "<节点 id>", patch: { name?, visible?, locked?, layout?, appearance?, overflow?, position?, role? } } —— 整块替换，patch 里要写全被替换的字段；appearance 里颜色写在 fills（数组），没有 fill 字段',
+    "- node.patch 的 role 是「角色」：同一组件集里给同一个东西起同一个名字（title / body / icon 这类），切换变体时覆盖按角色迁移，结构不一样也能对上；不属于组件的节点不用设。",
     "- node.patch 的 position 是原型滚动定位：\"fixed\"（预览时钉在视口上）或 \"sticky\"（在滚动容器里粘住）；不需要就省略。",
     '- node.patch 的 patch 里**没有** text / fontSize / fontFamily / fontWeight / color 字段——写进去会被当成未知字段直接拒掉；改文字内容与文字样式一律用 text.patch',
     "- text.patch: { id: \"<文本节点 id>\", patch: { text?, fontFamily?, fontSize?, lineHeight?, fontWeight?, fontStyle?, textAlign?, letterSpacing?, runs? } } —— runs 是段内样式区间 [{ from, to, style: { fontWeight?, fontStyle?, color? } }]，偏移是 UTF-16 下标",
