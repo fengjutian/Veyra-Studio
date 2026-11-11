@@ -6,6 +6,7 @@ import { GridTrackEditor as GridTrackVisualEditor } from "./grid-track-editor";
 import { GridAreaEditor } from "./grid-area-editor";
 import { reconcileGridAreasWithTracks } from "./grid-areas-model";
 import type { BooleanOperation } from "./boolean";
+import { CollapsibleSection } from "./ui/collapsible-section";
 
 export interface PropertyPanelProps {
   node: DesignNode;
@@ -141,7 +142,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
 
   return (
     <>
-      <Section title="布局">
+      <Section id="layout" title="布局">
         <Segmented
           label="模式"
           value={layout.mode}
@@ -282,7 +283,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
 
       {/* 约束只对绝对布局容器里的子节点有意义；在页面根或 stack 容器里显示只会误导。 */}
       {parent && parent.layout.mode === "absolute" && (
-        <Section title="约束">
+        <Section id="constraints" title="约束" defaultOpen={false}>
           <Segmented
             label="水平"
             value={node.constraints?.horizontal ?? "start"}
@@ -301,7 +302,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
         </Section>
       )}
 
-      <Section title="外观">
+      <Section id="appearance" title="外观">
         {/* 多层填充：数字按钮切换当前编辑的层，顺序即叠放顺序（1 在最底下）。 */}
         <div className="paint-layers">
           {paints.map((layer, index) => (
@@ -462,7 +463,7 @@ export function PropertyPanel({ node, parent, disabled, onPatch, onPatchText, on
         </Section>
       )}
       {node.type === "text" && (
-        <Section title="文字">
+        <Section id="typography" title="文字">
           <TextAreaField
             label="文本"
             value={node.text}
@@ -695,7 +696,8 @@ const fontWeightOptions = [
   { value: "700", label: "加粗" },
 ];
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ id, title, defaultOpen, children }: { id?: string; title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  if (id) return <CollapsibleSection id={id} title={title} defaultOpen={defaultOpen}>{children}</CollapsibleSection>;
   return (
     <>
       <h2>{title}</h2>

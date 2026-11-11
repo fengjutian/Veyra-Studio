@@ -21,6 +21,7 @@ import { arrayMove, resolveDropPosition } from "./layer-reorder";
 import { visibleLayerIds } from "./layer-search";
 import type { DesignDocument, DesignNode } from "@ufira/design-schema";
 import { Icon, type IconName } from "./icons";
+import { EmptyState } from "./ui/empty-state";
 
 export interface LayerTreeProps {
   document: DesignDocument;
@@ -138,7 +139,9 @@ export function LayerTree({ document, rootIds, selectedIds, onSelect, onReorder 
         </SortableContext>
         <DragOverlay>{draggingId && document.nodes[draggingId] ? <div className="layer layer-drag-overlay">{document.nodes[draggingId].name}</div> : null}</DragOverlay>
       </DndContext>
-      {rows.length === 0 && <p className="empty-hint">{query.trim() ? "没有匹配的图层" : "还没有图层。用顶部的工具创建 Frame、形状或文本。"}</p>}
+      {rows.length === 0 && (query.trim()
+        ? <EmptyState compact icon="search" title="没有匹配的图层" description="换个关键词，或清除搜索查看全部图层。" action={{ label: "清除搜索", icon: "close", onClick: () => setQuery("") }} />
+        : <EmptyState compact icon="layerOrder" title="还没有图层" description="使用顶部工具创建画框、形状或文字。" />)}
     </div>
   );
 }

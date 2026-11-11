@@ -1101,6 +1101,91 @@
   border-radius: 7px;
 }
 
+/* 属性分组：标题本身就是折叠控制，状态由组件写入本地存储。 */
+.property-section {
+  margin: 0 -2px;
+  border-bottom: 1px solid var(--workbench-border);
+}
+
+.property-section:first-child { margin-top: -4px; }
+.property-section:last-child { border-bottom: 0; }
+
+.property-section-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--workbench-text);
+  font-size: 12px;
+  font-weight: 650;
+  text-align: left;
+}
+
+.property-section-trigger:hover { background: transparent; color: var(--workbench-accent); }
+.property-section-trigger svg { flex: none; color: var(--workbench-dim); }
+.property-section-content { padding: 2px 0 12px; }
+.property-section-content[hidden] { display: none; }
+
+/* 页面、图层、资源、历史、组件和 AI 候选共用同一套空状态。 */
+.empty-state {
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  padding: 20px 14px;
+  border: 1px dashed var(--workbench-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--section-surface) 72%, transparent);
+  text-align: center;
+}
+
+.empty-state.is-compact { min-height: 112px; padding: 16px 12px; }
+
+.empty-state-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--workbench-accent-soft);
+  color: var(--workbench-accent);
+}
+
+.empty-state-title { color: var(--workbench-text); font-size: 12px; font-weight: 650; }
+
+.empty-state-description {
+  max-width: 250px;
+  margin: 0;
+  color: var(--workbench-muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.empty-state-action {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 3px;
+  padding: 6px 10px;
+  border-color: var(--workbench-accent);
+  background: var(--workbench-accent);
+  color: #fff;
+}
+
+.page-list > .empty-state { margin: 4px 0; }
+.layer-tree > .empty-state { margin-top: 4px; }
+.inspector-body > .empty-state { margin: 8px 0; }
+
 /* AI 工作区按任务、候选、提交三步组织；低频自主运行默认折叠。 */
 .ai-workspace-head {
   display: grid;

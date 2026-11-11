@@ -114,6 +114,7 @@ import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
 import { ToolbarMenu } from "./ui/toolbar-menu";
 import { WorkbenchFeedback } from "./ui/workbench-feedback";
+import { EmptyState } from "./ui/empty-state";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
 import { describePropertyOverride, parsePropertyOverride } from "./theme-properties";
 import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "./ai-vision";
@@ -2722,6 +2723,7 @@ function App() {
               {item && item.childIds.length > 0 && <span className="page-row-meta">{item.childIds.length}</span>}
             </button>;
           })}
+          {document.pageOrder.length === 0 && <EmptyState compact icon="page" title="还没有页面" description="新建一个页面，开始组织你的设计。" action={{ label: "新增页面", icon: "pageAdd", disabled: busy, onClick: createPage }} />}
         </div>
         <div className="page-size-control">
           <label>
@@ -3054,7 +3056,7 @@ function App() {
                   <button className="icon-only" aria-label={`和当前版本并排对比 ${row.label}`} disabled={busy} onClick={() => previewCompareVersion(row)}><Icon name="compareVersions" /></button>
                 </Tooltip>
               </div>)
-              : <p className="empty-hint">还没有可对比的历史版本。改动落盘之后，这里会列出可以并排对比的版本。</p>}</div>
+              : <EmptyState compact icon="versionHistory" title="还没有可对比版本" description="保存改动后，可在这里与当前版本并排比较。" />}</div>
           </section>
           <section className="inspector-section">
             <h2>导出诊断</h2>
@@ -3068,7 +3070,7 @@ function App() {
               ? versionRows.map(row => <div className="snapshot-row" key={row.revision}><span className="snapshot-label">{row.label}</span><span className="snapshot-time" title={row.updatedAt}>{formatSnapshotTime(row.updatedAt)}</span>{row.schemaVersion < CURRENT_SCHEMA_VERSION && <span className="snapshot-legacy">旧格式</span>}{row.current
                 ? <span className="snapshot-current">当前</span>
                 : <Tooltip label={`还原到 ${row.label}`}><button className="icon-only" aria-label={`还原到 ${row.label}`} disabled={busy} onClick={() => restoreVersion(row)}><Icon name="versionRestore" /></button></Tooltip>}</div>)
-              : <p className="empty-hint">还没有历史版本。改动落盘之后，这里会列出可以回滚到的版本。</p>}</div>
+              : <EmptyState compact icon="versionHistory" title="还没有历史版本" description="改动保存后，会在这里生成可回滚的版本。" />}</div>
           </section>
           <section className="inspector-section">
             <h2>操作历史</h2>
@@ -3078,7 +3080,7 @@ function App() {
             <h2>自动备份</h2>
             <div className="backup-list">{backups.length
               ? backups.map(row => <div className="backup-row" key={row.createdAt}><span className="backup-time">{formatSnapshotTime(row.createdAt)}</span><span className="backup-meta">r{row.revision} · {formatBytes(row.byteLength)}</span><Tooltip label="把这份备份下载成 JSON"><button className="icon-only" aria-label="下载备份" disabled={busy} onClick={() => downloadBackup(row)}><Icon name="exportJson" /></button></Tooltip><Tooltip label="还原到这份备份"><button className="icon-only" aria-label="还原备份" disabled={busy} onClick={() => restoreBackup(row)}><Icon name="versionRestore" /></button></Tooltip></div>)
-              : <p className="empty-hint">还没有自动备份。每次落盘后最多每 10 分钟保存一份，保留最近 3 份。</p>}</div>
+              : <EmptyState compact icon="versionHistory" title="还没有自动备份" description="保存后每 10 分钟最多生成一份，并保留最近 3 份。" />}</div>
           </section>
           {recovery && (
             <section className="inspector-section">
@@ -3243,7 +3245,7 @@ function App() {
             <div className="component-create"><input type="text" placeholder="组件名称" value={componentName} onChange={event => setComponentName(event.target.value)} onKeyDown={event => { if (event.key === "Enter") createComponentFromSelection(componentName); }} /><Tooltip label={selected?.type === "instance" ? "实例不能转为组件" : "将选中节点转为组件"}><button disabled={busy || !componentName.trim() || !selected || selectedIds.length !== 1 || selected.type === "instance"} onClick={() => createComponentFromSelection(componentName)}><Icon name="componentCreate" />创建</button></Tooltip></div>
             <div className="component-list">{componentSummaries.length
               ? componentSummaries.map(component => <div className="component-row" key={component.id}><span className="component-glyph"><Icon name="nodeComponent" size={12} /></span><span className="component-name" title={component.name}>{component.name}</span>{component.variantLabel && <span className="component-variant" title={component.variantLabel}>{component.variantLabel}</span>}<span className="component-count">{component.instanceCount}</span><Tooltip label="创建实例"><button className="icon-only" aria-label="创建实例" disabled={busy} onClick={() => instantiateComponent(component.id)}><Icon name="componentInstantiate" /></button></Tooltip><Tooltip label="创建变体"><button className="icon-only" aria-label="创建变体" disabled={busy} onClick={() => createComponentVariant(component.id)}><Icon name="componentVariant" /></button></Tooltip><Tooltip label="删除组件"><button className="icon-only" aria-label="删除组件" disabled={busy} onClick={() => removeComponent(component.id)}><Icon name="componentRemove" /></button></Tooltip></div>)
-              : <p className="empty-hint">还没有组件。选中一个节点，输入名称后点击「创建」。</p>}</div>
+              : <EmptyState compact icon="componentCreate" title="还没有组件" description="选中一个节点，在上方输入名称并创建组件。" />}</div>
           </section>
         </Tabs.Content>
         <Tabs.Content value="ai" className="inspector-body">
@@ -3317,7 +3319,7 @@ function App() {
             {planning && <div className="ai-batch-progress" aria-live="polite"><span style={{ width: `${Math.max(8, aiVariantProgress / aiVariantCount * 100)}%` }} /><strong>{aiVariantProgress}/{aiVariantCount}</strong><small>{aiVariantCount === 1 ? (streamText || "正在等待模型响应…") : `正在生成第 ${Math.min(aiVariantProgress + 1, aiVariantCount)} 个候选`}</small></div>}
             {aiFailure && !planning && <div className="ai-failure" role="alert"><strong>本次生成没有改动文档</strong><span>{aiFailure}</span><button disabled={busy || !aiReady} onClick={() => void generateAiPlan()}><Icon name="aiPlan" />重试</button></div>}
           </section>
-          {aiVariants.length > 0 && <AiVariantGallery
+          {aiVariants.length > 0 ? <AiVariantGallery
             jobs={aiVariants}
             selectedId={preview?.planId ? aiVariants.find(job => job.preview?.planId === preview.planId)?.id : undefined}
             currentPageId={page.id}
@@ -3335,7 +3337,7 @@ function App() {
               for (const variant of aiVariants) if (variant.preview) editor?.cancel(variant.preview.planId);
               setPreview(undefined); setAiVariants([]);
             }}
-          />}
+          /> : <EmptyState icon="aiPlan" title="还没有候选方案" description="描述要完成的设计任务，AI 会在隔离环境生成可审查的候选。" action={{ label: "生成候选", icon: "aiPlan", disabled: busy || planning || !prompt.trim() || !aiReady, onClick: () => void generateAiPlan() }} />}
           <section className="inspector-section ai-advanced-section">
             <details className="ai-advanced" open={loopRunning || loopRounds.length > 0}>
               <summary><span><Icon name="aiLoop" />高级：自主运行</span><small>多轮体检与修复</small></summary>

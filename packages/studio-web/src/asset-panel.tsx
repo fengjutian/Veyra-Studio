@@ -4,6 +4,7 @@ import { assetLabel, formatBytes } from "./asset-relink";
 import { assetOriginSummary } from "./asset-origin";
 import { Icon } from "./icons";
 import { Tooltip } from "./ui/tooltip";
+import { EmptyState } from "./ui/empty-state";
 
 export interface AssetPanelProps {
   usage: AssetUsage[];
@@ -23,7 +24,7 @@ export interface AssetPanelProps {
  * 清理掉。资源缺失时给出「重新关联」，未引用时给出「清理」，两者不会同时出现。
  */
 export function AssetPanel({ usage, missingIds, disabled, onRelink, onDelete, onEditOrigin }: AssetPanelProps) {
-  if (!usage.length) return <p className="empty-hint">还没有图片资源。用左侧「图片」按钮插入一张。</p>;
+  if (!usage.length) return <EmptyState compact icon="nodeImage" title="还没有图片资源" description="从顶部工具栏插入图片后，资源会集中显示在这里。" />;
   const rows = [...usage].sort((left, right) => assetLabel(left.asset).localeCompare(assetLabel(right.asset)));
   return (
     <div className="asset-list">
