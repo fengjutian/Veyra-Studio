@@ -155,6 +155,12 @@ function applyCommand(document: DesignDocument, command: DesignCommand): void {
           throw new CommandError(`Node ${node.id} of type ${node.type} cannot have an overflow mode`);
         }
       }
+      if (command.payload.patch.position !== undefined) {
+        const position = command.payload.patch.position;
+        if (position !== "fixed" && position !== "sticky") {
+          throw new CommandError(`Node position must be fixed or sticky, got ${String(position)}`);
+        }
+      }
       if (command.payload.patch.mask !== undefined) {
         if (typeof command.payload.patch.mask !== "boolean") throw new CommandError("Mask flag must be a boolean");
         // 只有形状能当蒙版：文本/图片/容器的「轮廓」没有明确语义，放进来只会让裁剪结果不可解释。
@@ -1456,7 +1462,7 @@ function createNode(document: DesignDocument, node: DesignNode, index?: number):
 }
 
 /** node.patch 允许出现的字段（与命令类型定义一致）。 */
-const NODE_PATCH_FIELDS = ["name", "visible", "locked", "layout", "appearance", "bindings", "slot", "mask", "constraints", "overflow"] as const;
+const NODE_PATCH_FIELDS = ["name", "visible", "locked", "layout", "appearance", "bindings", "slot", "mask", "constraints", "overflow", "position"] as const;
 
 /** text.patch 允许出现的字段。 */
 const TEXT_PATCH_FIELDS = ["text", "fontFamily", "fontSize", "lineHeight", "fontWeight", "fontStyle", "textAlign", "letterSpacing", "runs"] as const;

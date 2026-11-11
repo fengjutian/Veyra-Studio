@@ -274,11 +274,17 @@ export function paintPathAnchors(
  */
 export function paintPathEdit(
   context: CanvasRenderingContext2D,
-  edit: { anchors: Array<{ x: number; y: number }>; handles: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>; selected: number | null },
+  edit: {
+    anchors: Array<{ x: number; y: number }>;
+    handles: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>;
+    selected: number[];
+    anchorTypes?: Array<"corner" | "smooth" | "cusp">;
+  },
   options: { color?: string; zoom?: number } = {},
 ): void {
   const zoom = options.zoom && options.zoom > 0 ? options.zoom : 1;
   const color = options.color ?? "#a78bfa";
+  const selected = new Set(edit.selected);
   context.save();
 
   context.strokeStyle = color;
@@ -301,11 +307,25 @@ export function paintPathEdit(
   for (const [index, anchor] of edit.anchors.entries()) {
     const x = anchor.x - size / 2;
     const y = anchor.y - size / 2;
-    context.fillStyle = index === edit.selected ? color : "#ffffff";
-    context.fillRect(x, y, size, size);
+    context.fillStyle = selected.has(index) ? color : "#ffffff";
+    // 角点是方块、平滑点是圆、尖角是菱形——三种类型一眼能分出来。
+    const type = edit.anchorTypes?.[index] ?? "corner";
+    context.beginPath();
+    if (type === "smooth") {
+      context.arc(anchor.x, anchor.y, size / 2, 0, Math.PI * 2);
+    } else if (type === "cusp") {
+      context.moveTo(anchor.x, y);
+      context.lineTo(x + size, anchor.y);
+      context.lineTo(anchor.x, y + size);
+      context.lineTo(x, anchor.y);
+      context.closePath();
+    } else {
+      context.rect(x, y, size, size);
+    }
+    context.fill();
     context.strokeStyle = color;
     context.lineWidth = 1.5 / zoom;
-    context.strokeRect(x, y, size, size);
+    context.stroke();
   }
   context.restore();
 }

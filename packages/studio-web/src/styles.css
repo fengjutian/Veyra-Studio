@@ -298,6 +298,10 @@ button.icon-only{padding:5px;min-width:26px}
 .prototype-layer{position:absolute;inset:0}
 .prototype-layer canvas{display:block}
 .prototype-backdrop{position:absolute;inset:0;background:rgba(15,23,42,.35);pointer-events:none}
+.prototype-scrollbar{position:absolute;pointer-events:none;border-radius:4px;background:rgba(15,23,42,.08)}
+.prototype-scrollbar-thumb{position:absolute;pointer-events:auto;border-radius:4px;background:rgba(15,23,42,.35);cursor:grab}
+.prototype-scrollbar-thumb:hover{background:rgba(15,23,42,.5)}
+.prototype-scrollbar-thumb:active{cursor:grabbing}
 /* 动画只吃进入/退出层的 transform/opacity，时长与缓动由内联 style 提供 */
 .proto-anim{animation-fill-mode:both;animation-duration:300ms;animation-timing-function:ease}
 .proto-fade-in{animation-name:proto-fade-in}

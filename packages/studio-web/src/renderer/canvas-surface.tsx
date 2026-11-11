@@ -51,14 +51,16 @@ export interface CanvasSurfaceProps {
   /** 路径编辑的锚点、手柄与当前选中项（绝对场景坐标）。 */
   editAnchors?: Array<{ x: number; y: number }>;
   editHandles?: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>;
-  editSelected?: number | null;
+  editSelected?: number[];
+  /** 每个锚点的类型（角点 / 平滑点 / 尖角），画布上据此区分形状。 */
+  editAnchorTypes?: Array<"corner" | "smooth" | "cusp">;
   /** 拖动时的对齐辅助线。 */
   guides?: SnapGuide[];
   /** 画布降级提示（无法合成、被跨域资源污染等）。 */
   onWarning?(message: string): void;
 }
 
-export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, rotationOverride, showRotateHandle, pathOverride, editAnchors, editHandles, editSelected, guides, onWarning }: CanvasSurfaceProps) {
+export function CanvasSurface({ repository, projectId, document, pageId, boxes, width, height, zoom, viewport, selection, previewBoxes, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, rotationOverride, showRotateHandle, pathOverride, editAnchors, editHandles, editSelected, editAnchorTypes, guides, onWarning }: CanvasSurfaceProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<SceneRenderer | undefined>(undefined);
   const [images, setImages] = useState<Map<string, CanvasImageSource>>(() => new Map());
@@ -123,11 +125,11 @@ export function CanvasSurface({ repository, projectId, document, pageId, boxes, 
             : selectionBounds(rotatedAabbBoxes(paintedScene, selection));
           if (bounds) paintSelectionOverlay(context, bounds, { zoom, rotation: radians, showRotateHandle });
         }
-        if (editAnchors?.length) paintPathEdit(context, { anchors: editAnchors, handles: editHandles ?? [], selected: editSelected ?? null }, { zoom });
+        if (editAnchors?.length) paintPathEdit(context, { anchors: editAnchors, handles: editHandles ?? [], selected: editSelected ?? [], ...(editAnchorTypes ? { anchorTypes: editAnchorTypes } : {}) }, { zoom });
         if (guides?.length) paintSnapGuides(context, guides, { width, height }, { zoom });
       },
     });
-  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, editAnchors, editHandles, editSelected, guides, onWarning]);
+  }, [paintedScene, zoom, images, width, height, selection, marquee, drawRect, drawShape, penPath, penAnchors, penClosing, editAnchors, editHandles, editSelected, editAnchorTypes, guides, onWarning]);
 
   return <canvas ref={canvasRef} className="canvas-surface" aria-hidden="true" />;
 }

@@ -115,11 +115,13 @@ import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSepara
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
 import { describePropertyOverride, parsePropertyOverride } from "./theme-properties";
 import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "./ai-vision";
+import { applyUiTheme, readUiTheme, writeUiTheme, type UiTheme } from "./ui-theme";
 import { AiSettingsPanel } from "./ai-settings-panel";
 import { AiVariantGallery, type AiVariantJob } from "./ai-variant-gallery";
 import "./styles.css";
 import "./workbench.css";
 import "./renderer/rich-text-editor.css";
+import "./ui-theme.css";
 
 const PROJECT_ID = "studio:local";
 
@@ -180,6 +182,11 @@ function App() {
   const [panning, setPanning] = useState(false);
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiTheme());
+  useEffect(() => {
+    applyUiTheme(uiTheme);
+    writeUiTheme(uiTheme);
+  }, [uiTheme]);
   const [rightPanelWidth, setRightPanelWidth] = useState(() => defaultInspectorWidth(window.innerWidth));
   // 右侧栏当前分段。原来是属性、导出、历史、存储、AI 全塞在一条长滚动列里。
   const [inspectorTab, setInspectorTab] = useState<InspectorTabId>("properties");
@@ -1274,7 +1281,7 @@ function App() {
     await execute([{ type: "page.delete", payload: { id: page.id } }]);
     switchPage(nextPageId);
   });
-  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask" | "overflow">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
+  const patchNode = (id: string, patchValue: Partial<Pick<DesignNode, "name" | "visible" | "locked" | "layout" | "appearance" | "bindings" | "slot" | "mask" | "overflow" | "position">>) => void run(() => execute([{ type: "node.patch", payload: { id, patch: patchValue } }]));
   const canvasPointOf = (event: { clientX: number; clientY: number }) =>
     pointFromEvent(canvas?.getBoundingClientRect() ?? { left: 0, top: 0 }, event.clientX, event.clientY, zoom);
   /**
@@ -1354,7 +1361,7 @@ function App() {
     });
     patchLayouts(local);
   };
-  const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints" | "overflow">>) => selected && patchNode(selected.id, patchValue);
+  const patch = (patchValue: Partial<Pick<DesignNode, "name" | "layout" | "appearance" | "mask" | "constraints" | "overflow" | "position">>) => selected && patchNode(selected.id, patchValue);
   const patchTextOf = (id: string, patchValue: TextPatch) => void run(() => execute([{ type: "text.patch", payload: { id, patch: patchValue } }]));
   const patchText = (patchValue: TextPatch) => selected?.type === "text" && patchTextOf(selected.id, patchValue);
   // 段落样式走独立命令：它是带区间语义的结构，不能混进 text.patch。
@@ -2612,6 +2619,16 @@ function App() {
           <Tooltip label={leftPanelOpen ? "收起图层面板" : "展开图层面板"}><button className="icon-only" aria-label="图层面板" aria-pressed={leftPanelOpen} onClick={() => setLeftPanelOpen(open => !open)}><Icon name="panelLeft" /></button></Tooltip>
           <Tooltip label={rightPanelOpen ? "收起右侧面板" : "展开右侧面板"}><button className="icon-only" aria-label="右侧面板" aria-pressed={rightPanelOpen} onClick={() => setRightPanelOpen(open => !open)}><Icon name="panelRight" /></button></Tooltip>
         </div>
+        <Tooltip label={uiTheme === "dark" ? "切换到浅色主题" : "切换到深色主题"}>
+          <button
+            className="icon-only ui-theme-toggle"
+            aria-label={uiTheme === "dark" ? "切换到浅色主题" : "切换到深色主题"}
+            aria-pressed={uiTheme === "light"}
+            onClick={() => setUiTheme(theme => theme === "dark" ? "light" : "dark")}
+          >
+            <Icon name={uiTheme === "dark" ? "themeLight" : "themeDark"} />
+          </button>
+        </Tooltip>
       </div>
       <div className="topbar-center">
         <div className="toolbar-group canvas-tools" role="group" aria-label="画布工具">
@@ -2749,7 +2766,7 @@ function App() {
                 <span className="canvas-frame-size">{activePageSize.width} × {activePageSize.height}</span>
               </div>
               <div ref={setCanvas} className={`canvas${panMode ? " pan-mode" : ""} tool-${tool}${canvasDrag.hoverRotate && tool === "select" ? " rotate-hover" : ""}${pathEditId && pathEdit.hoverSegment ? " segment-hover" : ""}`} style={{ zoom }} {...(tool === "pen" ? pen.handlers : pathEditId ? pathEdit.handlers : canvasDrag.handlers)} onClick={selectFromCanvas} onDoubleClick={event => { if (tool === "pen") { pen.finish(); return; } handleCanvasDoubleClick(event); }}>
-                <CanvasSurface repository={repository} projectId={document.id} document={themedDocument ?? document} pageId={page.id} boxes={canvasLayout.boxes} width={activePageSize.width} height={activePageSize.height} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
+                <CanvasSurface repository={repository} projectId={document.id} document={themedDocument ?? document} pageId={page.id} boxes={canvasLayout.boxes} width={activePageSize.width} height={activePageSize.height} zoom={zoom} viewport={canvasViewport.width > 0 ? canvasViewport : undefined} selection={selectedIds} previewBoxes={{ ...canvasDrag.previewBoxes, ...constraintPreview }} marquee={canvasDrag.marquee} drawRect={canvasDrag.drawRect} drawShape={isDrawTool(tool) ? tool : undefined} penPath={pen.previewPath} penAnchors={pen.previewAnchors} penClosing={pen.previewClosing} rotationOverride={canvasDrag.previewRotation} showRotateHandle={selectedIds.length === 1 && !pathEditId} pathOverride={pathEditTarget && pathEdit.previewCommands.length ? { id: pathEditTarget.id, commands: normalizePath(pathEdit.previewCommands, pathEditTarget.box) } : undefined} editAnchors={pathEditId ? pathEdit.anchors : undefined} editHandles={pathEditId ? pathEdit.handles : undefined} editSelected={pathEdit.selected} editAnchorTypes={pathEdit.anchorTypes} guides={canvasDrag.guides} onWarning={setMessage} />{canvasEditingId && document?.nodes[canvasEditingId]?.type === "text" && canvasLayout.boxes[canvasEditingId] ? (<TextEditOverlay key={canvasEditingId} node={applyTypographyToken(document, document.nodes[canvasEditingId]!)} box={canvasLayout.boxes[canvasEditingId]!} onCommit={text => { patchTextOf(canvasEditingId, { text }); setCanvasEditingId(null); }} onCancel={() => setCanvasEditingId(null)} />) : null}<CanvasA11yLayer document={document} pageId={page.id} selectedIds={selectedIds} onSelect={setSelectedIds} onDelete={id => { const node = document.nodes[id]; if (!node) return; const targetIds = deletableRoots([{ id, locked: Boolean(node.locked) }]); if (!targetIds.length) { setMessage("选中的对象被锁定了，先解锁再删除"); return; } void run(async () => { await execute(targetIds.map(targetId => ({ type: "node.delete" as const, payload: { id: targetId } }))); setSelectedIds(current => current.filter(selectedId => selectedId !== id)); }); }} />
               </div>
               {multiSelectionBounds && !panMode ? <div className="selection-toolbar" role="toolbar" aria-label="对齐与分布" style={{ left: (multiSelectionBounds.x + multiSelectionBounds.width / 2) * zoom, top: multiToolbarTop }}>
                 <Tooltip label="左对齐"><button className="icon-only" aria-label="左对齐" disabled={busy || !canArrange} onClick={() => arrangeSelection("left")}><Icon name="alignLeft" /></button></Tooltip>

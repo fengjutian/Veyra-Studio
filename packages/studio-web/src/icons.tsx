@@ -61,6 +61,8 @@ import {
   RotateCcw,
   Scan,
   Search,
+  Moon,
+  Sun,
   Shapes,
   Shuffle,
   Slash,
@@ -140,6 +142,8 @@ export const ICONS = {
   // 面板开合
   panelLeft: PanelLeft,
   panelRight: PanelRight,
+  themeDark: Moon,
+  themeLight: Sun,
   prototypePlay: Play,
 
   // 通用

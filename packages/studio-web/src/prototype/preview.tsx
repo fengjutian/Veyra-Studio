@@ -7,8 +7,9 @@ import { createBrowserTextMeasurer } from "../browser-text-measurer";
 import { hitTestStack } from "../renderer/hit-test";
 import type { SceneNode } from "../renderer/scene";
 import { PreviewLayer } from "./preview-layer";
-import { applyScrollToScene, buildTranslatedScene, computeScrollMax, scrollHostsInSubtree, type ScrollOffset } from "./scene-build";
+import { applyScrollToScene, buildTranslatedScene, computeScrollMax, scrollHostsInSubtree, scrollbarBars, type ScrollOffset, type ScrollbarBar } from "./scene-build";
 import { overlayOffset } from "./overlay-position";
+import { decayVelocity, inertiaFinished, inertiaStep } from "./inertia";
 import {
   clampScroll,
   dispatchPrototype,
@@ -48,6 +49,48 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
     stateRef.current = result.state;
     setState(result.state);
   }, [document]);
+
+  /** 惯性滚动的当前状态：速度、在哪个宿主上、还能滚多远。 */
+  const inertiaRef = useRef<{ hostId: NodeId; velocity: { x: number; y: number }; max: ScrollOffset; frame: number | null } | undefined>(undefined);
+
+  const stopInertia = useCallback(() => {
+    const current = inertiaRef.current;
+    if (current?.frame !== undefined && current.frame !== null) cancelAnimationFrame(current.frame);
+    inertiaRef.current = undefined;
+  }, []);
+
+  /**
+   * 滚轮停手后继续滑一段。
+   *
+   * 每帧按衰减系数把速度乘小，补滚一帧；撞到边界（偏移没变）就立刻停——
+   * 否则会一直顶着边界磨。
+   */
+  const startInertia = useCallback((hostId: NodeId, velocity: { x: number; y: number }, max: ScrollOffset) => {
+    stopInertia();
+    const state = { hostId, velocity, max, frame: null as number | null };
+    const tick = () => {
+      const current = inertiaRef.current;
+      if (!current || current.hostId !== hostId) return;
+      if (inertiaFinished(current.velocity)) {
+        inertiaRef.current = undefined;
+        return;
+      }
+      const before = stateRef.current.scroll[hostId]?.y ?? 0;
+      const step = inertiaStep(current.velocity);
+      dispatch({ kind: "scroll", hostId, deltaX: step.x, deltaY: step.y, maxX: current.max.x, maxY: current.max.y });
+      const after = stateRef.current.scroll[hostId]?.y ?? 0;
+      if (after === before) {
+        inertiaRef.current = undefined;
+        return;
+      }
+      current.velocity = decayVelocity(current.velocity);
+      current.frame = requestAnimationFrame(tick);
+    };
+    inertiaRef.current = state;
+    state.frame = requestAnimationFrame(tick);
+  }, [dispatch, stopInertia]);
+
+  useEffect(() => stopInertia, [stopInertia]);
 
   const measurer = useMemo(() => createBrowserTextMeasurer(), []);
   const pages = useMemo(() => {
@@ -109,7 +152,7 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
     const pageId = findPageId(document, nodeId);
     const boxes = pageId ? boxesByPage[pageId] ?? {} : {};
     const scene = buildTranslatedScene(document, nodeId, boxes, -box.x, -box.y);
-    return scene ? applyScrollToScene(scene, scrollOffsets) : undefined;
+    return scene ? applyScrollToScene(scene, scrollOffsets, document, boxes) : undefined;
   }, [document, boxOf, boxesByPage, scrollOffsets]);
 
   const previous = useMemo(() => screenScene(state.previousScreenId), [screenScene, state.previousScreenId]);
@@ -140,10 +183,49 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
     const scene = buildTranslatedScene(document, overlay.nodeId, boxes, dx, dy);
     return {
       id: overlay.nodeId,
-      scene: scene ? applyScrollToScene(scene, scrollOffsets) : undefined,
+      scene: scene ? applyScrollToScene(scene, scrollOffsets, document, boxes) : undefined,
       dim: overlay.interaction.backgroundOverlay !== false,
     };
   }).filter((overlay): overlay is { id: string; scene: NonNullable<ReturnType<typeof buildTranslatedScene>>; dim: boolean } => Boolean(overlay?.scene)), [state.overlays, document, boxOf, boxesByPage, screenOrigin, scrollOffsets]);
+
+  /** 一屏里所有能滚的宿主，各画一条滚动条；装得下的容器不画。 */
+  const scrollbars = useMemo(() => {
+    const result: ScrollbarBar[] = [];
+    if (screen) result.push(...scrollbarBars(screen, scrollOffsets, document, boxesFor(state.screenId)));
+    for (const overlay of overlays) {
+      result.push(...scrollbarBars(overlay.scene, scrollOffsets, document, boxesFor(overlay.id)));
+    }
+    return result;
+  }, [screen, overlays, scrollOffsets, document, boxesFor, state.screenId]);
+
+  /**
+   * 拖动滚动条的滑块：像素位移换算成滚动距离。
+   *
+   * 滑块每移动 1px 内容滚多少，由 `thumbPerScroll` 给出（可视长度与内容长度的比）。
+   */
+  const startScrollbarDrag = (event: ReactPointerEvent<HTMLDivElement>, bar: ScrollbarBar) => {
+    // 滚动条盖在画布上，点它不该顺手触发下面那层的点击。
+    event.preventDefault();
+    event.stopPropagation();
+    if (bar.thumbPerScroll <= 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const max = computeScrollMax(document, boxesFor(bar.hostId), bar.hostId);
+    const onMove = (move: PointerEvent) => {
+      const dx = move.clientX - startX;
+      const dy = move.clientY - startY;
+      const delta = bar.orientation === "vertical"
+        ? { x: 0, y: dy / bar.thumbPerScroll }
+        : { x: dx / bar.thumbPerScroll, y: 0 };
+      dispatch({ kind: "scroll", hostId: bar.hostId, deltaX: delta.x, deltaY: delta.y, maxX: max.x, maxY: max.y });
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
 
   /** 滚轮命中的滚动宿主：命中路径里最深、且内容真能滚的那个。 */
   const scrollHostAt = useCallback((clientX: number, clientY: number): NodeId | undefined => {
@@ -171,6 +253,8 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
    *
    * 用**非被动**监听器接：React 的 `onWheel` 在根容器上是被动监听，
    * `preventDefault()` 不生效，浏览器会把外层预览区一起滚走。
+   *
+   * 滚完还会**惯性**滑一段：滚轮停手不等于内容立刻停住。
    */
   useEffect(() => {
     const stage = stageRef.current;
@@ -182,6 +266,7 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
       if (max.x <= 0 && max.y <= 0) return;
       event.preventDefault();
       dispatch({ kind: "scroll", hostId: host, deltaX: event.deltaX, deltaY: event.deltaY, maxX: max.x, maxY: max.y });
+      startInertia(host, { x: event.deltaX, y: event.deltaY }, max);
     };
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
@@ -297,6 +382,24 @@ export function PrototypePreview({ document, repository, projectId, startScreenI
           {overlays.map(overlay => (
             <div key={overlay.id} className="prototype-layer prototype-overlay">
               <PreviewLayer document={document} repository={repository} projectId={projectId} scene={overlay.scene} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} transparent />
+            </div>
+          ))}
+          {scrollbars.map(bar => (
+            <div
+              key={`${bar.hostId}-${bar.orientation}`}
+              className="prototype-scrollbar"
+              style={{ left: bar.track.x, top: bar.track.y, width: bar.track.width, height: bar.track.height }}
+            >
+              <div
+                className="prototype-scrollbar-thumb"
+                style={{
+                  left: bar.thumb.x - bar.track.x,
+                  top: bar.thumb.y - bar.track.y,
+                  width: bar.thumb.width,
+                  height: bar.thumb.height,
+                }}
+                onPointerDown={event => startScrollbarDrag(event, bar)}
+              />
             </div>
           ))}
         </div>

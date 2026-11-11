@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { PathCommand } from "@ufira/design-schema";
 import {
+  anchorType,
   anchorsFromPath,
   commandsFromAnchors,
   handlesOf,
   hitTestAnchor,
   hitTestHandle,
   moveAnchor,
+  moveAnchors,
   moveHandle,
   removeAnchor,
+  removeAnchors,
+  snapAnchorPoint,
 } from "../src/path-edit";
 
 /**
@@ -107,4 +111,79 @@ test("deleting a middle anchor reconnects its neighbours", () => {
   const result = removeAnchor(anchors, 1, false)!;
   assert.deepEqual(result.map(anchor => anchor.x), [0, 20, 30]);
   assert.equal(commandsFromAnchors(result, false).length, 3);
+});
+
+// —— 多选锚点 ——
+
+test("多选移动：整组一起平移，手柄跟着各自的锚点走", () => {
+  const anchors = anchorsFromPath([M(0, 0), C(2, 4, 8, 4, 10, 0), L(10, 10)]);
+  const moved = moveAnchors(anchors, [0, 1], { x: 5, y: -3 });
+  assert.deepEqual(moved[0], { x: 5, y: -3, handleOut: { x: 7, y: 1 } });
+  assert.deepEqual(moved[1], { x: 15, y: -3, handleIn: { x: 13, y: 1 } });
+  // 没被选中的锚点原地不动。
+  assert.deepEqual(moved[2], { x: 10, y: 10 });
+});
+
+test("多选移动：位移为零就原样返回", () => {
+  const anchors = anchorsFromPath([M(0, 0), L(10, 0)]);
+  assert.deepEqual(moveAnchors(anchors, [0], { x: 0, y: 0 }), anchors);
+});
+
+test("多选删除：一次删掉整组，并守住最少的锚点数", () => {
+  const anchors = anchorsFromPath([M(0, 0), L(10, 0), L(20, 0), L(30, 0)]);
+  const result = removeAnchors(anchors, [0, 2], false)!;
+  assert.deepEqual(result.map(anchor => anchor.x), [10, 30]);
+  // 删到不够点数就没有删除入口。
+  assert.equal(removeAnchors(anchors.slice(0, 3), [0, 1], false), undefined);
+  assert.equal(removeAnchors(anchors, [], false), undefined);
+});
+
+// —— 锚点吸附 ——
+
+test("锚点吸附：够近就吸到最近的候选点上", () => {
+  const candidates = [{ x: 100, y: 50 }, { x: 300, y: 50 }];
+  assert.deepEqual(snapAnchorPoint({ x: 103, y: 52 }, candidates, 8), { x: 100, y: 50 });
+  // 太远就不吸。
+  assert.equal(snapAnchorPoint({ x: 120, y: 50 }, candidates, 8), undefined);
+  // 正好在阈值上算命中。
+  assert.deepEqual(snapAnchorPoint({ x: 108, y: 50 }, candidates, 8), { x: 100, y: 50 });
+});
+
+// —— 尖角：手柄各自独立 ——
+
+test("锚点类型：没有手柄是角点，手柄互为镜像是平滑点", () => {
+  assert.equal(anchorType({ x: 0, y: 0 }), "corner");
+  assert.equal(anchorType({ x: 0, y: 0, handleIn: { x: -10, y: 0 }, handleOut: { x: 10, y: 0 } }), "smooth");
+});
+
+test("锚点类型：手柄不互为镜像就是尖角", () => {
+  // 方向相反但长度不同：不是镜像关系。
+  assert.equal(anchorType({ x: 0, y: 0, handleIn: { x: -10, y: 0 }, handleOut: { x: 6, y: 0 } }), "cusp");
+  // 长度相同但不共线。
+  assert.equal(anchorType({ x: 0, y: 0, handleIn: { x: -10, y: 0 }, handleOut: { x: 0, y: 10 } }), "cusp");
+  // 只有一侧手柄（开放路径的首尾）：没有镜像关系可言。
+  assert.equal(anchorType({ x: 0, y: 0, handleOut: { x: 10, y: 0 } }), "cusp");
+});
+
+test("尖角的手柄不再被镜像回去：拖一边另一边不动", () => {
+  const cusp = { x: 0, y: 0, handleIn: { x: -10, y: 0 }, handleOut: { x: 6, y: 0 } };
+  const moved = moveHandle([cusp], { anchorIndex: 0, role: "out" }, { x: 20, y: 0 }, true);
+  assert.deepEqual(moved[0]?.handleOut, { x: 20, y: 0 });
+  // 对侧手柄原地不动——这正是「独立」的含义。
+  assert.deepEqual(moved[0]?.handleIn, { x: -10, y: 0 });
+  assert.equal(anchorType(moved[0]!), "cusp");
+});
+
+test("平滑点拖手柄仍然镜像对侧", () => {
+  const smooth = { x: 0, y: 0, handleIn: { x: -10, y: 0 }, handleOut: { x: 10, y: 0 } };
+  const moved = moveHandle([smooth], { anchorIndex: 0, role: "out" }, { x: 20, y: 0 }, true);
+  assert.deepEqual(moved[0]?.handleIn, { x: -20, y: 0 });
+  assert.equal(anchorType(moved[0]!), "smooth");
+});
+
+test("Alt 拖平滑点的手柄会打破镜像，锚点变成尖角", () => {
+  const smooth = { x: 0, y: 0, handleIn: { x: -10, y: 0 }, handleOut: { x: 10, y: 0 } };
+  const moved = moveHandle([smooth], { anchorIndex: 0, role: "out" }, { x: 20, y: 5 }, false);
+  assert.deepEqual(moved[0]?.handleIn, { x: -10, y: 0 });
+  assert.equal(anchorType(moved[0]!), "cusp");
 });

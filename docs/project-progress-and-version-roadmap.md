@@ -267,7 +267,8 @@ AI 原型：
 - 线段插点（P3.4）：编辑态点线段即插点并顺势拖动；曲线用 de Casteljau 切分，形状不变，
   直线段不生成控制点。
 - 锚点类型（P3.5）：双击锚点切换角点/平滑点，不新增字段；切线取前后邻居连线、长度取 1/3，
-  切换即时提交。尚未实现：多选锚点、锚点吸附、带独立手柄的尖角；
+  切换即时提交。**多选锚点、锚点吸附与带独立手柄的尖角已实现**（2026-11-11）：尖角由几何推断
+  （两侧手柄不互为镜像即尖角），不新增文档字段；
 - 布尔组（P4.1，改为保留运算树）：新增 `boolean` 节点类型，文档存 children + operation，
   几何由 `design-schema` 读取时计算（画布/命中/导出共用）；命令 `boolean.create` /
   `setOperation` / `release`，`node.delete` 保护只剩一个操作数的情况。
@@ -319,8 +320,8 @@ AI 原型：
   mouse-leave 离开触发、after-delay 计时器、屏幕历史与 prev-screen、
   overlay 定位/遮罩/点外部关闭、dissolve/slide/push 动画（DOM 层 CSS keyframes）。
   规格见 `prototype-runtime.md`。**已实现**：`preserveScroll` 与原型内滚动容器
-  （`overflow` 字段 + 非被动滚轮监听）；仍未实现：固定元素（sticky / fixed）、
-  滚动条 UI 与惯性滚动；
+  （`overflow` 字段 + 非被动滚轮监听）；**固定元素、滚动条 UI 与惯性滚动已实现**（2026-11-11，
+  节点字段 `position` + 原型运行时的滚动条与速度衰减）；
 - 画布跨容器拖拽与嵌套编组移动（2026-11-09）：`studio-web/src/canvas-reparent.ts`
   集中判定「拖放落到哪个容器、能不能落」——落点容器用**几何包含**找（不是命中
   测试：被拖节点会跟着指针走，命中测试只会命中自己），规则是：不拖进自己的

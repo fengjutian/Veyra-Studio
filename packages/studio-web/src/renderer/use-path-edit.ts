@@ -9,11 +9,14 @@ import {
   hitTestAnchor,
   hitTestHandle,
   insertAnchor,
-  moveAnchor,
+  moveAnchors,
   moveHandle,
   pathIsClosed,
-  removeAnchor,
+  removeAnchors,
+  snapAnchorPoint,
   toggleAnchorType,
+  anchorType,
+  type AnchorType,
   type EditableAnchor,
   type HandleRole,
 } from "../path-edit";
@@ -44,7 +47,7 @@ export interface PathEditOptions {
 }
 
 type Drag =
-  | { kind: "anchor"; index: number }
+  | { kind: "anchor"; index: number; origin: HitPoint; indices: number[]; base: EditableAnchor[] }
   | { kind: "handle"; anchorIndex: number; role: HandleRole };
 
 export interface PathEditHandlers {
@@ -60,8 +63,10 @@ export function usePathEdit(options: PathEditOptions): {
   anchors: EditableAnchor[];
   /** 手柄连线：从锚点指向控制点。 */
   handles: Array<{ from: HitPoint; to: HitPoint; anchorIndex: number; role: HandleRole }>;
-  /** 当前选中的锚点下标。 */
-  selected: number | null;
+  /** 当前选中的锚点下标（可以多个）。 */
+  selected: number[];
+  /** 每个锚点的类型（角点 / 平滑点 / 尖角），画布上据此区分形状。 */
+  anchorTypes: AnchorType[];
   /** 编辑中的整条路径（绝对场景坐标），用于画布预览。 */
   previewCommands: PathCommand[];
   /** 指针是否停在路径线段上（提示可以插点）。 */
@@ -70,7 +75,10 @@ export function usePathEdit(options: PathEditOptions): {
   toggleAnchorAt(point: HitPoint): boolean;
 } {
   const [anchors, setAnchors] = useState<EditableAnchor[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number[]>([]);
+  /** 选中的镜像：指针事件里拿到的还是上一次渲染的值。 */
+  const selectedRef = useRef<number[]>([]);
+  selectedRef.current = selected;
   const [hoverSegment, setHoverSegment] = useState(false);
   const dragRef = useRef<Drag | null>(null);
   const dirtyRef = useRef(false);
@@ -88,13 +96,13 @@ export function usePathEdit(options: PathEditOptions): {
     if (!options.target) {
       anchorsRef.current = [];
       setAnchors([]);
-      setSelected(null);
+      setSelected([]);
       return;
     }
     const next = anchorsFromPath(options.target.commands);
     anchorsRef.current = next;
     setAnchors(next);
-    setSelected(null);
+    setSelected([]);
   }, [targetId, targetCommands]);
 
   const closed = options.target ? pathIsClosed(options.target.commands) : false;
@@ -113,7 +121,8 @@ export function usePathEdit(options: PathEditOptions): {
       const handle = hitTestHandle(anchorsRef.current, point, tolerance);
       if (handle) {
         dragRef.current = { kind: "handle", anchorIndex: handle.anchorIndex, role: handle.role };
-        setSelected(handle.anchorIndex);
+        // 拖手柄只影响它自己那个锚点；多选状态原样保留。
+        setSelected(current => (current.includes(handle.anchorIndex) ? current : [handle.anchorIndex]));
         dirtyRef.current = false;
         event.stopPropagation();
         event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -121,8 +130,35 @@ export function usePathEdit(options: PathEditOptions): {
       }
       const anchorIndex = hitTestAnchor(anchorsRef.current, point, tolerance);
       if (anchorIndex !== undefined) {
-        dragRef.current = { kind: "anchor", index: anchorIndex };
-        setSelected(anchorIndex);
+        // Shift 加选 / 减选；普通点击只选这一个。
+        // 点在**已经选中**的锚点上时保留整组——这样可以直接拖动整组。
+        const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+        let indices: number[];
+        if (additive) {
+          const wasSelected = selectedRef.current.includes(anchorIndex);
+          indices = wasSelected
+            ? selectedRef.current.filter(index => index !== anchorIndex)
+            : [...selectedRef.current, anchorIndex].sort((a, b) => a - b);
+          setSelected(indices);
+          // 减选的那一下只是取消选中，不该顺手把剩下的锚点拖走。
+          if (wasSelected) {
+            event.stopPropagation();
+            return;
+          }
+        } else if (selectedRef.current.includes(anchorIndex)) {
+          indices = selectedRef.current;
+        } else {
+          indices = [anchorIndex];
+        }
+        setSelected(indices);
+        const anchor = anchorsRef.current[anchorIndex];
+        dragRef.current = {
+          kind: "anchor",
+          index: anchorIndex,
+          origin: anchor ? { x: anchor.x, y: anchor.y } : point,
+          indices,
+          base: anchorsRef.current,
+        };
         dirtyRef.current = false;
         event.stopPropagation();
         event.currentTarget.setPointerCapture?.(event.pointerId);
@@ -132,15 +168,22 @@ export function usePathEdit(options: PathEditOptions): {
       const segment = closestSegment(anchorsRef.current, closed, point, tolerance);
       if (segment) {
         update(insertAnchor(anchorsRef.current, closed, segment.index, segment.t));
-        setSelected(segment.index + 1);
-        dragRef.current = { kind: "anchor", index: segment.index + 1 };
+        setSelected([segment.index + 1]);
+        const inserted = anchorsRef.current[segment.index + 1];
+        dragRef.current = {
+          kind: "anchor",
+          index: segment.index + 1,
+          origin: inserted ? { x: inserted.x, y: inserted.y } : point,
+          indices: [segment.index + 1],
+          base: anchorsRef.current,
+        };
         event.stopPropagation();
         event.currentTarget.setPointerCapture?.(event.pointerId);
         return;
       }
       // 点在图形本体上：保持编辑态，只取消锚点选中（Figma 同样不会因此退出）。
       if (hitTestVectorPath(options.target.commands, options.target.box, point)) {
-        setSelected(null);
+        setSelected([]);
         return;
       }
       // 点到路径之外：退出编辑态（Figma 同样会退出并清空选中）。
@@ -158,7 +201,17 @@ export function usePathEdit(options: PathEditOptions): {
       }
       const point = options.pointOf(event);
       if (drag.kind === "anchor") {
-        update(moveAnchor(anchorsRef.current, drag.index, point));
+        // 整组一起走同一个位移：从**拖动开始时**的位置算起，每帧都从基准重算，
+        // 否则位移会一轮一轮累加，锚点会越拖越快。
+        const delta = { x: point.x - drag.origin.x, y: point.y - drag.origin.y };
+        // 吸附：拖着的锚点吸到路径上其它**没被选中**的锚点上。
+        const candidates = drag.base
+          .filter((_, index) => !drag.indices.includes(index))
+          .map(anchor => ({ x: anchor.x, y: anchor.y }));
+        const wanted = { x: drag.origin.x + delta.x, y: drag.origin.y + delta.y };
+        const snapped = snapAnchorPoint(wanted, candidates, 8 / Math.max(options.zoom, 0.01));
+        const adjust = snapped ? { x: snapped.x - wanted.x, y: snapped.y - wanted.y } : { x: 0, y: 0 };
+        update(moveAnchors(drag.base, drag.indices, { x: delta.x + adjust.x, y: delta.y + adjust.y }));
       } else {
         const anchor = anchorsRef.current[drag.anchorIndex];
         if (!anchor) return;
@@ -195,14 +248,14 @@ export function usePathEdit(options: PathEditOptions): {
       const element = event.target as HTMLElement | null;
       if (element?.matches("input, textarea, select, [contenteditable=true]")) return;
       if (event.key !== "Delete" && event.key !== "Backspace") return;
-      if (selected === null) return;
-      const next = removeAnchor(anchorsRef.current, selected, closed);
+      if (!selected.length) return;
+      const next = removeAnchors(anchorsRef.current, selected, closed);
       if (!next) return;
       event.preventDefault();
       event.stopPropagation();
       anchorsRef.current = next;
       setAnchors(next);
-      setSelected(null);
+      setSelected([]);
       const result = penGeometry(next, closed);
       if (result) commitRef.current({ id: options.target!.id, geometry: result.geometry, box: result.box });
     };
@@ -224,7 +277,7 @@ export function usePathEdit(options: PathEditOptions): {
     if (!result) return false;
     anchorsRef.current = next;
     setAnchors(next);
-    setSelected(index);
+    setSelected([index]);
     commitRef.current({ id: options.target.id, geometry: result.geometry, box: result.box });
     return true;
   };
@@ -238,6 +291,8 @@ export function usePathEdit(options: PathEditOptions): {
 
   const previewCommands = useMemo(() => commandsFromAnchors(anchors, closed), [anchors, closed]);
 
+  const anchorTypes = useMemo(() => anchors.map(anchor => anchorType(anchor)), [anchors]);
+
   return {
     /** 指针是否停在路径线段上（用于提示可以插点）。 */
     hoverSegment,
@@ -246,6 +301,7 @@ export function usePathEdit(options: PathEditOptions): {
     anchors,
     handles,
     selected,
+    anchorTypes,
     previewCommands,
   };
 }

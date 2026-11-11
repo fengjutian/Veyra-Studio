@@ -12,6 +12,15 @@ import { isClosedPath, type PathCommand, type PathPoint } from "@ufira/design-sc
  */
 export type EditableAnchor = PenAnchor;
 
+/**
+ * 锚点类型。
+ *
+ * - `corner`：角点，没有手柄，两侧是直线；
+ * - `smooth`：平滑点，两侧手柄互为镜像，拖一边另一边跟着走；
+ * - `cusp`：尖角，两侧手柄各自独立，拖一边另一边不动。
+ */
+export type AnchorType = "corner" | "smooth" | "cusp";
+
 export type HandleRole = "out" | "in";
 
 export interface PathHandle {
@@ -109,6 +118,74 @@ export function hitTestHandle(anchors: readonly EditableAnchor[], point: PathPoi
 }
 
 /**
+ * 锚点类型。
+ *
+ * 由几何推断，**不在文档里另存一个类型字段**：路径命令本来就分别记着「上一段的
+ * 出控制点」和「下一段的入控制点」，两个控制点互不约束——手柄不互为镜像的锚点
+ * 就是尖角。于是「独立手柄」这件事被路径数据自己记住了：重新打开这个节点时它
+ * 仍然是尖角，拖动也不会被重新镜像回去。
+ *
+ * 长度用**相对容差**比（2%）：路径坐标归一化到 [0,1] 并保留 4 位小数，
+ * 绝对容差在很短的手柄上会误判。
+ */
+export function anchorType(anchor: EditableAnchor): AnchorType {
+  const { handleIn, handleOut } = anchor;
+  if (!handleIn && !handleOut) return "corner";
+  // 只有一侧手柄（开放路径的首尾）：没有镜像关系可言，就是独立的。
+  if (!handleIn || !handleOut) return "cusp";
+  const inX = handleIn.x - anchor.x;
+  const inY = handleIn.y - anchor.y;
+  const outX = handleOut.x - anchor.x;
+  const outY = handleOut.y - anchor.y;
+  const inLength = Math.hypot(inX, inY);
+  const outLength = Math.hypot(outX, outY);
+  if (inLength < 1e-6 || outLength < 1e-6) return "cusp";
+  const dot = (inX * outX + inY * outY) / (inLength * outLength);
+  const opposite = dot < -0.98;
+  const sameLength = Math.abs(inLength - outLength) <= 0.02 * Math.max(inLength, outLength);
+  return opposite && sameLength ? "smooth" : "cusp";
+}
+
+/**
+ * 移动一组锚点：每个锚点连同它的手柄一起平移。
+ *
+ * 多选时拖任意一个选中的锚点，整组一起走同样的位移——手柄跟着各自的锚点走，
+ * 曲线的形状保持不变。
+ */
+export function moveAnchors(anchors: readonly EditableAnchor[], indices: readonly number[], delta: PathPoint): EditableAnchor[] {
+  if (!delta.x && !delta.y) return [...anchors];
+  const next = anchors.map(anchor => ({ ...anchor }));
+  for (const index of indices) {
+    const anchor = next[index];
+    if (!anchor) continue;
+    anchor.x += delta.x;
+    anchor.y += delta.y;
+    if (anchor.handleOut) anchor.handleOut = { x: anchor.handleOut.x + delta.x, y: anchor.handleOut.y + delta.y };
+    if (anchor.handleIn) anchor.handleIn = { x: anchor.handleIn.x + delta.x, y: anchor.handleIn.y + delta.y };
+  }
+  return next;
+}
+
+/**
+ * 把锚点吸附到最近的候选点（通常是同一条路径上的其它锚点）。
+ *
+ * 阈值按屏幕像素换算后传进来：屏幕上 8px 之内就算命中。
+ * 多个候选同样近时取先遇到的那个——路径上的锚点本来就按顺序排，
+ * 「吸到前一个」比「吸到任意一个」更符合直觉。
+ */
+export function snapAnchorPoint(point: PathPoint, candidates: readonly PathPoint[], tolerance: number): PathPoint | undefined {
+  let best: PathPoint | undefined;
+  let bestDistance = tolerance;
+  for (const candidate of candidates) {
+    const gap = distance(point, candidate);
+    if (gap > bestDistance) continue;
+    bestDistance = gap;
+    best = candidate;
+  }
+  return best;
+}
+
+/**
  * 移动锚点：控制点跟着平移。
  *
  * 手柄存的是绝对坐标，如果只改锚点，曲线会在原地被拉变形；Figma 里拖动锚点，
@@ -134,6 +211,9 @@ export function moveAnchor(anchors: readonly EditableAnchor[], index: number, po
  *
  * `mirror` 为 true 时对侧手柄取镜像点，保持锚点平滑（Figma 的默认行为）；
  * 按住 Alt 时传 false，只动这一侧，让锚点变成尖角。
+ *
+ * 已经是**尖角**的锚点不再自动镜像：手柄各自独立正是尖角的定义，
+ * 拖一边把另一边拽回去等于把这个类型抹掉。
  */
 export function moveHandle(
   anchors: readonly EditableAnchor[],
@@ -144,18 +224,19 @@ export function moveHandle(
   const anchor = anchors[handle.anchorIndex];
   if (!anchor) return [...anchors];
   const next = [...anchors];
+  const shouldMirror = mirror && anchorType(anchor) !== "cusp";
   const mirrored = { x: anchor.x * 2 - point.x, y: anchor.y * 2 - point.y };
   if (handle.role === "out") {
     next[handle.anchorIndex] = {
       ...anchor,
       handleOut: { x: point.x, y: point.y },
-      ...(mirror && anchor.handleIn ? { handleIn: mirrored } : {}),
+      ...(shouldMirror && anchor.handleIn ? { handleIn: mirrored } : {}),
     };
   } else {
     next[handle.anchorIndex] = {
       ...anchor,
       handleIn: { x: point.x, y: point.y },
-      ...(mirror && anchor.handleOut ? { handleOut: mirrored } : {}),
+      ...(shouldMirror && anchor.handleOut ? { handleOut: mirrored } : {}),
     };
   }
   return next;
@@ -171,6 +252,20 @@ export function removeAnchor(anchors: readonly EditableAnchor[], index: number, 
   const minimum = closed ? 3 : 2;
   if (anchors.length <= minimum || index < 0 || index >= anchors.length) return undefined;
   return anchors.filter((_, position) => position !== index);
+}
+
+/**
+ * 删除一组锚点。
+ *
+ * 和单个删除同样的下限：删完之后路径至少还得剩两点（闭合路径三点），
+ * 否则用户没有恢复的入口。
+ */
+export function removeAnchors(anchors: readonly EditableAnchor[], indices: readonly number[], closed: boolean): EditableAnchor[] | undefined {
+  const minimum = closed ? 3 : 2;
+  const removing = new Set(indices);
+  if (!removing.size) return undefined;
+  if (anchors.length - removing.size < minimum) return undefined;
+  return anchors.filter((_, position) => !removing.has(position));
 }
 
 /** 这条路径是否闭合（编辑态里决定重建时是否补 Z）。 */

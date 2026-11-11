@@ -12,7 +12,7 @@ import {
   type Interaction,
 } from "@ufira/design-schema";
 import type { ProjectRepository } from "@ufira/design-persistence";
-import { applyScrollToScene, buildTranslatedScene, computeScrollMax, scrollHostsInSubtree } from "../src/prototype/scene-build";
+import { applyScrollToScene, buildTranslatedScene, computeScrollMax, scrollbarBars, scrollHostsInSubtree } from "../src/prototype/scene-build";
 import { clampScroll, dispatchPrototype, startPrototype } from "../src/prototype/state";
 
 /**
@@ -34,6 +34,7 @@ function frame(
     childIds?: string[];
     interactions?: Interaction[];
     overflow?: "visible" | "hidden" | "scroll";
+    position?: "fixed" | "sticky";
     layout?: { x?: number; y?: number; width?: number; height?: number };
     fill?: string;
   } = {},
@@ -53,6 +54,7 @@ function frame(
     },
     ...(options.interactions ? { interactions: options.interactions } : {}),
     ...(options.overflow ? { overflow: options.overflow } : {}),
+    ...(options.position ? { position: options.position } : {}),
   } as DesignNode;
   return node;
 }
@@ -208,9 +210,106 @@ test("滚动偏移把宿主的内容平移，宿主自己不动", () => {
   assert.deepEqual(scene.box, { x: 0, y: 0, width: 200, height: 100 });
   assert.deepEqual(scene.children[0]!.box, { x: 0, y: 0, width: 200, height: 400 });
 
-  const scrolled = applyScrollToScene(scene, { panel: { x: 0, y: 100 } });
+  const scrolled = applyScrollToScene(scene, { panel: { x: 0, y: 100 } }, document, boxes);
   assert.deepEqual(scrolled.box, { x: 0, y: 0, width: 200, height: 100 });
   assert.deepEqual(scrolled.children[0]!.box, { x: 0, y: -100, width: 200, height: 400 });
+});
+
+// ---------------------------------------------------------------------------
+// 滚动定位：fixed / sticky
+// ---------------------------------------------------------------------------
+
+/**
+ * 一屏里三种节点各一个：
+ *
+ * ```
+ * screen (300×200)              ← 顶层 frame，宿主
+ *   tall      (300×600)         ← 普通节点：跟着内容滚
+ *   fixed-bar (300×40)  fixed   ← 钉在视口：不动
+ *   sticky-bar (300×30) sticky  ← 粘在宿主顶部：滚到边缘就停
+ * ```
+ */
+function positionedDocument(): DesignDocument {
+  const document = createDocument("doc:position", "Position", "page:1");
+  const screen = frame("screen", "page:1", { childIds: ["tall", "fixed-bar", "sticky-bar"], layout: { width: 300, height: 200 } });
+  const tall = frame("tall", "screen", { layout: { width: 300, height: 600 } });
+  const fixedBar = frame("fixed-bar", "screen", { position: "fixed", layout: { width: 300, height: 40 } });
+  const stickyBar = frame("sticky-bar", "screen", { position: "sticky", layout: { width: 300, height: 30 } });
+  for (const node of [screen, tall, fixedBar, stickyBar]) document.nodes[node.id] = node;
+  document.pages["page:1"]!.childIds = ["screen"];
+  return document;
+}
+
+const positionedBoxes = {
+  screen: { x: 0, y: 0, width: 300, height: 200 },
+  tall: { x: 0, y: 0, width: 300, height: 600 },
+  "fixed-bar": { x: 0, y: 0, width: 300, height: 40 },
+  "sticky-bar": { x: 0, y: 0, width: 300, height: 30 },
+};
+
+test("fixed 节点钉在视口上，不吃祖先的滚动位移", () => {
+  const document = positionedDocument();
+  const scene = buildTranslatedScene(document, "screen", positionedBoxes, 0, 0)!;
+  const scrolled = applyScrollToScene(scene, { screen: { x: 0, y: 100 } }, document, positionedBoxes);
+
+  const byId = Object.fromEntries(scrolled.children.map(child => [child.id, child.box]));
+  assert.equal(byId.tall!.y, -100, "普通节点跟着内容滚");
+  assert.equal(byId["fixed-bar"]!.y, 0, "固定节点不动");
+  assert.equal(byId["sticky-bar"]!.y, 0, "粘性节点滚到顶边就停住");
+});
+
+test("sticky 节点只在宿主真的能滚的时候才粘", () => {
+  const document = positionedDocument();
+  const scene = buildTranslatedScene(document, "screen", positionedBoxes, 0, 0)!;
+
+  // 宿主内容装得下（tall 缩回 200 高）→ 滚不动 → sticky 不该把节点拉回边缘。
+  document.nodes["tall"] = frame("tall", "screen", { layout: { width: 300, height: 200 } });
+  const boxesWithoutOverflow = { ...positionedBoxes, tall: { x: 0, y: 0, width: 300, height: 200 } };
+  const flat = buildTranslatedScene(document, "screen", boxesWithoutOverflow, 0, 0)!;
+  const flatScrolled = applyScrollToScene(flat, { screen: { x: 0, y: 100 } }, document, boxesWithoutOverflow);
+  const flatById = Object.fromEntries(flatScrolled.children.map(child => [child.id, child.box]));
+  assert.equal(flatById["sticky-bar"]!.y, -100, "宿主滚不动时，粘性节点跟普通节点一样跟着滚");
+});
+
+test("没写 position 的节点行为一字不变（回归）", () => {
+  const document = scrollDocument();
+  const scene = buildTranslatedScene(document, "screen", boxes, 0, 0)!;
+  const scrolled = applyScrollToScene(scene, { screen: { x: 0, y: 120 } }, document, boxes);
+  const byId = Object.fromEntries(scrolled.children.map(child => [child.id, child]));
+  // screen 的内容整体跟着滚 120px；panel 自己内部的滚动另算（这里没滚）。
+  assert.equal(byId.tall!.box.y, -120);
+  assert.equal(byId.panel!.box.y, -120);
+  assert.equal(byId.panel!.children[0]!.box.y, -120);
+});
+
+test("滚动条：能滚的宿主才有条，滑块长度按内容比例算", () => {
+  const document = scrollDocument();
+  const scene = buildTranslatedScene(document, "screen", boxes, 0, 0)!;
+  const bars = scrollbarBars(scene, {}, document, boxes);
+
+  // screen 与 panel 都能滚；other（内容装得下）不该有条。
+  assert.deepEqual(bars.map(bar => bar.hostId), ["screen", "panel"]);
+  assert.deepEqual(bars.map(bar => bar.orientation), ["vertical", "vertical"]);
+
+  // screen：可视 200、内容 600 → 滑块 67px；轨道贴在右边。
+  const screenBar = bars[0]!;
+  assert.deepEqual(screenBar.track, { x: 290, y: 0, width: 8, height: 200 });
+  assert.deepEqual(screenBar.thumb, { x: 290, y: 0, width: 8, height: 67 });
+  assert.ok(screenBar.thumbPerScroll > 0);
+});
+
+test("滚动条：滑块位置跟着滚动偏移走", () => {
+  const document = scrollDocument();
+  const scene = buildTranslatedScene(document, "screen", boxes, 0, 0)!;
+  const bars = scrollbarBars(scene, { screen: { x: 0, y: 200 } }, document, boxes);
+  // 滚了 200 / 400 = 一半 → 滑块走了一半的可用行程（133px）。
+  assert.equal(bars[0]!.thumb.y, 67);
+});
+
+test("滚动条：内容装得下的宿主不画条", () => {
+  const document = scrollDocument();
+  const scene = buildTranslatedScene(document, "other", boxes, 0, 0)!;
+  assert.deepEqual(scrollbarBars(scene, {}, document, boxes), []);
 });
 
 test("overflow: visible 的容器不裁切子节点，其余照常裁切", () => {

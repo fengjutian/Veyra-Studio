@@ -1,0 +1,113 @@
+:root[data-ui-theme="light"] {
+  color: #172033;
+  background: #eef1f6;
+}
+
+:root[data-ui-theme="light"] .studio {
+  color: #172033;
+}
+
+:root[data-ui-theme="light"] .studio header,
+:root[data-ui-theme="light"] .layers,
+:root[data-ui-theme="light"] .inspector,
+:root[data-ui-theme="light"] .canvas-controls,
+:root[data-ui-theme="light"] .selection-toolbar,
+:root[data-ui-theme="light"] .ai-command-dock {
+  background: #ffffff;
+  border-color: #d7dce6;
+  color: #172033;
+}
+
+:root[data-ui-theme="light"] .studio header { border-bottom-color: #d7dce6; }
+:root[data-ui-theme="light"] .layers { border-right-color: #d7dce6; }
+:root[data-ui-theme="light"] .inspector { border-left-color: #d7dce6; }
+:root[data-ui-theme="light"] .workspace {
+  background-color: #e6e9ef;
+  background-image: radial-gradient(#c3c9d4 1px, transparent 1px);
+}
+
+:root[data-ui-theme="light"] button,
+:root[data-ui-theme="light"] select,
+:root[data-ui-theme="light"] input,
+:root[data-ui-theme="light"] textarea,
+:root[data-ui-theme="light"] .project-select,
+:root[data-ui-theme="light"] .export-scope,
+:root[data-ui-theme="light"] .segmented,
+:root[data-ui-theme="light"] .layer-search,
+:root[data-ui-theme="light"] .component-create input,
+:root[data-ui-theme="light"] .grid-track select,
+:root[data-ui-theme="light"] .grid-track input {
+  border-color: #cbd2df;
+  background-color: #f7f8fb;
+  color: #172033;
+}
+
+:root[data-ui-theme="light"] button:hover:not(:disabled) { background-color: #f0ebff; }
+:root[data-ui-theme="light"] button[aria-pressed="true"],
+:root[data-ui-theme="light"] button.active,
+:root[data-ui-theme="light"] .segment[data-state="on"],
+:root[data-ui-theme="light"] .page-row.active {
+  background: #ede9fe;
+  border-color: #8b5cf6;
+  color: #5b21b6;
+}
+
+:root[data-ui-theme="light"] h2,
+:root[data-ui-theme="light"] .status,
+:root[data-ui-theme="light"] .empty-hint,
+:root[data-ui-theme="light"] .field-label,
+:root[data-ui-theme="light"] .panel-count,
+:root[data-ui-theme="light"] .page-row-meta,
+:root[data-ui-theme="light"] .inspector-head-meta,
+:root[data-ui-theme="light"] .ai-settings-hint,
+:root[data-ui-theme="light"] .storage-label,
+:root[data-ui-theme="light"] .storage-advice,
+:root[data-ui-theme="light"] .history-time,
+:root[data-ui-theme="light"] .export-summary {
+  color: #667085;
+}
+
+:root[data-ui-theme="light"] .layer-row:hover,
+:root[data-ui-theme="light"] .page-row:hover,
+:root[data-ui-theme="light"] .inspector-tab:hover,
+:root[data-ui-theme="light"] .toolbar-group {
+  background-color: #f3f5f8;
+}
+
+:root[data-ui-theme="light"] .tool-divider,
+:root[data-ui-theme="light"] .toolbar-separator,
+:root[data-ui-theme="light"] hr,
+:root[data-ui-theme="light"] .inspector-tabs,
+:root[data-ui-theme="light"] .panel-block,
+:root[data-ui-theme="light"] .inspector-section {
+  border-color: #d7dce6;
+}
+
+:root[data-ui-theme="light"] .inspector-tab { color: #667085; }
+:root[data-ui-theme="light"] .inspector-tab[data-state="active"] { color: #6d28d9; background: #ede9fe; }
+:root[data-ui-theme="light"] kbd { background: #eef1f6; border-color: #cbd2df; color: #344054; }
+:root[data-ui-theme="light"] .canvas { box-shadow: 0 20px 55px #3440542b; }
+:root[data-ui-theme="light"] .canvas-frame-name { color: #344054; }
+:root[data-ui-theme="light"] .canvas-frame-size { color: #667085; }
+
+/* Radix content is portalled under body, so theme it from the root attribute. */
+:root[data-ui-theme="light"] .tooltip,
+:root[data-ui-theme="light"] .dialog-content,
+:root[data-ui-theme="light"] .context-menu {
+  border-color: #cbd2df;
+  background: #ffffff;
+  color: #172033;
+  box-shadow: 0 16px 40px #34405426;
+}
+:root[data-ui-theme="light"] .tooltip-arrow { fill: #ffffff; }
+:root[data-ui-theme="light"] .dialog-title,
+:root[data-ui-theme="light"] .context-menu-item { color: #172033; }
+:root[data-ui-theme="light"] .dialog-description,
+:root[data-ui-theme="light"] .dialog-field-label,
+:root[data-ui-theme="light"] .context-menu-shortcut { color: #667085; }
+:root[data-ui-theme="light"] .dialog-input { border-color: #cbd2df; background: #f7f8fb; color: #172033; }
+:root[data-ui-theme="light"] .dialog-overlay { background: #17203366; }
+:root[data-ui-theme="light"] .context-menu-separator { background: #e4e7ec; }
+:root[data-ui-theme="light"] .context-menu-item[data-highlighted] { background: #ede9fe; color: #5b21b6; }
+
+:root[data-ui-theme="light"] ::selection { background: #c4b5fd; color: #2e1065; }

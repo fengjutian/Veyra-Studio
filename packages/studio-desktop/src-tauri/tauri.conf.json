@@ -5,7 +5,7 @@
   "identifier": "app.ufira.design-studio",
   "build": {
     "frontendDist": "../../studio-web/dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:15173",
     "beforeDevCommand": "npm run dev:web",
     "beforeBuildCommand": "npm run build:web"
   },

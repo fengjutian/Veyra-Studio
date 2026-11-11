@@ -315,6 +315,16 @@ export interface Constraints {
  */
 export type OverflowMode = "visible" | "hidden" | "scroll";
 
+/**
+ * 滚动定位。
+ *
+ * - `fixed`：相对预览视口钉住，滚动时不动；
+ * - `sticky`：在最近的滚动宿主里粘住，滚到边缘时停住。
+ *
+ * 缺省是「跟着内容一起滚」，所以旧文档不需要迁移。
+ */
+export type NodePosition = "fixed" | "sticky";
+
 export interface BaseNode {
   id: NodeId;
   type: NodeType;
@@ -340,6 +350,17 @@ export interface BaseNode {
    * 缺省是 `hidden`（裁切不滚动），所以旧文档不需要迁移。
    */
   overflow?: OverflowMode;
+  /**
+   * 滚动定位；只在原型预览里生效。
+   *
+   * - `fixed`：相对预览视口钉住，滚动时不动；
+   * - `sticky`：在最近的滚动宿主里粘住，滚到边缘时停住。
+   *
+   * 缺省是「跟着内容一起滚」，所以旧文档不需要迁移。
+   * 做成可选字段而不是新节点类型——定位是「节点在滚动里的行为」，
+   * 新类型会牵动判别联合、导出、组件和 AI 计划解析的每一处。
+   */
+  position?: NodePosition;
   /** 组件属性绑定；只在组件定义子树里有意义。 */
   componentPropertyBindings?: ComponentPropertyBindings;
   /**

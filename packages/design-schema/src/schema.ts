@@ -294,6 +294,7 @@ const baseNodeShape = {
   externalRefs: z.array(z.object({ provider: z.string().min(1), id })).optional(),
   slot: z.boolean().optional(),
   overflow: z.enum(["visible", "hidden", "scroll"]).optional(),
+  position: z.enum(["fixed", "sticky"]).optional(),
   mask: z.boolean().optional(),
   componentPropertyBindings: componentPropertyBindingsSchema.optional(),
   interactions: z.array(interactionSchema).optional(),

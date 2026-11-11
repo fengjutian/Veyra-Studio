@@ -30,7 +30,8 @@ packages/studio-desktop/
 
 前端资源直接复用 `packages/studio-web` 的构建产物（`packages/studio-web/dist`）：
 
-- 开发：`devUrl` 指向 studio-web 的 vite dev server（`http://localhost:5173`）；
+- 开发：`devUrl` 指向 studio-web 的专用 Vite dev server（`http://localhost:15173`）；Vite 使用
+  `strictPort`，端口被占用时会直接报错，不会静默切换端口导致桌面壳加载错误地址；
 - 打包：`frontendDist` 指向 `packages/studio-web/dist`，由 `beforeBuildCommand` 先构建。
 
 两份前端只有一份实现——桌面端不是「另一个编辑器」，是同一个编辑器的另一种宿主。
