@@ -25,6 +25,7 @@ test("light theme covers every workbench page and overlay", () => {
     ".prototype-preview",
     ".canvas-controls",
     ".ai-command-dock",
+    ".ai-flow",
   ];
 
   for (const selector of requiredSurfaces) {

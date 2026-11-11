@@ -35,3 +35,16 @@ test("检查器使用卡片分区和统一控件表面", () => {
   assert.match(workbenchCss, /\.inspector-body > \.inspector-section/);
   assert.match(workbenchCss, /\.inspector select,/);
 });
+
+test("AI 工作区按描述、候选、提交三步组织", () => {
+  assert.match(mainSource, /className="ai-flow"/);
+  assert.match(mainSource, />1 · 描述任务</);
+  assert.match(mainSource, /高级：自主运行/);
+  assert.match(mainSource, /className="inspector-section ai-advanced-section"/);
+});
+
+test("画布背景弱化网格并强化画板边界", () => {
+  const workbenchCss = readFileSync(fileURLToPath(new URL("../src/workbench.css", import.meta.url)), "utf8");
+  assert.match(workbenchCss, /background-size: 100% 100%, 24px 24px/);
+  assert.match(workbenchCss, /outline: 1px solid #ffffff17/);
+});

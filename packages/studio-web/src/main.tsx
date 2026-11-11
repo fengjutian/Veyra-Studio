@@ -3247,13 +3247,19 @@ function App() {
         </Tabs.Content>
         <Tabs.Content value="ai" className="inspector-body">
           <section className="inspector-section ai-workspace-head">
-            <div>
+            <div className="ai-workspace-title">
               <h2>AI 设计工作区</h2>
-              <p className="empty-hint">先生成隔离候选，再挑一个提交。未选中的方案不会改动文档。</p>
+              <p className="empty-hint">候选方案在隔离环境生成，采用前不会修改文档。</p>
             </div>
             <span className={`ai-workspace-status${aiReady ? " is-ready" : ""}`}>{aiReady ? aiSettings.model : "待配置"}</span>
+            <div className="ai-flow" aria-label="AI 设计流程">
+              <span className="is-current"><b>1</b>描述任务</span>
+              <span className={aiVariants.length ? "is-current" : ""}><b>2</b>选择候选</span>
+              <span className={preview ? "is-current" : ""}><b>3</b>审查提交</span>
+            </div>
           </section>
           <section className="inspector-section ai-compose-section">
+            <div className="section-heading"><h2>1 · 描述任务</h2></div>
             <div className="ai-design-options">
               <label className="field">
                 <span className="field-label">页面范围</span>
@@ -3293,7 +3299,8 @@ function App() {
                 onChange={event => setAiVision(event.target.checked)}
               />
             </label>
-            {visionSupported ? <p className="empty-hint">带上截图后，模型能看出挤不挤、齐不齐、哪里难看——这些光看文字摘要看不出来。</p> : <p className="empty-hint">当前端点没有实测过看图能力，这个开关用不了。</p>}
+            {aiVision && visionSupported ? <p className="empty-hint ai-option-note">截图会随任务发送，用于判断布局、对齐和视觉问题。</p> : null}
+            {!visionSupported ? <p className="empty-hint ai-option-note">当前模型尚未验证视觉能力。</p> : null}
             {visionSupported && (
               <label className="field">
                 <span className="field-label">截图范围</span>
@@ -3328,13 +3335,17 @@ function App() {
               setPreview(undefined); setAiVariants([]);
             }}
           />}
-          <section className="inspector-section">
-            <h2>自主运行</h2>
-            <p className="empty-hint">按体检结论（设计 lint、对比度、导出诊断）自动多轮修复：体检 → 计划 → 审查 → 提交 → 再体检，直到没有待修项或触发停止条件。每轮都可撤销。</p>
-            <button disabled={busy || !prompt.trim() || loopRunning || !aiReady} title={!aiReady ? "先配置并启用真实模型，并填写 API Key" : undefined} onClick={() => void startAutonomousRun()}><Icon name="aiLoop" />自主运行</button>
-            {loopRunning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消运行</button>}
-            {loopRounds.length > 0 && <div className="loop-log" aria-live="polite">{loopRounds.map(round => <div className="loop-round" key={round.round}><span className="loop-round-index">第 {round.round} 轮</span><span className="loop-round-summary">{round.summary}</span><span className="loop-round-meta">落地 {round.appliedCommands} 条命令 · 待修 {round.report.counts.actionable} → {round.after?.counts.actionable ?? "—"}</span>{round.note && <span className="loop-round-note">{round.note}</span>}</div>)}</div>}
-            {loopSummary && <p className="loop-summary">{loopSummary}</p>}
+          <section className="inspector-section ai-advanced-section">
+            <details className="ai-advanced" open={loopRunning || loopRounds.length > 0}>
+              <summary><span><Icon name="aiLoop" />高级：自主运行</span><small>多轮体检与修复</small></summary>
+              <div className="ai-advanced-body">
+                <p className="empty-hint">自动执行体检、计划、审查和提交，直到没有待修项；每轮均可撤销。</p>
+                <button disabled={busy || !prompt.trim() || loopRunning || !aiReady} title={!aiReady ? "先配置并启用真实模型，并填写 API Key" : undefined} onClick={() => void startAutonomousRun()}><Icon name="aiLoop" />开始自主运行</button>
+                {loopRunning && <button onClick={() => planAbort.current?.abort()}><Icon name="aiCancel" />取消运行</button>}
+                {loopRounds.length > 0 && <div className="loop-log" aria-live="polite">{loopRounds.map(round => <div className="loop-round" key={round.round}><span className="loop-round-index">第 {round.round} 轮</span><span className="loop-round-summary">{round.summary}</span><span className="loop-round-meta">落地 {round.appliedCommands} 条命令 · 待修 {round.report.counts.actionable} → {round.after?.counts.actionable ?? "—"}</span>{round.note && <span className="loop-round-note">{round.note}</span>}</div>)}</div>}
+                {loopSummary && <p className="loop-summary">{loopSummary}</p>}
+              </div>
+            </details>
           </section>
         </Tabs.Content>
         <Tabs.Content value="settings" className="inspector-body settings-page">

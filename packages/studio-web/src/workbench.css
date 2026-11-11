@@ -671,9 +671,11 @@
 
 .workspace {
   background-color: #181a20;
-  background-image: radial-gradient(#2b2f38 1px, transparent 1px);
+  background-image:
+    radial-gradient(ellipse at center, transparent 0, #11131833 72%, #11131866 100%),
+    radial-gradient(#292d35 1px, transparent 1px);
   background-position: -1px -1px;
-  background-size: 22px 22px;
+  background-size: 100% 100%, 24px 24px;
 }
 
 .canvas-scroller {
@@ -694,7 +696,7 @@
   left: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   height: 24px;
   color: var(--workbench-muted);
   font-size: 11px;
@@ -704,8 +706,8 @@
 }
 
 .canvas-frame-name {
-  color: #c3c9d4;
-  font-weight: 600;
+  color: #d1d5dd;
+  font-weight: 650;
 }
 
 .canvas-frame-size {
@@ -719,7 +721,8 @@
 }
 
 .canvas {
-  box-shadow: 0 1px 2px #00000066, 0 16px 48px #00000080;
+  outline: 1px solid #ffffff17;
+  box-shadow: 0 2px 5px #00000052, 0 22px 64px #00000070;
 }
 
 /* 图元工具下指针变成十字：先看到"要画东西"，再拖出尺寸。 */
@@ -1047,6 +1050,87 @@
   min-height: 32px;
   border-radius: 7px;
 }
+
+/* AI 工作区按任务、候选、提交三步组织；低频自主运行默认折叠。 */
+.ai-workspace-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.ai-workspace-title { min-width: 0; }
+.ai-workspace-title .empty-hint { margin: 0; line-height: 1.5; }
+
+.ai-flow {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.ai-flow span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--workbench-dim);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.ai-flow b {
+  display: grid;
+  width: 17px;
+  height: 17px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--control-border);
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.ai-flow span.is-current { color: #c4b5fd; }
+.ai-flow span.is-current b { border-color: #8b5cf6; background: #4c1d95; color: #fff; }
+
+.ai-compose-section .section-heading { margin-bottom: 10px; }
+.ai-compose-section textarea { margin-bottom: 4px; }
+.ai-option-note { margin: -4px 0 9px; font-size: 10px; line-height: 1.45; }
+
+.ai-review-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: #a78bfa;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .03em;
+}
+
+.ai-selected-preview > strong { display: block; color: var(--workbench-text); line-height: 1.45; }
+.ai-selected-preview .preview-actions { margin-top: 9px; }
+.ai-selected-preview .preview-actions button:first-child { flex: 1; background: #6d28d9; border-color: #8b5cf6; color: #fff; }
+
+.ai-advanced-section { padding: 0 !important; overflow: hidden; }
+.ai-advanced summary {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.ai-advanced summary::-webkit-details-marker { display: none; }
+.ai-advanced summary > span { display: flex; align-items: center; gap: 7px; color: var(--workbench-text); font-size: 11px; font-weight: 600; }
+.ai-advanced summary small { color: var(--workbench-dim); font-size: 9px; }
+.ai-advanced[open] summary { border-bottom: 1px solid var(--workbench-border); }
+.ai-advanced-body { padding: 11px 12px 12px; }
+.ai-advanced-body > .empty-hint { margin-top: 0; }
+.ai-advanced-body > button { width: 100%; min-height: 32px; }
+.ai-advanced-body > button + button { margin-top: 6px; }
 
 .inspector-foot {
   padding: 8px 14px;

@@ -37,7 +37,7 @@ export function AiVariantGallery(props: AiVariantGalleryProps) {
   const selected = props.jobs.find(job => job.id === props.selectedId && job.preview);
   return <section className="inspector-section ai-results-section">
     <div className="section-heading">
-      <h2>候选方案</h2>
+      <h2>2 · 选择候选</h2>
       <span className="ai-result-count">{props.jobs.filter(job => job.status === "ready").length}/{props.jobs.length}</span>
     </div>
     <div className="ai-variant-grid" role="listbox" aria-label="AI 候选方案">
@@ -53,6 +53,7 @@ export function AiVariantGallery(props: AiVariantGalleryProps) {
       />)}
     </div>
     {selected?.preview && <div className={props.stale ? "preview ai-selected-preview stale" : "preview ai-selected-preview"}>
+      <span className="ai-review-kicker">3 · 审查并提交</span>
       <strong>{selected.preview.summary}</strong>
       <p>影响：{selected.preview.affectedNodeIds.join(", ") || "文档级"}</p>
       <p>警告：{selected.preview.warnings.length} · 审查：{reviewLabel(selected.preview)}</p>

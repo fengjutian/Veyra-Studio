@@ -34,8 +34,10 @@
 :root[data-ui-theme="light"] .layers { border-right-color: #d7dce6; }
 :root[data-ui-theme="light"] .inspector { border-left-color: #d7dce6; }
 :root[data-ui-theme="light"] .workspace {
-  background-color: #e6e9ef;
-  background-image: radial-gradient(#c3c9d4 1px, transparent 1px);
+  background-color: #e8ebf0;
+  background-image:
+    radial-gradient(ellipse at center, transparent 0, #98a2b30d 72%, #98a2b31f 100%),
+    radial-gradient(#d2d7e0 1px, transparent 1px);
 }
 
 :root[data-ui-theme="light"] .studio .topbar,
@@ -166,6 +168,10 @@
   background: #ecfdf3;
   color: #167044;
 }
+:root[data-ui-theme="light"] .ai-flow span.is-current { color: #6d28d9; }
+:root[data-ui-theme="light"] .ai-flow span.is-current b { border-color: #8b5cf6; background: #7c3aed; color: #ffffff; }
+:root[data-ui-theme="light"] .ai-review-kicker { color: #6d28d9; }
+:root[data-ui-theme="light"] .ai-selected-preview > strong { color: #172033; }
 :root[data-ui-theme="light"] .ai-batch-progress {
   border-color: #c4b5fd;
   background: #f5f3ff;
@@ -342,7 +348,7 @@
 :root[data-ui-theme="light"] .inspector-tab { color: #667085; }
 :root[data-ui-theme="light"] .inspector-tab[data-state="active"] { color: #6d28d9; background: #ede9fe; }
 :root[data-ui-theme="light"] kbd { background: #eef1f6; border-color: #cbd2df; color: #344054; }
-:root[data-ui-theme="light"] .canvas { box-shadow: 0 20px 55px #3440542b; }
+:root[data-ui-theme="light"] .canvas { outline-color: #cbd2df; box-shadow: 0 2px 5px #3440541a, 0 24px 64px #34405429; }
 :root[data-ui-theme="light"] .canvas-frame-name { color: #344054; }
 :root[data-ui-theme="light"] .canvas-frame-size { color: #667085; }
 
