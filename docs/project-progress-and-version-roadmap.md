@@ -289,12 +289,13 @@ AI 原型：
   几何集中在 `renderer/rotation.ts`，手柄命中复用原实现；
   **多选整体旋转已实现**（2026-11-11）：绕选区旋转后包围盒中心刚性旋转整组，
   单选按绝对角度吸附、多选按增量吸附；顺带修掉旋转提交写错嵌套节点 x/y 的既有缺陷；
-  旋转后的自动布局重排仍需改 `design-layout`（已加如实提示）；
+  **旋转后的自动布局重排已实现**（2026-11-11）：布局引擎按旋转后的视觉包围盒占位
+  （stack 让位、hug 变大、grid 自动轨道变宽），盒子尺寸不变、在槽位里居中；
 - 约束（P5.2）：`constraints` 由运行时在 `node.patch` 里应用（父级尺寸变化 → 子节点按
   贴边/居中/拉伸/缩放重排），父子变更同一条命令、可一次撤销；stack 与 hug 父级跳过；
   拖动父级手柄时画布用同一个 `constrainLayout()` 实时预览，松手不跳；
-  **实例约束覆盖已实现 studio-web 侧**（2026-11-11）：隔离接口 + 属性面板分段，
-  运行时未放行时如实说明原因（底层放行仍需 design-schema/runtime 配合）；
+  **实例约束覆盖已实现（含底层）**（2026-11-11）：`OverrideField` 放行 `constraints`、
+  `component.override` 校验并写入副本与 `instance.overrides`、物化时应用、重置时恢复；
 - 阴影与模糊（P6.1）：`appearance.shadow` 与 `appearance.blur`，无迁移；画布用
   `shadowBlur`/`ctx.filter`，SVG 用 `<filter>` + `feDropShadow`/`feGaussianBlur`，
   HTML 用 `box-shadow`/`filter`，支持矩阵新增 `effects` 行；

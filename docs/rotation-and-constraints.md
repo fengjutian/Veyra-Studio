@@ -37,9 +37,11 @@ export interface LayoutSpec {
    内部计算统一 `-Math.PI / 180 * deg`（画布 y 轴向下，顺时针即正向）。
 2. **只存角度，不存矩阵**：存矩阵要么每次分解回角度（精度漂移），要么禁用非等比缩放；
    角度 + 布局盒已经能完整表达我们的变换。
-3. **旋转不参与布局**：布局引擎仍然按轴对齐盒子排版，旋转只影响**绘制与命中**。
-   这样它和自动布局、约束、导出的几何计算都解耦——代价是旋转后的节点在自动布局里
-   仍然占原来的格子（Figma 也是这样）。
+3. **旋转不改变盒子尺寸**：布局盒仍是逻辑尺寸，导出、命中、约束都按它算；旋转是
+   **绘制时**的变换。但自动布局按**旋转后的视觉包围盒占位**：stack 里的兄弟节点会让开、
+   hug 容器会变大、grid 的自动轨道会变宽——转出去的内容不会压在邻居身上。
+   这一条与 Figma 不同（Figma 的旋转不影响布局，转出去的内容会盖住邻居），是本项目
+   主动选的语义。
 
 ## 3. 几何
 
@@ -69,8 +71,8 @@ export interface LayoutSpec {
 ## 5. 非目标（P5.1）
 
 - ~~多选整体旋转（组变换需要新的「组坐标系」概念）~~ —— **已实现**（2026-11-11，见 §13）；
-- 旋转后的**自动布局**重排（旋转不参与布局，这一点与 Figma 一致）—— 旋转**不参与**布局这一点
-  仍然成立，但已加**如实提示**（见 §13.3）；
+- 旋转后的**自动布局**重排 —— **已实现**（2026-11-11，见 §13.3）：布局引擎按旋转后的
+  视觉包围盒占位，兄弟节点让位；盒子尺寸不变。
 - 约束（P5.2）：父容器尺寸变化时子节点如何贴边，和旋转是两套机制。
 
 ## 6. 验收
@@ -295,29 +297,36 @@ P5.1 只做了属性面板输入角度，鼠标转不了图形——这是旋转
 现在旋转与移动/缩放**统一用绝对坐标**，换算收敛到唯一入口 `toParentLocalLayout()`。
 回归测试走真实布局引擎 + 运行时：转 30° 后子节点绝对盒仍为 (120, 90)。
 
-### 13.3 旋转后的自动布局重排（只做提示）
+### 13.3 旋转后的自动布局重排（已实现）
 
-布局引擎（`packages/design-layout`）**不参与旋转**——`layout.ts` 全文无 rotation 概念，
-stack 里旋转的节点仍占原来的格子。这与 Figma 一致，但用户容易误解，因此加了**如实提示**：
-旋转提交后若父级是 stack/grid，状态栏说明「父容器是自动布局（stack/grid）：布局引擎不按旋转
-重排兄弟节点（需要 design-layout 支持）」。
+布局引擎（`packages/design-layout`）现在**按旋转后的视觉包围盒占位**：
 
-**真正让旋转参与布局重排需要改 `design-layout`**，本轮未做。
+- **stack**：主轴上的占位变成旋转后的包围盒边长，兄弟节点因此让开；盒子在槽位里居中
+  （旋转绕盒子中心，转出去的部分刚好落在槽位内）。
+- **hug 容器**：内容尺寸按包围盒算，容器会变大。
+- **grid**：轨道的内容尺寸按包围盒算（自动轨道会因此变宽）；旋转的子节点不铺满格子，
+  盒子保持逻辑尺寸并在格子里居中。
+- **绝对定位**：不受影响——按坐标摆，旋转不改坐标。
 
-### 13.4 组件实例内的约束覆盖（studio-web 侧接口）
+**盒子尺寸不变**：旋转是绘制时的变换，导出、命中、约束都按逻辑盒算，三端（画布 /
+HTML / SVG）转的都是同一个中心。没有旋转的文档排版结果逐字不变。
 
-现状：实例物化时 `constraints` 会被**整节点深拷贝**带过去，所以实例内部节点的约束 = 组件定义里
-的约束；改实例副本不影响组件定义（这是正确的）。但**没有任何覆盖机制**——`OverrideField` 只有
-`text`/`name`/`visible`/`appearance`，`component.override` 的 payload 同理。
+这一条与 Figma 不同：Figma 的旋转不影响布局，转出去的内容会盖住邻居。本项目选
+「宁可让位，不要压住」。
 
-已实现的部分（`packages/studio-web/src/instance-constraint-override.ts`）：
+回归测试：`packages/design-layout/test/rotation-layout.test.ts`（6 条）。
 
-- `findInstanceCopy()`：从副本 id（`instanceId--sourceNodeId`）解析回源节点 id（排除插槽）；
-- `collectInstanceConstraintTargets()`：收集可覆盖的实例内部节点；
-- `planInstanceConstraintOverride()`：返回补丁形状**与不支持原因**；
-- 属性面板新增「实例约束覆盖」分段（水平/垂直 + 状态说明）；运行时未放行时**只把原因说清楚**，
-  不发会被拒绝的命令。
+### 13.4 组件实例内的约束覆盖（已实现，含底层）
 
-**尚未生效**：底层还需要三处放行——`OverrideField` 加 `"constraints"`、`component.override`
-payload 加 `constraints` 字段、运行时白名单放行并写入 `instance.overrides[sourceNodeId]`。
+实例物化时 `constraints` 会被**整节点深拷贝**带过去，所以实例内部节点的约束 = 组件定义里
+的约束；改实例副本不影响组件定义（这是正确的）。覆盖机制现在三层都放行了：
+
+- `design-schema`：`OverrideField` 增加 `"constraints"`，`overridableFields()` 对所有节点类型放行；
+- `design-runtime`：`component.override` 的 payload 带 `constraints`（可只给一个轴），
+  轴值会被校验；`overrideInstanceNode()` 写进副本与 `instance.overrides[sourceNodeId]`，
+  `applyOverrides()` 在物化时把覆盖落到副本上，`resetOneOverride()` 恢复组件定义里的值；
+- `studio-web`：`instance-constraint-override.ts` 解析实例副本→源节点、收集可覆盖目标、
+  返回补丁形状；属性面板的「实例约束覆盖」分段真的会改到这个实例，
+  不动组件定义与别的实例。
+
 `constraints` 已是 `BaseNode` 的可选字段，**文档格式版本不变**。
