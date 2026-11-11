@@ -81,13 +81,20 @@ function VariantCard({ job, selected, currentPageId, themeId, busy, onSelect, on
     <div className="ai-variant-placeholder"><span /></div>
     <strong>{job.status === "generating" ? "正在生成" : "等待生成"}</strong>
   </article>;
-  return <button role="option" aria-selected={selected} className={`ai-variant-card${selected ? " is-selected" : ""}`} onClick={onSelect}>
+  const status = variantStatus(job.preview);
+  return <button role="option" aria-selected={selected} className={`ai-variant-card is-${status}${selected ? " is-selected" : ""}`} onClick={onSelect}>
     <span className="ai-variant-index">{variantNumber(job)}</span>
     <div className="ai-variant-thumbnail">{thumbnail ? <img src={thumbnail} alt="" /> : <span>无法预览</span>}</div>
     <strong>{job.preview.summary}</strong>
     <span>{job.preview.affectedNodeIds.length || "文档级"} 处影响 · {job.preview.warnings.length} 警告</span>
-    {job.preview.review.blocking ? <em>审查阻断</em> : <em className="is-safe">可提交</em>}
+    <span className={`ai-variant-status is-${status}`}>{status === "blocked" ? "审查阻断" : status === "warning" ? "需要确认" : "可提交"}</span>
   </button>;
+}
+
+function variantStatus(preview: AiPlanPreview): "safe" | "warning" | "blocked" {
+  if (preview.review.blocking) return "blocked";
+  if (preview.warnings.length || preview.review.findings.length) return "warning";
+  return "safe";
 }
 
 export function variantThumbnail(preview: AiPlanPreview, currentPageId: string, themeId?: string): string | undefined {

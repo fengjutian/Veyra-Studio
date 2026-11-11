@@ -51,6 +51,13 @@
 }
 
 :root[data-ui-theme="light"] .canvas-tools { box-shadow: 0 2px 8px #3440541f; }
+:root[data-ui-theme="light"] .workbench-feedback {
+  border-color: #cbd2df;
+  background: #fffffff2;
+  color: #475467;
+  box-shadow: 0 10px 30px #34405424;
+}
+:root[data-ui-theme="light"] .workbench-feedback.is-error { border-color: #fda29b; background: #fff8f7f2; color: #b42318; }
 :root[data-ui-theme="light"] .panel-count { background: #eef1f6; color: #667085; }
 :root[data-ui-theme="light"] .studio .topbar .autosave-status {
   border-color: #d7dce6;
@@ -179,6 +186,10 @@
 :root[data-ui-theme="light"] .ai-batch-progress strong { color: #6d28d9; }
 :root[data-ui-theme="light"] .ai-result-count { background: #ede9fe; color: #6d28d9; }
 :root[data-ui-theme="light"] .ai-variant-card:hover:not(:disabled) { background: #f5f3ff; }
+:root[data-ui-theme="light"] .ai-variant-card .ai-variant-index { background: #ffffffde; color: #6d28d9; }
+:root[data-ui-theme="light"] .ai-variant-status.is-safe { border-color: #86c8a0; background: #ecfdf3; color: #167044; }
+:root[data-ui-theme="light"] .ai-variant-status.is-warning { border-color: #f5c451; background: #fffaeb; color: #7a4d0b; }
+:root[data-ui-theme="light"] .ai-variant-status.is-blocked { border-color: #fda29b; background: #fff1f0; color: #b42318; }
 :root[data-ui-theme="light"] .ai-failure {
   border-color: #fda29b;
   background: #fff1f0;

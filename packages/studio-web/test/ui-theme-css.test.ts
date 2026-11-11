@@ -26,6 +26,8 @@ test("light theme covers every workbench page and overlay", () => {
     ".canvas-controls",
     ".ai-command-dock",
     ".ai-flow",
+    ".workbench-feedback",
+    ".ai-variant-status",
   ];
 
   for (const selector of requiredSurfaces) {

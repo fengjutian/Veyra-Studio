@@ -48,3 +48,8 @@ test("画布背景弱化网格并强化画板边界", () => {
   assert.match(workbenchCss, /background-size: 100% 100%, 24px 24px/);
   assert.match(workbenchCss, /outline: 1px solid #ffffff17/);
 });
+
+test("画布显示统一反馈条", () => {
+  assert.match(mainSource, /<WorkbenchFeedback message=\{message\}/);
+  assert.match(mainSource, /onDismiss=\{\(\) => setMessage\("就绪"\)\}/);
+});

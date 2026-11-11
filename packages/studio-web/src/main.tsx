@@ -113,6 +113,7 @@ import { DialogProvider, useChoice, useConfirm, useForm, usePrompt } from "./ui/
 import { Tooltip, TooltipProvider } from "./ui/tooltip";
 import { ContextMenuContent, ContextMenuItem, ContextMenuRoot, ContextMenuSeparator, ContextMenuSub, ContextMenuTrigger } from "./ui/context-menu";
 import { ToolbarMenu } from "./ui/toolbar-menu";
+import { WorkbenchFeedback } from "./ui/workbench-feedback";
 import { aiSettingsComplete, clearAiSettings, readAiSettings, writeAiSettings, DEFAULT_AI_SETTINGS, type AiSettings } from "./ai-settings";
 import { describePropertyOverride, parsePropertyOverride } from "./theme-properties";
 import { capturePageScreenshot, capturePagesScreenshot, captureSelectionScreenshot } from "./ai-vision";
@@ -2853,6 +2854,7 @@ function App() {
           </>}</ContextMenuContent>
         </ContextMenuRoot>
       </div>
+      <WorkbenchFeedback message={message} busy={busy} onDismiss={() => setMessage("就绪")} />
       <div className="canvas-controls">
         <Tooltip label={panMode ? "退出抓手 · H" : "抓手拖动画布 · H"}><button className={`icon-only${panMode ? " active" : ""}`} aria-label="抓手" aria-pressed={panMode} onClick={() => setTool(current => current === "hand" ? "select" : "hand")}><Icon name="pan" /></button></Tooltip>
         <Tooltip label="缩小"><button className="icon-only" aria-label="缩小" onClick={() => setZoom(current => zoomStep(current, -1))}><Icon name="zoomOut" /></button></Tooltip>
