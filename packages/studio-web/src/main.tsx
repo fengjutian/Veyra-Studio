@@ -1450,10 +1450,9 @@ function App() {
   /**
    * 实例内的约束覆盖。
    *
-   * 覆盖的是**这个实例**里的物化副本，组件定义与别的实例不受影响。运行时目前还不
-   * 接受这种覆盖（design-schema 的 OverrideField 与 design-runtime 的
-   * component.override 都没放行 constraints），所以这一段现在只会把「为什么还不行」
-   * 说清楚；运行时支持之后，改动只需要落在 `instance-constraint-override.ts` 与这里。
+   * 覆盖的是**这个实例**里的物化副本，组件定义与别的实例不受影响。design-schema 的
+   * `OverrideField` 与 design-runtime 的 `component.override` 都已放行 constraints，
+   * 所以这里发的命令会真的落进实例的覆盖记录。
    */
   const overrideInstanceConstraints = (constraints: Constraints) => {
     if (!instanceConstraintTarget || !instanceCopy) return;

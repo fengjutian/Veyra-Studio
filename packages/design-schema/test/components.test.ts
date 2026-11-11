@@ -80,9 +80,9 @@ test("finds the innermost owning component", () => {
 
 test("override field contract depends on the node type", () => {
   const text: DesignNode = { ...frame("t", "page:1"), type: "text", text: "x", fontFamily: "Inter", fontSize: 16, lineHeight: 24 } as DesignNode;
-  assert.deepEqual(overridableFields(text), ["text", "name", "visible", "appearance"]);
-  assert.deepEqual(overridableFields(frame("f", "page:1")), ["name", "visible", "appearance"]);
-  assert.deepEqual(overridableFields(instance("i", "page:1", "component:x")), ["name", "visible", "appearance"]);
+  assert.deepEqual(overridableFields(text), ["text", "name", "visible", "appearance", "constraints"]);
+  assert.deepEqual(overridableFields(frame("f", "page:1")), ["name", "visible", "appearance", "constraints"]);
+  assert.deepEqual(overridableFields(instance("i", "page:1", "component:x")), ["name", "visible", "appearance", "constraints"]);
 });
 
 test("lists the override targets exposed by an instance", () => {
@@ -102,9 +102,9 @@ test("lists the override targets exposed by an instance", () => {
 
   const targets = exposedOverrideTargets(document, "instance:1");
   assert.deepEqual(targets.map(target => target.sourceNodeId), ["box", "label"]);
-  assert.deepEqual(targets.find(target => target.sourceNodeId === "label")?.fields, ["text", "name", "visible", "appearance"]);
+  assert.deepEqual(targets.find(target => target.sourceNodeId === "label")?.fields, ["text", "name", "visible", "appearance", "constraints"]);
   assert.equal(targets.find(target => target.sourceNodeId === "label")?.defaultText, "标题");
-  assert.deepEqual(targets.find(target => target.sourceNodeId === "box")?.fields, ["name", "visible", "appearance"]);
+  assert.deepEqual(targets.find(target => target.sourceNodeId === "box")?.fields, ["name", "visible", "appearance", "constraints"]);
   // 插槽内容不是组件参数。
   assert.equal(targets.some(target => target.sourceNodeId.includes("slot")), false);
 });

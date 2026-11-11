@@ -78,18 +78,16 @@ test("实例里可覆盖约束的目标带着当前约束", () => {
   assert.equal(targets[0]?.copyId, "instance:1--node:label");
   assert.equal(targets[0]?.sourceNodeId, "node:label");
   assert.deepEqual(targets[0]?.constraints, { horizontal: "end", vertical: "start" });
-  // design-schema 的可覆盖字段白名单里还没有 constraints，所以现在一律不可覆盖。
-  assert.equal(targets[0]?.overridable, false);
+  // design-schema 的可覆盖字段白名单已经放行 constraints。
+  assert.equal(targets[0]?.overridable, true);
 });
 
-test("运行时没放行 constraints 时不规划命令，但把原因说清楚", () => {
+test("运行时放行 constraints 后规划出可执行的覆盖", () => {
   const document = documentWithInstance();
   const target = collectInstanceConstraintTargets(document, "instance:1")[0]!;
   const plan = planInstanceConstraintOverride(target, { horizontal: "center", vertical: "center" });
-  assert.equal(plan.supported, false);
+  assert.equal(plan.supported, true);
+  assert.equal(plan.reason, undefined);
   assert.deepEqual(plan.patch, { constraints: { horizontal: "center", vertical: "center" } });
-  // 原因要指名要改的字段：schema 的 OverrideField 与 runtime 的 component.override。
-  assert.match(plan.reason ?? "", /OverrideField/);
-  assert.match(plan.reason ?? "", /component\.override/);
-  assert.equal(INSTANCE_CONSTRAINT_OVERRIDE_SUPPORTED, false);
+  assert.equal(INSTANCE_CONSTRAINT_OVERRIDE_SUPPORTED, true);
 });

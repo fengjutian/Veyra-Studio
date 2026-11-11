@@ -2,30 +2,29 @@ import type { Constraints, DesignDocument, DesignNode } from "@ufira/design-sche
 import { overridableFields } from "@ufira/design-schema";
 
 /**
- * 组件实例内的约束覆盖（studio-web 侧的隔离接口）。
+ * 组件实例内的约束覆盖。
  *
  * 组件实例的子树在实例化时就被**物化**成 `instanceId--sourceId` 的真实节点，所以
  * 「在这个实例里改掉约束」技术上只是改这些副本的 `constraints`。
  *
- * 但要让这次覆盖**语义成立**（改的是这个实例，不是组件定义，也不是别的实例），还得
- * 让运行时认账：
+ * 让这次覆盖**语义成立**（改的是这个实例，不是组件定义，也不是别的实例）需要三层都认账：
  *
- * - design-schema：`OverrideField` 要加 `"constraints"`，`overridableFields` 要放行；
- * - design-runtime：`component.override` 的 payload patch 要能带 constraints，
- *   `overrideInstanceNode` 要校验并写进副本与 `instance.overrides`，
- *   `applyOverrides` 要在物化时把覆盖应用到副本上。
+ * - design-schema：`OverrideField` 有 `"constraints"`，`overridableFields` 放行；
+ * - design-runtime：`component.override` 的 payload patch 能带 constraints，
+ *   `overrideInstanceNode` 校验并写进副本与 `instance.overrides`，
+ *   `applyOverrides` 在物化时把覆盖应用到副本上，`resetOneOverride` 恢复组件定义的值；
+ * - studio-web：本模块负责目标解析与补丁形状，界面在 `main.tsx` 里发命令。
  *
- * 这些都不在 studio-web 的文件所有权范围内，所以本模块只交付**隔离接口**：目标解析、
- * 补丁形状与界面形态都收在这里，运行时一旦支持，改动只需要落在这一个模块加一处接线。
+ * 三层都已就位，所以下面这个开关是 true。
  */
 
 /**
  * 运行时是否已经接受 constraints 覆盖。
  *
- * 现在是 false：design-runtime 的 `component.override` 白名单只有
- * text / name / visible / appearance，强行发命令只会被运行时拒绝。
+ * true：design-schema 的白名单放行了 `constraints`，design-runtime 的
+ * `component.override` 也会把它写进副本与 `instance.overrides`。
  */
-export const INSTANCE_CONSTRAINT_OVERRIDE_SUPPORTED = false;
+export const INSTANCE_CONSTRAINT_OVERRIDE_SUPPORTED = true;
 
 /** 实例里可覆盖约束的一个目标节点。 */
 export interface InstanceConstraintTarget {

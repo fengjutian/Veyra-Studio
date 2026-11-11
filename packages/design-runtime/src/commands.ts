@@ -7,6 +7,7 @@ import type {
   ComponentSetDefinition,
   BooleanOperation,
   ComponentSetId,
+  Constraints,
   DesignDocument,
   DesignNode,
   DesignPage,
@@ -370,7 +371,14 @@ export interface ComponentOverrideCommand {
   payload: {
     instanceId: NodeId;
     sourceNodeId: NodeId;
-    patch: { text?: string; name?: string; visible?: boolean; appearance?: { fill?: string; stroke?: string; opacity?: number; cornerRadius?: number } };
+    patch: {
+      text?: string;
+      name?: string;
+      visible?: boolean;
+      appearance?: { fill?: string; stroke?: string; opacity?: number; cornerRadius?: number };
+      /** 父级尺寸变化时这个副本的行为；只改这个实例，不动组件定义。可只给一个轴。 */
+      constraints?: Partial<Constraints>;
+    };
   };
 }
 

@@ -73,11 +73,18 @@ export function findOwningComponentId(document: DesignDocument, nodeId: NodeId):
   return undefined;
 }
 
-/** 实例可以覆盖的字段。文本节点多一个 `text`，其它节点只能覆盖外观类字段。 */
-export type OverrideField = "text" | "name" | "visible" | "appearance";
+/**
+ * 实例可以覆盖的字段。
+ *
+ * 文本节点多一个 `text`，所有节点都能覆盖 `constraints`——约束是「父级尺寸变了
+ * 我怎么办」，属于实例自己的摆放语义，不该被组件定义焊死。
+ */
+export type OverrideField = "text" | "name" | "visible" | "appearance" | "constraints";
 
 export function overridableFields(node: DesignNode): OverrideField[] {
-  return node.type === "text" ? ["text", "name", "visible", "appearance"] : ["name", "visible", "appearance"];
+  return node.type === "text"
+    ? ["text", "name", "visible", "appearance", "constraints"]
+    : ["name", "visible", "appearance", "constraints"];
 }
 
 /** 一个实例对外暴露的可覆盖目标（组件定义里的源节点）。 */

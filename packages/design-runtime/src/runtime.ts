@@ -1,4 +1,4 @@
-import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, rotatedBoxBounds, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, effectiveComponentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, validatePropertyValue, withPropertyBinding, BINDING_REQUIREMENTS, COMPONENT_PROPERTY_FIELDS, type BooleanNode, type BooleanOperation, type ComponentDefinition, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ComponentSetDefinition, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint, type TokenGroupMeta } from "@ufira/design-schema";
+import { BOOLEAN_OPERATIONS, MAX_LIST_INDENT, findOwningComponentId, fontKey, isFontMimeType, remapParagraphStyles, remapTextRuns, rotatedBoxBounds, setParagraphStyle, supportsBooleanOperand, isValidVectorPath, overridableFields, validateDocument, validateInteraction, validateTextRuns, wouldCreateComponentCycle, componentProperties, effectiveComponentProperties, isInsideSubtree, propertyTargets, resolvePropertyValue, validatePropertyValue, withPropertyBinding, BINDING_REQUIREMENTS, COMPONENT_PROPERTY_FIELDS, type BooleanNode, type BooleanOperation, type ComponentDefinition, type ComponentProperty, type ComponentPropertyField, type ComponentPropertyValue, type ComponentSetDefinition, type ConstraintAxis, type Constraints, type DesignDocument, type DesignNode, type DocumentFont, type FontStyle, type InstanceNode, type Interaction, type NodeId, type Paint, type TokenGroupMeta } from "@ufira/design-schema";
 import { applyConstraints } from "./constraints";
 import type { ChangeSet, CommandEnvelope, CommandResult, DesignCommand, TransactionEntry } from "./commands";
 
@@ -19,6 +19,9 @@ export class CommandError extends Error {
 export interface ExecuteOptions {
   committedAt?: string;
 }
+
+/** 合法的约束轴值。命令是从 JSON 进来的，编译期保证不了，只能在这里再判一次。 */
+const CONSTRAINT_AXES: readonly ConstraintAxis[] = ["start", "end", "center", "stretch", "scale"];
 
 export interface HistoryRequest extends ExecuteOptions {
   commandId: string;
@@ -1341,7 +1344,7 @@ function overrideInstanceNode(
   payload: {
     instanceId: NodeId;
     sourceNodeId: NodeId;
-    patch: { text?: string; name?: string; visible?: boolean; appearance?: { fills?: Paint[]; stroke?: string; opacity?: number; cornerRadius?: number } };
+    patch: { text?: string; name?: string; visible?: boolean; appearance?: { fills?: Paint[]; stroke?: string; opacity?: number; cornerRadius?: number }; constraints?: Partial<Constraints> };
   },
 ): void {
   const instance = requireNode(document, payload.instanceId);
@@ -1350,7 +1353,7 @@ function overrideInstanceNode(
   const copy = requireNode(document, copyId);
   if (!isInside(document, copyId, instance.id)) throw new CommandError(`Node ${copyId} does not belong to instance ${instance.id}`);
 
-  const { text, name, visible, appearance } = payload.patch;
+  const { text, name, visible, appearance, constraints } = payload.patch;
   const patchRecord = payload.patch as Record<string, unknown>;
   const patchKeys = Object.keys(patchRecord).filter(key => patchRecord[key] !== undefined);
   const allowed = overridableFields(copy);
@@ -1374,6 +1377,15 @@ function overrideInstanceNode(
   if (appearance?.cornerRadius !== undefined && (!Number.isFinite(appearance.cornerRadius) || appearance.cornerRadius < 0)) {
     throw new CommandError("Override corner radius must be a non-negative number");
   }
+  if (constraints !== undefined) {
+    for (const axis of ["horizontal", "vertical"] as const) {
+      const value = constraints[axis];
+      if (value === undefined) continue;
+      if (!CONSTRAINT_AXES.includes(value)) {
+        throw new CommandError(`Override ${axis} constraint must be one of ${CONSTRAINT_AXES.join(", ")}`);
+      }
+    }
+  }
   if (text !== undefined) {
     if (copy.type !== "text") throw new CommandError(`Node ${copyId} is not a text node`);
     // 覆盖文本会改变段落边界：段落样式区间必须跟着重排，否则文档立刻不合法。
@@ -1388,6 +1400,14 @@ function overrideInstanceNode(
   if (name !== undefined) copy.name = name;
   if (visible !== undefined) copy.visible = visible;
   if (appearance !== undefined) copy.appearance = { ...copy.appearance, ...appearance };
+  // 约束是「父级尺寸变了怎么办」：只改这个实例里的副本，组件定义不动。
+  // 覆盖可以只给一个轴，另一个轴沿用副本原来的值。
+  if (constraints !== undefined) {
+    copy.constraints = {
+      horizontal: constraints.horizontal ?? copy.constraints?.horizontal ?? "start",
+      vertical: constraints.vertical ?? copy.constraints?.vertical ?? "start",
+    };
+  }
 
   const previous = instance.overrides[payload.sourceNodeId];
   const merged = typeof previous === "object" && previous !== null ? previous : {};
@@ -1399,6 +1419,7 @@ function overrideInstanceNode(
       ...(name !== undefined ? { name } : {}),
       ...(visible !== undefined ? { visible } : {}),
       ...(appearance !== undefined ? { appearance } : {}),
+      ...(constraints !== undefined ? { constraints } : {}),
     },
   };
 }
@@ -1440,6 +1461,9 @@ function resetOneOverride(document: DesignDocument, instance: InstanceNode, sour
   copy.name = source.name;
   copy.visible = source.visible;
   copy.appearance = structuredClone(source.appearance);
+  // 约束也回到组件定义里的样子：重置覆盖 = 这个节点完全听组件定义的话。
+  if (source.constraints) copy.constraints = structuredClone(source.constraints);
+  else delete copy.constraints;
   if (copy.type === "text" && source.type === "text") {
     copy.text = source.text;
     if (source.paragraphStyles) copy.paragraphStyles = structuredClone(source.paragraphStyles);
@@ -1507,6 +1531,15 @@ function applyOverrides(instance: InstanceNode, overrides: Record<string, unknow
     if (patch.appearance && typeof patch.appearance === "object") copy.appearance = { ...copy.appearance, ...(patch.appearance as object) };
     if (patch.layout && typeof patch.layout === "object") copy.layout = { ...copy.layout, ...(patch.layout as object) };
     if (patch.bindings && typeof patch.bindings === "object") copy.bindings = { ...copy.bindings, ...(patch.bindings as object) };
+    // 约束覆盖：物化时就得落到副本上，否则实例化之后约束是组件定义里的那份。
+    // 覆盖可以只给一个轴，另一个轴沿用副本原来的值（都没有时用缺省的 start）。
+    if (patch.constraints && typeof patch.constraints === "object") {
+      const next = patch.constraints as Partial<Constraints>;
+      copy.constraints = {
+        horizontal: next.horizontal ?? copy.constraints?.horizontal ?? "start",
+        vertical: next.vertical ?? copy.constraints?.vertical ?? "start",
+      };
+    }
   }
 }
 
